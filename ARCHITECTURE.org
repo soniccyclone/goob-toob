@@ -1,0 +1,21 @@
+# -*- eval: (auto-fill-mode 1) -*-
+#+OPTIONS: \n:t
+#+TITLE: ARCHITECTURE
+#+AUTHOR: Nathan Barlow
+
+Website needs:
+Controllers
+Services
+Repositories
+
+And then we can use the repo layer for both the actual sqlite db work
+as well as the file system stuff.
+
+Then the services layer can handle all the normal web requests along
+with all the async gstreamer calls and opening sockets and stuff for
+streams.
+
+Need static as well for all the HTML, CSS, and JS as well. I don't
+need to mess with HTMX when I'm good enough at vanilla JS and
+shouldn't really be replacing much of the DOM ever except for maybe
+one chatbox in the watch together lobby?
