@@ -1,8 +1,0 @@
-<Solution>
-  <Project Path="GoobToob.Repository.Test/GoobToob.Repository.Test.csproj" />
-  <Project Path="GoobToob.Repository/GoobToob.Repository.csproj" />
-  <Project Path="GoobToob.Service.Test/GoobToob.Service.Test.csproj" />
-  <Project Path="GoobToob.Service/GoobToob.Service.csproj" />
-  <Project Path="GoobToob.Test/GoobToob.Test.csproj" />
-  <Project Path="GoobToob/GoobToob.csproj" />
-</Solution>
