@@ -2,10 +2,10 @@
 title: Upload & Ingest a Video
 cuj_id: CUJ-001
 owner: nathan
-status: draft
-approval_status: pending
-approved_by:
-approved_on:
+status: approved
+approval_status: approved
+approved_by: nathan
+approved_on: 2026-05-02
 last_updated: 2026-05-02
 ---
 
@@ -85,20 +85,23 @@ journey
       Video browsable, solo-playable, lobby-eligible: 5: Creator, System
 ```
 
+# Resolved Decisions
+
+1. **Rendition ladder (v1).** 360p / 720p / 1080p, with bitrates pulled from the BBC / Bitmovin reference tables. _(Resolved 2026-05-02.)_
+2. **Source-file retention.** Keep originals behind a config flag, default `keep`. Insurance against re-transcoding to a future ladder; storage is cheap on self-host. _(Resolved 2026-05-02.)_
+3. **Object-storage default.** Ceph via RADOS Gateway (S3-compatible). MinIO is **not** the default. _(Resolved 2026-05-02.)_
+4. **Chunked upload protocol.** TUS — strongest resumability story; well-defined spec. _(Resolved 2026-05-02.)_
+
 # Open Questions
 
-1. **Rendition ladder.** Which target resolutions and bitrates for v1? Proposed starting set: 360p / 720p / 1080p, with bitrates tuned to the ladder published by the BBC / Bitmovin reference tables.
-2. **Source file retention.** Keep the original after a successful transcode (insurance against re-transcoding to a future ladder), or delete to save storage?
-3. **Maximum source duration and per-creator storage quota.** What are the v1 caps?
-4. **Audio handling.** Single audio adaptation set muxed at one bitrate, or its own ladder?
-5. **Subtitles / captions.** In v1, or punted to a later CUJ?
-6. **Authentication shape for upload.** Session cookie, bearer token, signed upload URL into object storage? (Likely converges with CUJ-007 / Account & Auth.)
-7. **Object store choice for self-host default.** MinIO is the obvious pick — confirm before specs land.
-8. **Chunked upload protocol.** TUS, S3 multipart, or our own? TUS has the cleanest resumability story.
+1. **Maximum source duration and per-creator storage quota.** What are the v1 caps?
+2. **Audio handling.** Single muxed audio adaptation set at one bitrate, or its own ladder?
+3. **Subtitles / captions.** In v1, or punted to a later CUJ?
+4. **Authentication shape for upload.** Session cookie, bearer token, signed upload URL? Converges with CUJ-007 (Account & Auth).
 
 # Approval
 
-- Approval Status: pending
-- Approved By:
-- Approved On:
-- Notes:
+- Approval Status: approved
+- Approved By: nathan
+- Approved On: 2026-05-02
+- Notes: Approved alongside CUJs 2-7 in a single batch after Nathan reviewed the shape and answered the cross-CUJ resolution table.
