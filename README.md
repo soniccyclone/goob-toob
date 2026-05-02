@@ -7,10 +7,11 @@ This repository is the **design home** for goob-toob. It holds:
 - Critical User Journeys under [`cuj/`](cuj/)
 - OpenSpec specifications nested under each CUJ
 - Per-CUJ stacked PR manifests
-- Cross-cutting implementation conventions in [`CONVENTIONS.md`](CONVENTIONS.md)
 - Templates for new CUJs, specs, and stacks under [`templates/`](templates/)
 
 Implementation code lives in sibling repositories named `goob-toob-implementation-<stack>`. Each spec mounts its target implementation repo as a git submodule under `cuj/<cuj-slug>/specs/<spec-slug>/target/`.
+
+Cross-cutting implementation conventions are not in this repo. They live in [`soniccyclone/goob-toob-conventions`](https://github.com/soniccyclone/goob-toob-conventions) and are consumed by every implementation repo.
 
 ## Active implementations
 
