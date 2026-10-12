@@ -161,11 +161,20 @@
 
 ;; ---- router ------------------------------------------------------------------
 
+;; reitit 0.7 puts path params only under :path-params; merge them into
+;; :params so handlers can read them uniformly (query params win on clash).
+(defn- wrap-path-params [handler]
+  (fn [req]
+    (handler (if-let [pp (:path-params req)]
+               (update req :params merge pp)
+               req))))
+
 ;; One shared session store: reitit compiles the middleware chain per
 ;; endpoint, so wrap-session's default store would give every endpoint its
 ;; own isolated store (login writes to one, /api/me reads another).
 (def session-store (memory-store))
-(def common [wrap-keyword-params wrap-params #(wrap-session % {:store session-store})])
+(def common [wrap-path-params wrap-params wrap-keyword-params
+             #(wrap-session % {:store session-store})])
 (def json-body #(wrap-json-params % {:key-fn keyword}))
 
 (defn app []
