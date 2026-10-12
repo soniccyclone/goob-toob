@@ -1,0 +1,30 @@
+#+TITLE: Contributing to goob-toob
+#+AUTHOR: Nathan Barlow
+
+Bug reports, ideas, and patches are welcome. goob-toob is licensed under the
+GNU AGPL-3.0-or-later (see =LICENSE=); the project also dual-licenses
+commercially, which is what the CLA below is about.
+
+Before sending code: =make test= should pass, and keep PRs focused.
+
+* Contributor License Agreement
+By submitting a pull request, patch, or other contribution to this
+repository, you agree to the following:
+
+1. *License grant.* You grant the copyright holder of goob-toob
+   (Nathan Barlow) a perpetual, worldwide, irrevocable, royalty-free,
+   sublicensable license to reproduce, prepare derivative works of, publicly
+   display, publicly perform, and distribute your contributions and any
+   derivative works of them, *under any license terms, including proprietary
+   and commercial terms.* This is what lets the project dual-license.
+2. *Nothing is taken from you.* You keep the copyright to your contribution.
+   The open-source goob-toob stays AGPL forever — the CLA only additionally
+   lets the copyright holder offer other licenses. It does not transfer
+   ownership or revoke your rights in your own work.
+3. *You have the right to do this.* You promise the contribution is your
+   original work (or you have permission to submit it and can say who owns
+   it), that you can grant these rights (e.g. your employer doesn't claim
+   it), and that you'll disclose anything you know that contradicts this.
+
+If you don't agree to this, please don't submit contributions — no hard
+feelings, but don't be surprised if they're reverted.

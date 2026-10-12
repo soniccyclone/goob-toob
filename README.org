@@ -113,6 +113,14 @@ make repl      # nrepl-ish REPL in the container
 make clip      # 20s test clip to feed the pipeline
 #+end_src
 
+* License
+Copyright (C) 2026 Nathan Barlow. Released under the
+[[https://www.gnu.org/licenses/agpl-3.0.html][GNU AGPL-3.0-or-later]] (=LICENSE=): free to use, modify, and host — but a
+modified version served over a network must publish its source. Building
+closed-source or commercial on top of it is the dual-license path: talk to me.
+Contributions are subject to the CLA in =CONTRIBUTING.org=, which is what
+keeps that option open.
+
 * Plans site
 Plans live in =plans/= (date-prefixed =.org= + rendered =.html= snapshot; see
 the index in =plans/README.org=). Pushing master runs =.build.yml= on
