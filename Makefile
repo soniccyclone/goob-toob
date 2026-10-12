@@ -45,3 +45,8 @@ funnel: ## expose the running app (PORT=8080) to the internet via Tailscale Funn
 
 funnel-stop: ## stop the Tailscale Funnel (tailnet-only serve stays up)
 	tailscale funnel --stop
+
+# cloudflared quick tunnel: no account, ephemeral https://<random>.trycloudflare.com
+# URL printed in your terminal; runs in the foreground, Ctrl-C to stop.
+tunnel: ## temporary public URL via Cloudflare quick tunnel (Ctrl-C stops it)
+	cloudflared tunnel --url http://localhost:$(PORT)

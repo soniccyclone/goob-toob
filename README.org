@@ -47,6 +47,20 @@ entire defense.
 =tailscale serve --bg 8080= and share =https://<machine>.<tailnet>.ts.net= —
 only tailnet members can reach it.
 
+** Cloudflare quick tunnel (zero-install fallback)
+If Funnel is misbehaving (or you just need a URL in five seconds), a Cloudflare
+quick tunnel needs no account and no open ports — it dials *out* to Cloudflare:
+#+begin_src sh
+# one-time: grab the static binary
+curl -fsSL -o ~/.local/bin/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/.local/bin/cloudflared
+
+make tunnel        # prints a random https://<words>.trycloudflare.com URL; Ctrl-C stops
+#+end_src
+The URL is ephemeral (new one each run) and quick tunnels are rate-limited —
+fine for a party, not for permanent hosting. Coexists happily with Tailscale.
+
 ** Raw port forwarding
 Works, but ships video + chat unencrypted. Last resort.
 
