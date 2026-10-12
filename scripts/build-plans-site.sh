@@ -14,13 +14,15 @@ ROOT=$(pwd)
 rm -rf gen
 mkdir -p gen/org
 
-# Each plan: point its SETUPFILE at the vendored theme (the skill's path is
-# machine-local) and append nav links.
+# Each plan: the skill's SETUPFILE and sequence-diagram INCLUDE paths are
+# machine-local, so point them at the vendored copies in site/, then append
+# nav links.
 for org in plans/*.org; do
   [ "$(basename "$org")" = README.org ] && continue
   slug=$(basename "$org" .org)
   {
-    sed "s|^#+SETUPFILE: .*|#+SETUPFILE: $ROOT/site/themes/default.setup|" "$org"
+    sed -e "s|^#+SETUPFILE: .*|#+SETUPFILE: $ROOT/site/themes/default.setup|" \
+        -e "s|\"[^\"]*diagrams/sequence\.html\"|\"$ROOT/site/diagrams/sequence.html\"|" "$org"
     printf '\n* Links\n- [[file:index.org][All plans]]\n- [[https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans][Plans directory]]\n'
   } > "gen/org/$slug.org"
 done

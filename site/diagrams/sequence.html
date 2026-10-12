@@ -1,0 +1,147 @@
+<style>
+.opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
+.opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opseq button{font:inherit;padding:4px 10px;border:1px solid #999;border-radius:4px;background:#f6f6f6;cursor:pointer;color:inherit}
+.opseq button:hover{background:#e9e9e9}
+.opseq .where{font-weight:600;margin-left:6px}
+.opseq .legend{margin-left:auto;display:flex;gap:10px}
+.opseq .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.opseq .svgwrap{overflow:auto;max-height:70vh;border:1px solid #ddd;background:#fff}
+.opseq svg{display:block}
+.opseq .lane rect{fill:#f3f4f6;stroke:#9aa0a6}
+.opseq .lane text{font-weight:600;font-size:13px;fill:#1b1f23}
+.opseq .lane .sub{font-weight:400;font-size:11px;fill:#555}
+.opseq .lifeline{stroke:#c4c8cc;stroke-dasharray:4 4}
+.opseq .phase rect{fill:#fafbfc}
+.opseq .phase text{font-size:12px;font-weight:700;fill:#333}
+.opseq .phase .ptag{font-weight:400;fill:#666}
+.opseq .step{cursor:pointer}
+.opseq .step .line{fill:none;stroke-width:1.6}
+.opseq .step text{font-size:11.5px;fill:#222}
+.opseq .step .num{font-weight:700;fill:#fff;font-size:10px}
+.opseq .step.future{opacity:.28}
+.opseq .step.past{opacity:.75}
+.opseq .halo{fill:none}
+.opseq .step.active .halo{fill:#fff3b0;opacity:.9}
+.opseq .note{margin-top:10px;padding:8px 10px;border-left:3px solid #999;background:#f7f7f9}
+.opseq .note b{margin-right:6px}
+.opseq .note span{color:#444}
+.opseq .state{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.opseq .card{border:1px solid #ddd;border-radius:6px;padding:8px 10px;background:#fcfcfd;min-height:96px}
+.opseq .card h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+.opseq .card.changed{border-color:#d98a00;background:#fff8e6}
+.opseq .card pre{margin:0;white-space:pre-wrap;font:12px/1.4 Menlo,Consolas,monospace;background:none;border:0;padding:0;box-shadow:none}
+</style>
+<script>
+window.orgPlanSequence = function (rootId, spec) {
+  var TAGS = Object.assign({built: '#2e8b57', spec: '#d98a00', browser: '#777', external: '#635bff', async: '#1f78b4'}, spec.tags || {});
+  var lanes = spec.lanes, steps = spec.steps, phases = spec.phases || {}, stores = spec.stores || [], init = spec.init || {};
+  var L = spec.laneWidth || 190, X0 = 110, TOP = 70, ROW = 46, PH = 34, NS = 'http://www.w3.org/2000/svg';
+  var W = X0 + (lanes.length - 1) * L + 120, xs = {};
+  lanes.forEach(function (l, i) { xs[l.id] = X0 + i * L; });
+
+  var root = document.getElementById(rootId);
+  root.className += ' opseq';
+  root.innerHTML = '<div class="bar"><button data-go="first">|&lt;</button><button data-go="prev">&larr; Prev</button>'
+    + '<button data-go="next">Next &rarr;</button><button data-go="last">&gt;|</button><button data-go="play">Play</button>'
+    + '<span class="where"></span><span class="legend"></span></div>'
+    + '<div class="svgwrap"><svg xmlns="' + NS + '"></svg></div><div class="note"></div><div class="state"></div>';
+  var svg = root.querySelector('svg');
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  function txt(x, y, s, a, p) { var t = el('text', Object.assign({x: x, y: y}, a || {}), p); t.textContent = s; return t; }
+  function color(tag) { return TAGS[tag] || '#555'; }
+
+  var y = TOP + 30, lastPh = null, bands = [];
+  steps.forEach(function (s) {
+    if (s.ph !== lastPh) { bands.push({phase: s.ph, y: y}); y += PH + 10; lastPh = s.ph; }
+    var lines = s.label.split('|'); s.y = y; s.h = ROW + (lines.length - 1) * 13; y += s.h;
+  });
+  var H = y + 20;
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  bands.forEach(function (b) {
+    var p = phases[b.phase] || {label: b.phase}, g = el('g', {class: 'phase'});
+    el('rect', {x: 0, y: b.y, width: W, height: PH - 4}, g);
+    txt(16, b.y + 15, p.label, {}, g);
+    if (p.tag) txt(16, b.y + 27, p.tag, {class: 'ptag'}, g);
+  });
+  lanes.forEach(function (l) {
+    var x = xs[l.id], g = el('g', {class: 'lane'});
+    el('line', {x1: x, y1: TOP, x2: x, y2: H, class: 'lifeline'});
+    var bw = Math.min(160, L - 16);
+    el('rect', {x: x - bw / 2, y: 16, width: bw, height: TOP - 24, rx: 5}, g);
+    txt(x, l.sub ? 38 : 46, l.label, {'text-anchor': 'middle'}, g);
+    if (l.sub) txt(x, 54, l.sub, {'text-anchor': 'middle', class: 'sub'}, g);
+  });
+
+  var gs = steps.map(function (s, i) {
+    var c = color(s.tag), g = el('g', {class: 'step'}), x1 = xs[s.from], x2 = xs[s.to], yy = s.y + 18, lines = s.label.split('|');
+    el('rect', {x: 0, y: s.y + 2, width: W, height: s.h - 4, class: 'halo'}, g);
+    if (s.from === s.to) {
+      el('path', {d: 'M' + x1 + ' ' + yy + ' h40 v16 h-34', class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + (x1 + 6) + ' ' + (yy + 16) + ' l8 -5 v10 z', fill: c}, g);
+      lines.forEach(function (t, k) { txt(x1 + 48, yy + 4 + k * 13, t, {}, g); });
+    } else {
+      var d = x2 > x1 ? 1 : -1;
+      el('line', {x1: x1, y1: yy, x2: x2 - d * 6, y2: yy, class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + x2 + ' ' + yy + ' l' + (-d * 9) + ' -5 v10 z', fill: c}, g);
+      var est = Math.max.apply(null, lines.map(function (t) { return t.length; })) * 6.2;
+      var cx = Math.min(Math.max((x1 + x2) / 2, 46 + est / 2), W - 10 - est / 2);
+      lines.forEach(function (t, k) { txt(cx, yy - 6 - (lines.length - 1 - k) * 13, t, {'text-anchor': 'middle'}, g); });
+    }
+    el('circle', {cx: 28, cy: yy, r: 9, fill: c}, g);
+    txt(28, yy + 3.5, String(i + 1), {'text-anchor': 'middle', class: 'num'}, g);
+    g.addEventListener('click', function () { go(i); });
+    return g;
+  });
+
+  var legend = root.querySelector('.legend');
+  Object.keys(TAGS).filter(function (t) { return steps.some(function (s) { return s.tag === t; }); })
+    .forEach(function (t) { var s = document.createElement('span'); s.innerHTML = '<i style="background:' + TAGS[t] + '"></i>' + t; legend.appendChild(s); });
+  var state = root.querySelector('.state');
+  stores.forEach(function (st) {
+    var c = document.createElement('div'); c.className = 'card'; c.dataset.store = st.id;
+    c.innerHTML = '<h5></h5><pre></pre>'; c.querySelector('h5').textContent = st.label; state.appendChild(c);
+  });
+
+  var cur = -1, timer = null, playBtn = root.querySelector('[data-go=play]');
+  function stateAt(i) {
+    var st = Object.assign({}, init), ch = {};
+    for (var k = 0; k <= i; k++) { var s = steps[k].state; if (s) for (var key in s) { st[key] = s[key]; ch[key] = (k === i); } }
+    return {st: st, ch: ch};
+  }
+  function go(i) {
+    cur = Math.max(-1, Math.min(steps.length - 1, i));
+    gs.forEach(function (g, k) { g.setAttribute('class', 'step ' + (k < cur ? 'past' : k === cur ? 'active' : 'future')); });
+    var r = stateAt(cur);
+    stores.forEach(function (st) {
+      var c = state.querySelector('[data-store="' + st.id + '"]');
+      c.querySelector('pre').textContent = r.st[st.id] || ''; c.className = 'card' + (r.ch[st.id] ? ' changed' : '');
+    });
+    var where = root.querySelector('.where'), note = root.querySelector('.note');
+    if (cur < 0) { where.textContent = spec.startLabel || 'Start'; note.innerHTML = '<b>Start.</b> Next, the right arrow key, or click a message.'; return; }
+    var s = steps[cur], p = phases[s.ph] || {label: s.ph};
+    where.textContent = 'Step ' + (cur + 1) + ' of ' + steps.length + ' · ' + p.label;
+    note.innerHTML = '<b>' + (cur + 1) + '.</b> ' + s.label.split('|').join(' ') + (s.note ? '<br><span>' + s.note + '</span>' : '');
+    note.style.borderLeftColor = color(s.tag);
+    var wrap = svg.parentNode, top = s.y - wrap.clientHeight / 2;
+    if (Math.abs(wrap.scrollTop - top) > wrap.clientHeight / 3) wrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+  }
+  function play() {
+    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = 'Play'; return; }
+    playBtn.textContent = 'Pause';
+    timer = setInterval(function () { if (cur >= steps.length - 1) play(); else go(cur + 1); }, spec.playMs || 1400);
+  }
+  root.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    ({first: function () { go(-1); }, prev: function () { go(cur - 1); }, next: function () { go(cur + 1); },
+      last: function () { go(steps.length - 1); }, play: play})[b.dataset.go]();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (root.offsetParent === null || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
+  });
+  go(spec.start == null ? -1 : spec.start);
+};
+</script>
