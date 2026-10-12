@@ -121,10 +121,12 @@ published to srht.site and linked from the repo front page.
 14. Version: =desktop/package.json= version == git tag; bump at release.
 
 ** 5 · Front page
-15. ~README.md~: a *Download* section at the very top — Windows installer,
-    Windows zip, Linux AppImage, each a direct =nathanb.srht.site= link, plus
-    the SmartScreen note ("More info → Run anyway") and a pointer to the
-    podman path for server folks. ~README.org~: desktop quickstart section.
+15. ~README.md~: a *Download* section at the very top — *Windows* →
+    =goob-toob-setup.exe=, *Linux* → =goob-toob.AppImage=, each a direct
+    =nathanb.srht.site= link (the portable zip is linked only in releases
+    where it was the published Windows build), plus the SmartScreen note
+    ("More info → Run anyway") and a pointer to the podman path for server
+    folks. ~README.org~: desktop quickstart section.
 
 * Sequence diagram
 #+INCLUDE: "~/.config/opencode/skills/org-plan/diagrams/sequence.html" export html
