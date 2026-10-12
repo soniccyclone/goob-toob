@@ -1,7 +1,7 @@
 (ns goob-toob.routes
   "HTTP API + DASH serving + static SPA shell."
   (:require [reitit.ring :as ring]
-            [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
+            [ring.middleware.json :refer [wrap-json-params wrap-json-response]]
             [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
@@ -161,7 +161,7 @@
 ;; ---- router ------------------------------------------------------------------
 
 (def common [wrap-keyword-params wrap-params wrap-session])
-(def json-body #(wrap-json-body % {:keyword? true}))
+(def json-body #(wrap-json-params % {:key-fn keyword}))
 
 (defn app []
   (let [router
