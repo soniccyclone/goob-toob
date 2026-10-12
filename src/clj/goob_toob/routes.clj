@@ -161,7 +161,7 @@
 ;; ---- router ------------------------------------------------------------------
 
 (def common [wrap-keyword-params wrap-params wrap-session])
-(def json-body (partial wrap-json-body {:keyword? true}))
+(def json-body #(wrap-json-body % {:keyword? true}))
 
 (defn app []
   (let [router
