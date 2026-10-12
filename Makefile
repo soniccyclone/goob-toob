@@ -3,7 +3,7 @@ STORAGE ?= $(CURDIR)/storage
 PASS    ?= goob-dev-password
 PORT    ?= 8080
 
-MOUNTS := -v $(STORAGE):/data -v $(CURDIR):/app -w /app
+MOUNTS := -v $(STORAGE):/data:z -v $(CURDIR):/app:z -w /app
 ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
 .PHONY: image dev run test compile repl clip
@@ -17,7 +17,7 @@ dev:
 
 run:
 	mkdir -p $(STORAGE)
-	podman run --rm -p $(PORT):8080 -v $(STORAGE):/data $(ENV) $(IMAGE)
+	podman run --rm -p $(PORT):8080 -v $(STORAGE):/data:z $(ENV) $(IMAGE)
 
 test:
 	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) clojure -M:test

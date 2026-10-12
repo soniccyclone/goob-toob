@@ -114,10 +114,14 @@
 (defn start! []
   (let [cfg (config/cfg)
         jobs (a/chan 64)]
+    ;; one blocking worker per slot: takes a video id, runs ffmpeg to
+    ;; completion, takes the next. Sequential by design (TRANSCODE_WORKERS).
     (dotimes [_ (:workers cfg)]
-      (a/pipeline-async (a/chan 1) map
-                        (fn [vid] (a/thread (process-job vid)))
-                        jobs))
+      (future
+        (loop []
+          (when-let [vid (a/<!! jobs)]
+            (process-job vid)
+            (recur)))))
     (reset! control {:jobs jobs})
     (doseq [vid (videos/requeue-stuck)] (submit! vid))
     (println "transcode workers:" (:workers cfg))))
