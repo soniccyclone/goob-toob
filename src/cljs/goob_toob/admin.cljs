@@ -21,7 +21,7 @@
           input btn msg))))
 
 (defn- fmt-space [mb]
-  (if (> mb 1024) (str (format "%.1f" (/ mb 1024.0)) " GB") (str mb " MB")))
+  (if (> mb 1024) (str (.toFixed (/ mb 1024.0) 1) " GB") (str mb " MB")))
 
 (defn- render-videos [tbody videos acts]
   (ui/clear! tbody)
@@ -95,7 +95,7 @@
                                                (str (int (* 100 (/ loaded total))) "%")))))
                     (.then (fn [status]
                              (set! (.-textContent label)
-                                   (if (= 2 status)
+                                   (if (<= 200 status 299)
                                      (str (.-name f) " ✓ queued for ffmpeg")
                                      (str (.-name f) " ✗ upload failed")))
                              (refresh-v))))))))

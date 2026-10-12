@@ -16,7 +16,7 @@
         [attrs kids] (if (map? (first args)) [(first args) (rest args)] [{} args])
         attrs (if (seq class-shorthand)
                 (update attrs :class
-                        #(str/join " " (remove nil? [% (str/join "." class-shorthand)])))
+                        #(str/join " " (remove nil? [% (str/replace class-shorthand "." " ")])))
                 attrs)
         node (.createElement js/document tag-shorthand)]
     (doseq [[k v] attrs]
@@ -50,17 +50,20 @@
 (defn now [] (.now js/Date))
 (defn perf-now [] (.now (.-performance js/window)))
 
+(defn- pad2 [n] (if (< n 10) (str "0" n) (str n)))
+
 (defn fmt-time [secs]
   (when (number? secs)
     (let [s (int secs) m (int (/ s 60))]
       (if (>= m 60)
-        (format "%d:%02d:%02d" (int (/ m 60)) (mod m 60) (mod s 60))
-        (format "%d:%02d" m (mod s 60))))))
+        (str (int (/ m 60)) ":" (pad2 (mod m 60)) ":" (pad2 (mod s 60)))
+        (str m ":" (pad2 (mod s 60)))))))
 
 (defn fmt-lag [secs]
   (when (number? secs)
     (let [a (abs secs)]
-      (if (< a 2) "synced" (str (format "%.0f" a) "s " (if (neg? secs) "behind" "ahead"))))))
+      (if (< a 2) "synced"
+        (str (int (js/Math.round a)) "s " (if (neg? secs) "behind" "ahead"))))))
 
 (defn store-get [k] (.getItem js/localStorage k))
 (defn store-set! [k v] (.setItem js/localStorage k v))

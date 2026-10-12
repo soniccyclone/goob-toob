@@ -8,3 +8,4 @@ storage/
 *.db
 *.db-wal
 *.db-shm
+test_data/

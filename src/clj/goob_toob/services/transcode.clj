@@ -94,6 +94,9 @@
               out (java.io.File. (storage/dash-dir video-id) "manifest.mpd")
               media (probe-media (ffprobe in))
               ladder (ladder-for media (:ladder cfg))
+              _ (println (format "transcode start: %s (%.0fs, height %d, ladder %s)"
+                                 (:title video) (:duration media) (:height media)
+                                 (str/join ", " (map :h ladder))))
               _ (videos/set-duration! video-id (:duration media))
               _ (videos/set-status! video-id "transcoding" :progress 0.0)
               {:keys [exit stderr]} (run-ffmpeg (ffmpeg-cmd in out media ladder)
@@ -103,7 +106,8 @@
                 (when-not (:keep-original cfg) (storage/delete-original! video-id))
                 (println "transcoded" (:title video) "-> ready"))
             (do (videos/set-status! video-id "failed" :error stderr)
-                (println "transcode FAILED" (:title video)))))
+                (println "transcode FAILED" (:title video) "::"
+                         (str/join (take-last 300 stderr))))))
         (catch Exception e
           (videos/set-status! video-id "failed" :error (str e))
           (println "transcode ERROR" video-id (.getMessage e)))))))

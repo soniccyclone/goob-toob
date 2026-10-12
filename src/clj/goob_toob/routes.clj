@@ -68,6 +68,8 @@
   (response (for [r (rooms/list-all) :when (= "ready" (:status r))]
               {:token (:token r) :title (:title r)})))
 
+(defn admin-rooms [_] (response (rooms/list-all)))
+
 (defn create-room [{:keys [params]}]
   (try
     (let [r (rooms/create! (:video-id params))]
@@ -96,6 +98,7 @@
             title (or (some-> filename (str/replace #"\.[^.]*$" "") (not-empty)) id)
             dest  (storage/save-upload! (io/file tempfile) id ext)]
         (videos/insert! {:id id :title title :original-path (.getPath dest)})
+        (println (format "upload accepted: %s (%.1f MB) -> %s" filename (/ (or size 0) 1048576.0) id))
         (transcode/submit! id)
         (-> (response {:id id :status "queued" :free-mb (storage/free-space-mb)}) (status 202))))))
 
@@ -197,7 +200,7 @@
            ["/upload" {:post upload
                        :middleware [wrap-multipart-params wrap-keyword-params]}]
            ["/info" {:get storage-info}]
-           ["/rooms" {:post create-room}]
+           ["/rooms" {:get admin-rooms :post create-room}]
            ["/rooms/:id" {:delete delete-room}]]]
          ["/dash/:video-id/*path" {:get dash-file}]
          ["/ws/room/:token" {:get ws/endpoint}]
