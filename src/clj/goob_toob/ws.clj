@@ -32,7 +32,7 @@
     (if-not room-row
       {:status 404 :headers {"Content-Type" "text/plain"} :body "no such room"}
       (let [cid     (str (java.util.UUID/randomUUID))
-            nick    (or (some-> (get-in req [:query-params :nick])
+            nick    (or (some-> (get-in req [:params :nick])
                                 str/trim not-empty (#(apply str (take 32 %))))
                         "guest")
             admin?  (boolean (get-in req [:session :admin]))
