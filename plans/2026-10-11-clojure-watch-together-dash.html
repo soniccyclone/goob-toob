@@ -1,0 +1,606 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-11 Sun 20:47 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>goob-toob: self-hosted watch-together over MPEG-DASH</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">goob-toob: self-hosted watch-together over MPEG-DASH</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4c8da55">Goal</a></li>
+<li><a href="#org9c5f045">Findings</a></li>
+<li><a href="#org2a4ca72">Plan</a>
+<ul>
+<li><a href="#org1c878ed">0 · Toolchain via podman (container/Containerfile, Makefile)</a></li>
+<li><a href="#orga7e5cbf">1 · Scaffold (deps.edn, shadow-cljs.edn, package.json)</a></li>
+<li><a href="#org9253fcf">2 · Repo layer (per ARCHITECTURE.org:11-12)</a></li>
+<li><a href="#org28feb5e">3 · Upload + ffmpeg → MPEG-DASH pipeline (services/transcode.clj)</a></li>
+<li><a href="#orgf5613f5">4 · HTTP API + static serving (routes.clj)</a></li>
+<li><a href="#orgac03a43">5 · Sync service — server-authoritative room clock (ws.clj, services/sync.clj)</a></li>
+<li><a href="#org7fe87c4">6 · Frontend — CLJS + dash.js (src/cljs)</a></li>
+<li><a href="#orga546c92">7 · Auth + deploy docs</a></li>
+</ul>
+</li>
+<li><a href="#org60fcdac">Sync + catch-up journey</a></li>
+<li><a href="#org77d3ccc">Risks and open questions</a></li>
+<li><a href="#orge729d73">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org4c8da55" class="outline-2">
+<h2 id="org4c8da55">Goal</h2>
+<div class="outline-text-2" id="text-org4c8da55">
+<p>
+Build v1 of goob-toob from scratch: a self-hosted "watch together" video app,
+written entirely in Clojure (server) + ClojureScript (browser). The admin runs
+it on their own box, bulk-uploads their video library, and ffmpeg transcodes
+each file into multi-bitrate MPEG-DASH. The admin shares a room URL (over
+Tailscale or a port forward); friends open it and watch in near-perfect sync
+with a server-authoritative clock, a per-viewer resolution picker (auto or a
+locked height), catch-up after buffer stalls, and a lobby chat box where
+everyone joins under a temp nickname — all dressed in a gooey waterpark
+slime-green theme.
+</p>
+</div>
+</div>
+<div id="outline-container-org9c5f045" class="outline-2">
+<h2 id="org9c5f045">Findings</h2>
+<div class="outline-text-2" id="text-org9c5f045">
+<ul class="org-ul">
+<li>The repo is greenfield. One file: <code>ARCHITECTURE.org:1-21</code>. Git history shows
+deleted python and dotnet stubs ("Delete it all again"), so nothing to reuse.</li>
+<li>So: no, there are <i>not</i> many notes about what the app is — just those 21 lines.
+They say: controllers/services/repos layers (<code>ARCHITECTURE.org:6-9</code>), repo
+layer covers both sqlite and the filesystem (<code>ARCHITECTURE.org:11-12</code>),
+services handle web requests + async media work + sockets
+(<code>ARCHITECTURE.org:14-16</code>), static HTML/CSS/JS, no HTMX, vanilla JS, minimal
+DOM churn except a chatbox (<code>ARCHITECTURE.org:18-21</code>).</li>
+<li><code>ARCHITECTURE.org:15</code> says <i>gstreamer</i> for the async media calls; your
+instruction now says ffmpeg. This plan uses ffmpeg; the doc gets updated.</li>
+<li>Host toolchain (checked): java 25, node 22, npm, podman 5.8.7, ffmpeg 8.1.3
+present. Missing: clojure CLI, lein, sqlite3 CLI → podman covers them.</li>
+<li>The host ffmpeg has <i>no</i> <code>libx264</code> (only libopenh264 + hw encoders; verified
+with <code>ffmpeg -encoders</code>). H.264 via libx264 is the safe DASH baseline for all
+browsers, so transcoding runs through a container ffmpeg that has it.</li>
+<li>dash.js (the reference MPEG-DASH browser client) is used as an npm dependency
+through shadow-cljs. Assumption: "must be clojure+clojurescript" means all
+code we write is Clojure/CLJS, not that no JS library may be linked. Writing
+our own DASH client is a much larger project — flagged below.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org2a4ca72" class="outline-2">
+<h2 id="org2a4ca72">Plan</h2>
+<div class="outline-text-2" id="text-org2a4ca72">
+</div>
+<div id="outline-container-org1c878ed" class="outline-3">
+<h3 id="org1c878ed">0 · Toolchain via podman (container/Containerfile, Makefile)</h3>
+<div class="outline-text-3" id="text-org1c878ed">
+<ol class="org-ol">
+<li><code>container/Containerfile</code>: <code>FROM fedora</code>, install <code>java-25-openjdk-headless</code>,
+<code>nodejs</code>, a full ffmpeg with <code>libx264</code> (RPM Fusion or a static build), then
+the official Clojure CLI install script. One image serves dev and deploy.
+Build-time check: <code>ffmpeg -encoders | grep libx264</code> must pass.</li>
+<li><code>Makefile</code>: <code>image</code> (podman build), <code>dev</code> (podman run with the repo bind
+mounted, <code>-p 8080:8080</code>, storage dir mounted at <code>/data</code>, env vars passed,
+<code>clojure -M:dev</code> + shadow-cljs watch), <code>run</code> (prod), <code>test</code>, <code>repl</code>.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-orga7e5cbf" class="outline-3">
+<h3 id="orga7e5cbf">1 · Scaffold (deps.edn, shadow-cljs.edn, package.json)</h3>
+<div class="outline-text-3" id="text-orga7e5cbf">
+<ol class="org-ol">
+<li><code>deps.edn</code>: ring + ring-jetty, reitit, next.jdbc + sqlite-jdbc,
+ring-websocket, org.httpkit/server (websocket-friendly), cheshire,
+core.async, ring-multipart. Aliases: <code>:dev</code>, <code>:test</code>, <code>:shadow</code>.</li>
+<li><code>shadow-cljs.edn</code> + <code>package.json</code> (devDep shadow-cljs, dep <code>dashjs</code>),
+<code>:main</code> builds <code>resources/public/js/main.js</code>.</li>
+<li><code>src/clj/goob_toob/config.clj</code>: env-driven config — <code>STORAGE_DIR</code> (required,
+the admin's chosen video location), <code>ADMIN_PASSWORD</code>, <code>PORT</code>, transcode
+ladder + worker count.</li>
+<li>Layout:</li>
+</ol>
+<pre class="example" id="orga357c55">
+src/clj/goob_toob/core.clj  config.clj  routes.clj  db.clj  ws.clj
+src/clj/goob_toob/repos/{video,room,storage}.clj
+src/clj/goob_toob/services/{transcode,sync}.clj
+src/cljs/goob_toob/{core,api,player,sync,ui}.cljs
+resources/public/{index.html,css/}  resources/migrations/
+test/clj/goob_toob/  container/Containerfile  Makefile  README.org
+</pre>
+</div>
+</div>
+<div id="outline-container-org9253fcf" class="outline-3">
+<h3 id="org9253fcf">2 · Repo layer (per ARCHITECTURE.org:11-12)</h3>
+<div class="outline-text-3" id="text-org9253fcf">
+<ol class="org-ol">
+<li><code>db.clj</code>: sqlite datasource (WAL mode), tiny SQL-file migration runner.</li>
+<li><code>repos/video.clj</code>: <code>videos</code> table — id, title, original path, status
+(<code>uploaded → transcoding → ready | failed</code>), progress %, duration, ladder
+json, error text, timestamps.</li>
+<li><code>repos/room.clj</code>: <code>rooms</code> — id, secret token, video id, created-by,
+created-at.</li>
+<li><code>repos/storage.clj</code>: filesystem under <code>STORAGE_DIR</code> — <code>uploads/&lt;id&gt;.&lt;ext&gt;</code>,
+<code>dash/&lt;id&gt;/manifest.mpd</code> + segments; path-traversal guards, free-space check
+before upload.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org28feb5e" class="outline-3">
+<h3 id="org28feb5e">3 · Upload + ffmpeg → MPEG-DASH pipeline (services/transcode.clj)</h3>
+<div class="outline-text-3" id="text-org28feb5e">
+<ol class="org-ol">
+<li><code>POST /api/admin/videos</code> accepts multipart, streams to <code>uploads/</code>, inserts
+a video row, enqueues a job. Bulk = multiple files in one form post.</li>
+<li>Job queue: core.async channel + worker pool (default 1 worker so encoding
+doesn't starve serving; <code>nice</code> the ffmpeg process).</li>
+<li><code>ffprobe -print_format json</code> for duration/streams; ladder default
+1080/720/480/360 + aac audio, all H.264 so dash.js ABR can switch freely.</li>
+<li>One ffmpeg pass per video producing the whole DASH tree:</li>
+</ol>
+<div class="org-src-container">
+<pre class="src src-sh">ffmpeg -hide_banner -nice 10 -i "$IN" \
+  -filter_complex "[0:v]split=4[s0][s1][s2][s3];[s0]scale=-2:1080[v0];[s1]scale=-2:720[v1];[s2]scale=-2:480[v2];[s3]scale=-2:360[v3]" \
+  -map "[v0]" -map "[v1]" -map "[v2]" -map "[v3]" \
+  -map 0:a:0 -map 0:a:0 -map 0:a:0 -map 0:a:0 \
+  -c:v libx264 -preset veryfast -profile:v high -pix_fmt yuv420p \
+  -g 240 -keyint_min 240 -sc_threshold 0 \
+  -b:v:0 6000k -b:v:1 3000k -b:v:2 1200k -b:v:3 600k \
+  -c:a aac -b:a 128k \
+  -f dash -seg_duration 4 -use_template 1 -use_timeline 0 \
+  -adaptation_sets "id=0,streams=v id=1,streams=a" \
+  -progress pipe:1 -y "$STORAGE_DIR/dash/$ID/manifest.mpd"
+</pre>
+</div>
+<p>
+Exact flags get tuned during implementation; the point is one pass, one
+manifest, GOP-aligned keyframes at segment boundaries so ABR switching is
+clean. <code>-progress</code> output is parsed to update the video row's % complete.
+</p>
+<ol class="org-ol">
+<li>Status transitions + failure capture (tail of stderr into the row).
+<code>KEEP_ORIGINAL</code> env decides whether the source file survives.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-orgf5613f5" class="outline-3">
+<h3 id="orgf5613f5">4 · HTTP API + static serving (routes.clj)</h3>
+<div class="outline-text-3" id="text-orgf5613f5">
+<ol class="org-ol">
+<li>reitit routes: admin login (password → session cookie), admin middleware;
+<code>GET/POST /api/admin/videos</code>, <code>DELETE /api/admin/videos/:id</code>;
+<code>GET /api/videos</code> (public list for the lobby), <code>POST /api/rooms</code> (admin
+creates a room → returns <code>/watch/&lt;token&gt;</code> URL to hand to friends).</li>
+<li>DASH serving: <code>GET /dash/:video-id/manifest.mpd</code> (<code>application/dash+xml</code>)
+and <code>GET /dash/:video-id/:seg</code> with correct types and HTTP Range support
+(ring's <code>resource-ranges</code> middleware covers it).</li>
+<li>Static: shadow-cljs output + css via <code>ring-resource-data</code>.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-orgac03a43" class="outline-3">
+<h3 id="orgac03a43">5 · Sync service — server-authoritative room clock (ws.clj, services/sync.clj)</h3>
+<div class="outline-text-3" id="text-orgac03a43">
+<ol class="org-ol">
+<li>ring-websocket endpoint <code>/ws/room/:token</code>; the room token in the URL is the
+only viewer credential.</li>
+<li>Room state = one atom per room: <code>{:video-id :pos :t0 :playing? :rate}</code> where
+<code>pos</code> is media seconds at monotonic instant <code>t0</code>. Expected position for any
+client = pos + (now − t0) · rate.</li>
+<li>Messages: <code>hello</code> (join, nick), <code>ping/ping-ack</code> (clock-offset estimation),
+host commands <code>play/pause/seek/select-video</code>, <code>heartbeat</code> broadcast every
+2 s, <code>chat</code>, and a viewer <code>status</code> report (local pos, buffering) every 5 s
+so the admin sees who is lagging.</li>
+<li>Host = the room creator (admin) in v1. Viewer messages are chat + status
+only. Server broadcasts every state change immediately.</li>
+<li>All timing on <code>System/nanoTime</code> monotonic clocks; wall clock never used for
+sync math.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org7fe87c4" class="outline-3">
+<h3 id="org7fe87c4">6 · Frontend — CLJS + dash.js (src/cljs)</h3>
+<div class="outline-text-3" id="text-org7fe87c4">
+<ol class="org-ol">
+<li><code>player.cljs</code>: thin dash.js wrapper. Resolution menu: <code>auto</code> → ABR on
+(recommended, best sync); a fixed height → <code>autoSwitch=false</code> + lock the
+matching Representation. Choice persisted per browser in localStorage.</li>
+<li><p>
+<code>sync.cljs</code> — pure, unit-testable functions: offset estimate from ping RTT
+samples (min-RTT, NTP-style); drift = local − expected; policy:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">drift</th>
+<th scope="col" class="org-left">action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">abs &lt; 0.3 s</td>
+<td class="org-left">nothing</td>
+</tr>
+
+<tr>
+<td class="org-left">0.3–1.5 s</td>
+<td class="org-left">playbackRate nudge ±5 % until &lt; 0.15 s</td>
+</tr>
+
+<tr>
+<td class="org-left">abs &gt; 1.5 s</td>
+<td class="org-left">hard seek to expected</td>
+</tr>
+
+<tr>
+<td class="org-left">stalled (buffering)</td>
+<td class="org-left">do nothing until recovery, then policy</td>
+</tr>
+</tbody>
+</table>
+<p>
+The last row <i>is</i> the catch-up feature: the room never pauses for one
+buffering viewer; when their buffer refills the policy snaps them back.
+</p></li>
+<li><code>ui.cljs</code>: lobby (video grid, join/create), watch page (player + resolution
+menu + chat box — the one DOM-heavy area per ARCHITECTURE.org:18-21), admin
+page (storage dir display, en-masse upload with per-file job status,
+library management, room creation + copyable link).</li>
+<li>Nickname on join: first open of a room link shows a join overlay asking
+"who are you?"; the name is a temp handle kept in localStorage (pre-filled
+next time, re-editable), sent in the WS <code>hello</code>, and shown on chat
+messages + the participant list. The participant list is also the admin's
+"who's lagging" view (fed by the 5 s status reports). No accounts — the
+name is cosmetic, not an identity.</li>
+<li>Vanilla-DOM style per ARCHITECTURE.org:19 — plain CLJS DOM interop, no SPA
+framework; pages are static HTML, CLJS hydrates and patches only what
+changes.</li>
+<li>Theme — gooey waterpark slime (hand-written <code>resources/public/css/theme.css</code>,
+CSS custom properties, no CSS framework):
+<ul class="org-ul">
+<li>Palette: deep teal-black water background (<code>#07231F</code>), slime/lime green
+primary (<code>#8FE032</code>), aqua-turquoise splash accent (<code>#1FC8DB</code>), foam white
+text; <i>no orange anywhere</i>.</li>
+<li>Gooey: blobby rounded buttons that merge/stretch on hover (SVG gooey
+blur-contrast filter), dripping-blob accents, wavy section dividers;
+waterpark: aqua gradient washes, pool-tile texture behind the lobby grid,
+bubble animation in the chat box.</li>
+<li>Player chrome stays dark + minimal so video colors aren't tinted; the
+slime goes on the chrome around it (headers, buttons, chat, badges).</li>
+</ul></li>
+</ol>
+</div>
+</div>
+<div id="outline-container-orga546c92" class="outline-3">
+<h3 id="orga546c92">7 · Auth + deploy docs</h3>
+<div class="outline-text-3" id="text-orga546c92">
+<ol class="org-ol">
+<li>Auth: single admin password from env, session cookie, <code>/api/admin/*</code>
+middleware. No user accounts; room URL = capability. Room tokens are long
+random strings; admin login is rate-limited per IP — this matters because
+Funnel puts the whole internet one guess away from the login form.</li>
+<li>README.org sharing options, in order of preference:
+<ul class="org-ul">
+<li><i>Tailscale Funnel</i> (the "send a link to friends" path): <code>tailscale funnel
+     443</code> publishes the app publicly at <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>
+with free TLS — friends need <i>no</i> Tailscale install, just the link.
+One-time: enable Funnel in the Tailscale admin console; Funnel fronts
+only ports 443/8443/10000.</li>
+<li><i>Tailscale Serve</i> (private): friends must run Tailscale and be in your
+tailnet; use for housemates/family machines.</li>
+<li>Raw port forwarding: last resort, ships video + chat unencrypted.</li>
+</ul></li>
+<li>Update ARCHITECTURE.org: gstreamer → ffmpeg, record the layering this plan
+implements.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="outline-container-org60fcdac" class="outline-2">
+<h2 id="org60fcdac">Sync + catch-up journey</h2>
+<div class="outline-text-2" id="text-org60fcdac">
+<p>
+All steps tagged <code>spec</code> — nothing is built yet. Cards show what each store
+holds after the highlighted step.
+</p>
+
+<style>
+.opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
+.opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opseq button{font:inherit;padding:4px 10px;border:1px solid #999;border-radius:4px;background:#f6f6f6;cursor:pointer;color:inherit}
+.opseq button:hover{background:#e9e9e9}
+.opseq .where{font-weight:600;margin-left:6px}
+.opseq .legend{margin-left:auto;display:flex;gap:10px}
+.opseq .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.opseq .svgwrap{overflow:auto;max-height:70vh;border:1px solid #ddd;background:#fff}
+.opseq svg{display:block}
+.opseq .lane rect{fill:#f3f4f6;stroke:#9aa0a6}
+.opseq .lane text{font-weight:600;font-size:13px;fill:#1b1f23}
+.opseq .lane .sub{font-weight:400;font-size:11px;fill:#555}
+.opseq .lifeline{stroke:#c4c8cc;stroke-dasharray:4 4}
+.opseq .phase rect{fill:#fafbfc}
+.opseq .phase text{font-size:12px;font-weight:700;fill:#333}
+.opseq .phase .ptag{font-weight:400;fill:#666}
+.opseq .step{cursor:pointer}
+.opseq .step .line{fill:none;stroke-width:1.6}
+.opseq .step text{font-size:11.5px;fill:#222}
+.opseq .step .num{font-weight:700;fill:#fff;font-size:10px}
+.opseq .step.future{opacity:.28}
+.opseq .step.past{opacity:.75}
+.opseq .halo{fill:none}
+.opseq .step.active .halo{fill:#fff3b0;opacity:.9}
+.opseq .note{margin-top:10px;padding:8px 10px;border-left:3px solid #999;background:#f7f7f9}
+.opseq .note b{margin-right:6px}
+.opseq .note span{color:#444}
+.opseq .state{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.opseq .card{border:1px solid #ddd;border-radius:6px;padding:8px 10px;background:#fcfcfd;min-height:96px}
+.opseq .card h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+.opseq .card.changed{border-color:#d98a00;background:#fff8e6}
+.opseq .card pre{margin:0;white-space:pre-wrap;font:12px/1.4 Menlo,Consolas,monospace;background:none;border:0;padding:0;box-shadow:none}
+</style>
+<script>
+window.orgPlanSequence = function (rootId, spec) {
+  var TAGS = Object.assign({built: '#2e8b57', spec: '#d98a00', browser: '#777', external: '#635bff', async: '#1f78b4'}, spec.tags || {});
+  var lanes = spec.lanes, steps = spec.steps, phases = spec.phases || {}, stores = spec.stores || [], init = spec.init || {};
+  var L = spec.laneWidth || 190, X0 = 110, TOP = 70, ROW = 46, PH = 34, NS = 'http://www.w3.org/2000/svg';
+  var W = X0 + (lanes.length - 1) * L + 120, xs = {};
+  lanes.forEach(function (l, i) { xs[l.id] = X0 + i * L; });
+
+  var root = document.getElementById(rootId);
+  root.className += ' opseq';
+  root.innerHTML = '<div class="bar"><button data-go="first">|&lt;</button><button data-go="prev">&larr; Prev</button>'
+    + '<button data-go="next">Next &rarr;</button><button data-go="last">&gt;|</button><button data-go="play">Play</button>'
+    + '<span class="where"></span><span class="legend"></span></div>'
+    + '<div class="svgwrap"><svg xmlns="' + NS + '"></svg></div><div class="note"></div><div class="state"></div>';
+  var svg = root.querySelector('svg');
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  function txt(x, y, s, a, p) { var t = el('text', Object.assign({x: x, y: y}, a || {}), p); t.textContent = s; return t; }
+  function color(tag) { return TAGS[tag] || '#555'; }
+
+  var y = TOP + 30, lastPh = null, bands = [];
+  steps.forEach(function (s) {
+    if (s.ph !== lastPh) { bands.push({phase: s.ph, y: y}); y += PH + 10; lastPh = s.ph; }
+    var lines = s.label.split('|'); s.y = y; s.h = ROW + (lines.length - 1) * 13; y += s.h;
+  });
+  var H = y + 20;
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  bands.forEach(function (b) {
+    var p = phases[b.phase] || {label: b.phase}, g = el('g', {class: 'phase'});
+    el('rect', {x: 0, y: b.y, width: W, height: PH - 4}, g);
+    txt(16, b.y + 15, p.label, {}, g);
+    if (p.tag) txt(16, b.y + 27, p.tag, {class: 'ptag'}, g);
+  });
+  lanes.forEach(function (l) {
+    var x = xs[l.id], g = el('g', {class: 'lane'});
+    el('line', {x1: x, y1: TOP, x2: x, y2: H, class: 'lifeline'});
+    var bw = Math.min(160, L - 16);
+    el('rect', {x: x - bw / 2, y: 16, width: bw, height: TOP - 24, rx: 5}, g);
+    txt(x, l.sub ? 38 : 46, l.label, {'text-anchor': 'middle'}, g);
+    if (l.sub) txt(x, 54, l.sub, {'text-anchor': 'middle', class: 'sub'}, g);
+  });
+
+  var gs = steps.map(function (s, i) {
+    var c = color(s.tag), g = el('g', {class: 'step'}), x1 = xs[s.from], x2 = xs[s.to], yy = s.y + 18, lines = s.label.split('|');
+    el('rect', {x: 0, y: s.y + 2, width: W, height: s.h - 4, class: 'halo'}, g);
+    if (s.from === s.to) {
+      el('path', {d: 'M' + x1 + ' ' + yy + ' h40 v16 h-34', class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + (x1 + 6) + ' ' + (yy + 16) + ' l8 -5 v10 z', fill: c}, g);
+      lines.forEach(function (t, k) { txt(x1 + 48, yy + 4 + k * 13, t, {}, g); });
+    } else {
+      var d = x2 > x1 ? 1 : -1;
+      el('line', {x1: x1, y1: yy, x2: x2 - d * 6, y2: yy, class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + x2 + ' ' + yy + ' l' + (-d * 9) + ' -5 v10 z', fill: c}, g);
+      var est = Math.max.apply(null, lines.map(function (t) { return t.length; })) * 6.2;
+      var cx = Math.min(Math.max((x1 + x2) / 2, 46 + est / 2), W - 10 - est / 2);
+      lines.forEach(function (t, k) { txt(cx, yy - 6 - (lines.length - 1 - k) * 13, t, {'text-anchor': 'middle'}, g); });
+    }
+    el('circle', {cx: 28, cy: yy, r: 9, fill: c}, g);
+    txt(28, yy + 3.5, String(i + 1), {'text-anchor': 'middle', class: 'num'}, g);
+    g.addEventListener('click', function () { go(i); });
+    return g;
+  });
+
+  var legend = root.querySelector('.legend');
+  Object.keys(TAGS).filter(function (t) { return steps.some(function (s) { return s.tag === t; }); })
+    .forEach(function (t) { var s = document.createElement('span'); s.innerHTML = '<i style="background:' + TAGS[t] + '"></i>' + t; legend.appendChild(s); });
+  var state = root.querySelector('.state');
+  stores.forEach(function (st) {
+    var c = document.createElement('div'); c.className = 'card'; c.dataset.store = st.id;
+    c.innerHTML = '<h5></h5><pre></pre>'; c.querySelector('h5').textContent = st.label; state.appendChild(c);
+  });
+
+  var cur = -1, timer = null, playBtn = root.querySelector('[data-go=play]');
+  function stateAt(i) {
+    var st = Object.assign({}, init), ch = {};
+    for (var k = 0; k <= i; k++) { var s = steps[k].state; if (s) for (var key in s) { st[key] = s[key]; ch[key] = (k === i); } }
+    return {st: st, ch: ch};
+  }
+  function go(i) {
+    cur = Math.max(-1, Math.min(steps.length - 1, i));
+    gs.forEach(function (g, k) { g.setAttribute('class', 'step ' + (k < cur ? 'past' : k === cur ? 'active' : 'future')); });
+    var r = stateAt(cur);
+    stores.forEach(function (st) {
+      var c = state.querySelector('[data-store="' + st.id + '"]');
+      c.querySelector('pre').textContent = r.st[st.id] || ''; c.className = 'card' + (r.ch[st.id] ? ' changed' : '');
+    });
+    var where = root.querySelector('.where'), note = root.querySelector('.note');
+    if (cur < 0) { where.textContent = spec.startLabel || 'Start'; note.innerHTML = '<b>Start.</b> Next, the right arrow key, or click a message.'; return; }
+    var s = steps[cur], p = phases[s.ph] || {label: s.ph};
+    where.textContent = 'Step ' + (cur + 1) + ' of ' + steps.length + ' · ' + p.label;
+    note.innerHTML = '<b>' + (cur + 1) + '.</b> ' + s.label.split('|').join(' ') + (s.note ? '<br><span>' + s.note + '</span>' : '');
+    note.style.borderLeftColor = color(s.tag);
+    var wrap = svg.parentNode, top = s.y - wrap.clientHeight / 2;
+    if (Math.abs(wrap.scrollTop - top) > wrap.clientHeight / 3) wrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+  }
+  function play() {
+    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = 'Play'; return; }
+    playBtn.textContent = 'Pause';
+    timer = setInterval(function () { if (cur >= steps.length - 1) play(); else go(cur + 1); }, spec.playMs || 1400);
+  }
+  root.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    ({first: function () { go(-1); }, prev: function () { go(cur - 1); }, next: function () { go(cur + 1); },
+      last: function () { go(steps.length - 1); }, play: play})[b.dataset.go]();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (root.offsetParent === null || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
+  });
+  go(spec.start == null ? -1 : spec.start);
+};
+</script>
+<div id="journey">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('journey', {
+  lanes: [
+    {id: 'host', label: 'Admin', sub: 'host browser'},
+    {id: 'srv', label: 'Server', sub: 'room clock atom'},
+    {id: 'view', label: 'Viewer', sub: 'dash.js + sync'}
+  ],
+  phases: {
+    join:  {label: '1 · Join', tag: 'spec · ws.clj'},
+    live:  {label: '2 · Live playback', tag: 'spec · services/sync.clj'},
+    stall: {label: '3 · Stall & catch-up', tag: 'spec · cljs sync.cljs'}
+  },
+  stores: [{id: 'room', label: 'Room state (server)'}, {id: 'player', label: 'Viewer player'}],
+  init: {room: 'video X · pos 0 · paused', player: 'nothing'},
+  startLabel: 'Before joining',
+  steps: [
+    {ph: 'join', from: 'view', to: 'srv', tag: 'spec',
+     label: 'WS /ws/room/:token {hello, nick}',
+     note: 'Room token in the shared URL is the only viewer credential.'},
+    {ph: 'join', from: 'view', to: 'srv', tag: 'spec', label: 'ping ×3 (clock probe)'},
+    {ph: 'join', from: 'srv', to: 'view', tag: 'spec',
+     label: 'ping-acks + snapshot {pos, t0, playing}',
+     state: {player: 'clock offset ≈ +40 ms (min-RTT)\nmanifest fetched'},
+     note: 'NTP-style: smallest RTT wins. Monotonic clocks only.'},
+    {ph: 'live', from: 'host', to: 'srv', tag: 'spec', label: 'play {pos 0}',
+     state: {room: 'video X · playing · pos 0 @ t0'}},
+    {ph: 'live', from: 'srv', to: 'view', tag: 'spec',
+     label: 'broadcast {playing, pos, t0}',
+     state: {player: 'expected = pos + (now − t0)'}},
+    {ph: 'live', from: 'srv', to: 'view', tag: 'spec',
+     label: 'heartbeat every 2 s {pos, t0}',
+     note: 'Also re-broadcast on every host action. Heartbeat keeps drift bounded.'},
+    {ph: 'live', from: 'view', to: 'view', tag: 'spec',
+     label: 'drift 0.05 s < 0.3 → no action',
+     state: {player: 'local 12.05 s · expected 12.0 s · drift +0.05 s'}},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'buffer empty → dash.js stalls',
+     note: 'The room keeps playing. No pause propagates for one slow viewer — that is the catch-up design.',
+     state: {player: 'local 41.2 s · expected 55.0 s · drift −13.8 s · STALLED'}},
+    {ph: 'stall', from: 'view', to: 'srv', tag: 'spec',
+     label: 'status {localPos, buffering: true}',
+     note: '5 s status report; admin dashboard shows who is lagging.'},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'buffer refills → drift > 1.5 s → hard seek',
+     state: {player: 'local 55.0 s · drift 0 · playing'},
+     note: 'sync.cljs policy: |drift| > 1.5 s → seek to expected.'},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'small drift 0.3–1.5 s → rate nudge ±5 %',
+     note: 'Imperceptible catch-up until |drift| < 0.15 s, then rate back to 1.',
+     state: {player: 'playbackRate 1.05 → 1.0'}}
+  ]
+});
+</script>
+</div>
+</div>
+<div id="outline-container-org77d3ccc" class="outline-2">
+<h2 id="org77d3ccc">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org77d3ccc">
+<ul class="org-ul">
+<li>ARCHITECTURE.org:15 says gstreamer; you said ffmpeg. Plan follows ffmpeg and
+updates the doc. Say the word if gstreamer was actually meant.</li>
+<li>"MUST be clojure+clojurescript": assumed to allow dash.js as an npm library
+(shadow-cljs npm support). Hand-rolling a DASH client (manifest parse, ABR,
+segment fetch/buffer via MSE) is CLJS-only but multiplies the scope — needs
+your call before building.</li>
+<li>Host model assumed: the admin who creates a room is the sole playback
+controller; viewers watch + chat. No "everyone drives" mode in v1.</li>
+<li>Auth assumed minimal: one admin password via env; room URL is a secret
+capability; nicknames are cosmetic, not identity. Funnel = the app is
+publicly reachable, so the password + room tokens are the entire defense
+(hence rate limiting + long random tokens); Serve mode or raw forwarding
+without TLS is weaker still.</li>
+<li>Host ffmpeg lacks libx264 (verified) → the container image must ship a full
+ffmpeg; <code>make image</code> fails loudly if it doesn't.</li>
+<li>Encoding on the same box that serves streams: CPU contention mid-party.
+Mitigated by 1 transcode worker + <code>nice</code> + <code>veryfast</code>; transcode before the
+party is the documented workflow.</li>
+<li>Room state is in-memory; a server restart drops live rooms (DB rows survive).
+Acceptable for v1.</li>
+<li><code>use_timeline 0</code> + segment templates assumes dash.js template handling; exact
+dash muxer flags get tuned against a real clip early (step 3 is deliberately
+before the frontend).</li>
+<li>Ladder assumes one audio track; multi-audio/subtitles deferred.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orge729d73" class="outline-2">
+<h2 id="orge729d73">Verification</h2>
+<div class="outline-text-2" id="text-orge729d73">
+<ol class="org-ol">
+<li><code>make image</code> builds; inside it <code>ffmpeg -encoders | grep libx264</code> and
+<code>clojure --version</code> pass.</li>
+<li><code>make dev</code> → app on :8080. Set a test <code>STORAGE_DIR</code>.</li>
+<li>Test clip: <code>ffmpeg -f lavfi -i testsrc2</code> + sine audio, 60 s; upload via the
+admin page; watch progress % climb; on <code>ready</code> verify
+<code>dash/&lt;id&gt;/manifest.mpd</code> lists 4 video Representations + audio and segment
+files exist; <code>curl</code> the manifest and one segment (200, right Content-Type).</li>
+<li>Two browser tabs + the admin tab join the room: pause/seek as host → both
+viewers follow within one heartbeat; DevTools network throttling (Slow 3G)
+on one viewer → it stalls, room continues, on recovery it hard-seeks back
+(visible in the sync debug overlay).</li>
+<li>Resolution menu: pick 480p → DevTools network shows only 480p segments;
+<code>auto</code> → ABR switches with throttling.</li>
+<li><code>clojure -X:test</code>: repo-layer tests against a temp sqlite (video lifecycle,
+room tokens) and pure sync-policy tests (drift thresholds, offset estimate).</li>
+<li><code>npx shadow-cljs check client</code> compiles clean; join two tabs with different
+nicknames → both names appear in the participant list and on chat messages,
+and survive a reload via localStorage; eyeball the theme (slime green +
+aqua, no orange anywhere).</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-11</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-11 Sun 20:47</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>
