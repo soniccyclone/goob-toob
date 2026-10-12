@@ -1,0 +1,227 @@
+#+TITLE: Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-12
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+Turn goob-toob into a double-click desktop app for Windows (primary audience)
+and Linux. An Electron shell owns the Clojure server, a *vendored cloudflared*
+gives the admin a public URL to toss at friends with zero setup, the admin
+password disappears for desktop mode (loopback-only admin port instead), the
+storage folder is picked *in-app*, and builds.sr.ht produces the installers,
+published to srht.site and linked from the repo front page.
+
+* Findings
+- Boot today: =clojure -M:dev -m goob-toob.core= (~container/Containerfile:26~);
+  =config/load!= *requires* =STORAGE_DIR= and =ADMIN_PASSWORD=
+  (~src/clj/goob_toob/config.clj:29-34~); one Jetty on one port
+  (~src/clj/goob_toob/core.clj:14-19~).
+- Router: all admin API lives under one =/api/admin= subtree behind
+  =require-admin= (~src/clj/goob_toob/routes.clj:196-204~); WS host status is
+  the session cookie (~src/clj/goob_toob/ws.clj:44~). The admin SPA already
+  asks =/api/admin/me= to decide login-vs-console (~src/cljs/goob_toob/admin.cljs~).
+- ffmpeg is called as bare =ffmpeg= with a Linux-only =nice -n 10= prefix
+  (~src/clj/goob_toob/services/transcode.clj:54~) — no configurable path,
+  breaks on Windows.
+- No uberjar task exists (~deps.edn~ has no =:build= alias).
+- CI today (~.build.yml~): alpine → plans site → =hut pages publish= to
+  =nathanb.srht.site/goob-toob-plans=. srht.site limit: *1 GiB per site*
+  (tarball after decompression), no per-file cap — installers fit if we keep
+  only the latest per platform.
+- git.sr.ht has no release files; builds.sr.ht artifacts expire in 90 days →
+  releases go to =nathanb.srht.site/goob-toob-releases/= (decided).
+- builds.sr.ht runs Linux VMs only. electron-builder cross-packages Windows
+  from Linux natively; *wine is needed only for the NSIS installer*
+  (electron.build docs) — so the portable zip is wine-free (decided: NSIS +
+  zip fallback).
+- cloudflared quick tunnel: =cloudflared tunnel --url http://127.0.0.1:PORT=
+  dials out (no open ports), prints an ephemeral
+  =https://<random>.trycloudflare.com=, no account needed; Apache-2.0 so the
+  binary is redistributable. Binaries: =cloudflared-linux-amd64=,
+  =cloudflared-windows-amd64.exe= from GitHub releases.
+- *Security fact that drives the auth design*: cloudflared runs on the same
+  box, so loopback checks can't protect the admin API — anything on the
+  tunneled port is public. Decided design: *two ports*. Public port (lobby,
+  watch, dash, WS, /api/me) gets the tunnel; a second Jetty bound to
+  =127.0.0.1= serves the admin API + admin SPA + an always-host WS and is
+  never tunneled. Container mode keeps =ADMIN_PASSWORD= login unchanged.
+- Licensing of bundled parts: Temurin JRE (GPLv2+CE, bundling is standard),
+  ffmpeg static builds (GPL — separate process, ship license + source
+  pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.
+
+* Plan
+** 1 · Server: desktop mode with two ports
+1. ~src/clj/goob_toob/config.clj~: =ADMIN_PASSWORD= becomes optional.
+   Mode = =:desktop= when unset, =:container= when set (current behavior).
+   New keys: =:admin-port= (=GOOB_ADMIN_PORT=, default 8081),
+   =:ffmpeg-path= (=FFMPEG_PATH=, default ="ffmpeg"=). =STORAGE_DIR= stays
+   required in both modes.
+2. ~src/clj/goob_toob/routes.clj~: =app= takes ={:keys [admin?]}=. When
+   =admin?= is false: omit the =/api/admin= subtree, =/login=, =/logout= and
+   the =/admin= SPA route. New =wrap-desktop-admin= middleware (assoc
+   =:goob/admin true=) wraps the admin-port handler; =whoami= returns
+   ={:admin true}= when that attribute is present.
+3. ~src/clj/goob_toob/ws.clj~: =admin? = (or (:goob/admin req) session :admin)=
+   — admin-port sockets are always host, public-port sockets unchanged.
+4. ~src/clj/goob_toob/core.clj~: desktop mode starts two Jetty servers —
+   public on =:port= (all interfaces) and admin on =:admin-port= with
+   =:host "127.0.0.1"= (Jetty option). Container mode: single server, as today.
+5. ~src/clj/goob_toob/services/transcode.clj~: ffmpeg binary from
+   =:ffmpeg-path=; drop the =nice= prefix on Windows
+   (=(.contains (System/getProperty "os.name") "Windows")=).
+6. ~src/cljs/goob_toob/watch.cljs~: hide the "admin?" header link unless the
+   welcome said =:is-host= (it would 404 on the public port).
+
+** 2 · Build chain: uberjar + vendored binaries
+7. ~deps.edn~: add =:build= alias (=io.github.clojure/tools.build=) +
+   ~build.clj~ → =target/goob-toob.jar= uberjar.
+8. ~scripts/fetch-vendor.sh~: pinned downloads into ~vendor/<platform>/~ —
+   =cloudflared-linux-amd64= / =cloudflared-windows-amd64.exe= (GitHub
+   release, pinned tag) and static ffmpeg (johnvansickle linux / BtbN
+   win64-gpl), each sha256-checked. Makefile target =vendor=.
+9. Makefile: =uberjar=, =vendor=, =desktop= (=electron-builder --dir= + run,
+   local dev loop).
+
+** 3 · Electron shell (~desktop/~)
+10. ~desktop/package.json~ (electron, electron-builder, electron-store),
+    ~main.js~, ~preload.js~, icon. Boot sequence:
+    - read stored =storageDir=; if none → =dialog.showOpenDialog= first run.
+    - spawn bundled JRE: =java -jar <res>/goob-toob.jar= with env
+      =STORAGE_DIR=, =PORT= (free ephemeral), =GOOB_ADMIN_PORT= (free),
+      =FFMPEG_PATH= (bundled); wait for =GET /api/admin/me= 200.
+    - spawn =cloudflared tunnel --url http://127.0.0.1:<public> --no-autoupdate=;
+      parse the trycloudflare URL from stderr.
+    - open BrowserWindow at =http://127.0.0.1:<admin-port>/admin= (no login —
+      admin port is always-admin).
+    - preload exposes =window.goob= = {tunnelUrl, storageDir,
+      pickStorageDir(), openWatch(token)} via contextBridge + IPC.
+    - =pickStorageDir= → dialog → save config → restart server child → reload.
+      Existing videos keep working (DB stores absolute paths); the new folder
+      applies to new uploads. (Move-library is a follow-up.)
+    - quit / window-close kills both children; single-instance lock.
+11. ~src/cljs/goob_toob/admin.cljs~: a "sharing" card rendered only when
+    =window.goob= exists: tunnel URL + copy button, storage folder + change
+    button. Container mode never sees it.
+12. electron-builder config: appId =org.goobtoob.app=; linux =AppImage=;
+    win =nsis= + =zip=; =extraResources=: jar, =jre/= (Temurin per platform),
+    ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.
+
+** 4 · CI: ~.builds/release.yml~ (manual: =hut builds submit= after tagging)
+13. fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
+    Tasks: uberjar + =shadow-cljs release client= → vendor downloads (both
+    platforms) + Temurin JRE zips (linux + win, Adoptium API, pinned) →
+    =electron-builder --linux AppImage --win nsis zip= → =artifact:= every
+    installer → publish task gated on =git describe --exact-match 'v*'= :
+    tiny =index.html= (links + sha256sums) + tar →
+    =hut pages publish -d nathanb.srht.site -s /goob-toob-releases=.
+    Stable filenames (=goob-toob-setup.exe=, =goob-toob.AppImage=,
+    =goob-toob-win.zip=) so README links never rot.
+14. Version: =desktop/package.json= version == git tag; bump at release.
+
+** 5 · Front page
+15. ~README.md~: a *Download* section at the very top — Windows installer,
+    Windows zip, Linux AppImage, each a direct =nathanb.srht.site= link, plus
+    the SmartScreen note ("More info → Run anyway") and a pointer to the
+    podman path for server folks. ~README.org~: desktop quickstart section.
+
+* Sequence diagram
+#+INCLUDE: "~/.config/opencode/skills/org-plan/diagrams/sequence.html" export html
+#+BEGIN_EXPORT html
+<div id="journey">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('journey', {
+  lanes:  [{id: 'app', label: 'Electron app'}, {id: 'srv', label: 'goob-toob (JVM)'},
+           {id: 'cfd', label: 'cloudflared'}, {id: 'host', label: 'Host browser'},
+           {id: 'fr', label: 'Friend browser'}],
+  phases: {boot: {label: '1 · App boot', tag: 'spec · desktop mode'},
+           share: {label: '2 · Share', tag: 'spec'},
+           watch: {label: '3 · Watch', tag: 'spec'}},
+  stores: [{id: 'cfg', label: 'Electron config'}, {id: 'adm', label: 'admin port (127.0.0.1)'},
+           {id: 'pub', label: 'public port'}, {id: 'cfd', label: 'tunnel'}],
+  init:   {cfg: 'no storage folder yet', adm: '—', pub: '—', cfd: '—'},
+  steps: [
+    {ph: 'boot', from: 'app', to: 'app', tag: 'spec',
+     label: 'first run: dialog.showOpenDialog|→ storageDir',
+     note: 'desktop/main.js (new). Folder picker replaces env-var-only config.',
+     state: {cfg: 'storageDir = D:\\Videos'}},
+    {ph: 'boot', from: 'app', to: 'srv', tag: 'spec',
+     label: 'spawn bundled java -jar goob-toob.jar|STORAGE_DIR, PORT, GOOB_ADMIN_PORT, FFMPEG_PATH',
+     note: 'core.clj desktop mode: two Jetty listeners (plan §1.4).',
+     state: {adm: 'binding 127.0.0.1:8081', pub: 'binding 0.0.0.0:8080'}},
+    {ph: 'boot', from: 'app', to: 'adm', tag: 'spec',
+     label: 'poll GET /api/admin/me → 200 {:admin true}',
+     note: 'routes.clj wrap-desktop-admin: admin port always admin, no login (plan §1.2).',
+     state: {adm: 'up · always-admin · no /login route'}},
+    {ph: 'boot', from: 'app', to: 'cfd', tag: 'spec',
+     label: 'cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate',
+     note: 'quick tunnel dials out; only the PUBLIC port is ever exposed.',
+     state: {cfd: 'starting · anonymous'}},
+    {ph: 'boot', from: 'cfd', to: 'app', tag: 'spec',
+     label: 'stderr: https://xyz.trycloudflare.com',
+     note: 'main.js parses the URL from stderr → IPC to renderer.',
+     state: {cfd: 'live → public port only', pub: 'no /api/admin, no /login'}},
+    {ph: 'boot', from: 'app', to: 'host', tag: 'spec',
+     label: 'BrowserWindow → http://127.0.0.1:8081/admin',
+     note: 'admin SPA sees window.goob → sharing card with tunnel URL.',
+     state: {adm: 'admin console, zero login'}},
+    {ph: 'share', from: 'host', to: 'app', tag: 'spec',
+     label: 'copy tunnel URL from sharing card'},
+    {ph: 'share', from: 'fr', to: 'pub', tag: 'spec',
+     label: 'GET https://xyz.trycloudflare.com/watch/<token>',
+     note: 'friends only ever reach the public port; admin port unroutable.',
+     state: {pub: 'watch page + /dash + WS'}},
+    {ph: 'share', from: 'fr', to: 'pub', tag: 'spec',
+     label: 'WS /ws/room/<token> → welcome :can-control false',
+     note: 'ws.clj:30 per-message control check still applies (co-host flag).',
+     state: {pub: 'viewer joined · admin? = false'}},
+    {ph: 'watch', from: 'host', to: 'adm', tag: 'spec',
+     label: 'openWatch → WS on admin port → welcome :is-host true',
+     note: 'host drives playback from localhost; friends follow.',
+     state: {adm: 'host socket · playback cmds accepted'}}
+  ]
+});
+</script>
+#+END_EXPORT
+
+* Risks and open questions
+- *srht.site budget*: 1 GiB per site shared with the plans site; three
+  installers ≈ 550–650 MB. Fits, but tight — if it overflows, drop the
+  portable zip or move releases to Codeberg (decision reversible, links are
+  one file).
+- *wine/NSIS flakiness in CI*: the portable zip is always built, so a wine
+  hiccup costs the installer, never the release.
+- *Unsigned Windows exe* → SmartScreen "unknown publisher" warning; documented
+  in README. Code signing certs are out of scope.
+- *Quick tunnels are personal-use* per Cloudflare ToS: ephemeral URL per
+  launch, no uptime promise. Right-sized for a watch party; say so in README.
+- *Two-port invariant*: the public port must never gain admin routes —
+  regression-tested (new CLJ test asserts 404 on =/api/admin/*= when
+  =admin?= is false).
+- *Full Temurin JRE bundled (~45 MB compressed)* rather than jlink-trimmed:
+  robust first, jlink later as a size win.
+- ffmpeg is GPL and cloudflared Apache: bundle =THIRD-PARTY.org~ with
+  licenses + source pointers; AGPL app source = the repo link.
+- Storage-dir change applies to new uploads only (absolute paths in DB);
+  "move library" is a follow-up plan.
+- Auto-update: out of scope; README says "download the latest".
+- Container mode must not regress: =ADMIN_PASSWORD= set → today's single-port
+  behavior, byte-for-byte.
+
+* Verification
+1. =make test= — new route tests: =app {:admin? false}= → =/api/admin/videos=
+   404, =/login= 404; =app {:admin? true}= + =wrap-desktop-admin= → =/me=
+   ={:admin true}= without a session. Container-mode tests unchanged.
+2. Local desktop loop: =make uberjar vendor= → =cd desktop && npm start=:
+   first-run folder picker → window shows admin console *no login* → sharing
+   card shows the tunnel URL → =curl <tunnel>/api/admin/me= must be *404*
+   (proof the admin API is not exposed) → =curl <tunnel>/api/me= →
+   ={:admin false}=.
+3. Upload via drop zone → transcode → make room → open the watch link
+   (host, admin port) → native play → friend tab via the tunnel URL parks on
+   the live frame → play → in sync; co-host toggle still live.
+4. Windows: =hut builds submit .builds/release.yml= on a =v0.1.0= tag →
+   artifacts present → installer runs in a Windows VM: first run, upload,
+   tunnel URL, watch from a phone over the tunnel.
+5. Releases page =nathanb.srht.site/goob-toob-releases/= lists installers +
+   sha256; README.md links download the right binaries; =make run= (container
+   mode) still logs in with =ADMIN_PASSWORD= as before.

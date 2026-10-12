@@ -1,0 +1,479 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-12 Mon 18:46 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org00e78b5">Goal</a></li>
+<li><a href="#org25036a4">Findings</a></li>
+<li><a href="#org8154c19">Plan</a>
+<ul>
+<li><a href="#org72bff27">1 · Server: desktop mode with two ports</a></li>
+<li><a href="#org465f5f8">2 · Build chain: uberjar + vendored binaries</a></li>
+<li><a href="#org7a2eb65">3 · Electron shell (<code>desktop/</code>)</a></li>
+<li><a href="#org3fe0ece">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
+<li><a href="#org1b59fe2">5 · Front page</a></li>
+</ul>
+</li>
+<li><a href="#orge05faf9">Sequence diagram</a></li>
+<li><a href="#orgb763d45">Risks and open questions</a></li>
+<li><a href="#org6264aeb">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org00e78b5" class="outline-2">
+<h2 id="org00e78b5">Goal</h2>
+<div class="outline-text-2" id="text-org00e78b5">
+<p>
+Turn goob-toob into a double-click desktop app for Windows (primary audience)
+and Linux. An Electron shell owns the Clojure server, a <b>vendored cloudflared</b>
+gives the admin a public URL to toss at friends with zero setup, the admin
+password disappears for desktop mode (loopback-only admin port instead), the
+storage folder is picked <b>in-app</b>, and builds.sr.ht produces the installers,
+published to srht.site and linked from the repo front page.
+</p>
+</div>
+</div>
+<div id="outline-container-org25036a4" class="outline-2">
+<h2 id="org25036a4">Findings</h2>
+<div class="outline-text-2" id="text-org25036a4">
+<ul class="org-ul">
+<li>Boot today: <code>clojure -M:dev -m goob-toob.core</code> (<code>container/Containerfile:26</code>);
+<code>config/load!</code> <b>requires</b> <code>STORAGE_DIR</code> and <code>ADMIN_PASSWORD</code>
+(<code>src/clj/goob_toob/config.clj:29-34</code>); one Jetty on one port
+(<code>src/clj/goob_toob/core.clj:14-19</code>).</li>
+<li>Router: all admin API lives under one <code>/api/admin</code> subtree behind
+<code>require-admin</code> (<code>src/clj/goob_toob/routes.clj:196-204</code>); WS host status is
+the session cookie (<code>src/clj/goob_toob/ws.clj:44</code>). The admin SPA already
+asks <code>/api/admin/me</code> to decide login-vs-console (<code>src/cljs/goob_toob/admin.cljs</code>).</li>
+<li>ffmpeg is called as bare <code>ffmpeg</code> with a Linux-only <code>nice -n 10</code> prefix
+(<code>src/clj/goob_toob/services/transcode.clj:54</code>) — no configurable path,
+breaks on Windows.</li>
+<li>No uberjar task exists (<code>deps.edn</code> has no <code>:build</code> alias).</li>
+<li>CI today (<code>.build.yml</code>): alpine → plans site → <code>hut pages publish</code> to
+<code>nathanb.srht.site/goob-toob-plans</code>. srht.site limit: <b>1 GiB per site</b>
+(tarball after decompression), no per-file cap — installers fit if we keep
+only the latest per platform.</li>
+<li>git.sr.ht has no release files; builds.sr.ht artifacts expire in 90 days →
+releases go to <code>nathanb.srht.site/goob-toob-releases/</code> (decided).</li>
+<li>builds.sr.ht runs Linux VMs only. electron-builder cross-packages Windows
+from Linux natively; <b>wine is needed only for the NSIS installer</b>
+(electron.build docs) — so the portable zip is wine-free (decided: NSIS +
+zip fallback).</li>
+<li>cloudflared quick tunnel: <code>cloudflared tunnel --url http://127.0.0.1:PORT</code>
+dials out (no open ports), prints an ephemeral
+<code>https://&lt;random&gt;.trycloudflare.com</code>, no account needed; Apache-2.0 so the
+binary is redistributable. Binaries: <code>cloudflared-linux-amd64</code>,
+<code>cloudflared-windows-amd64.exe</code> from GitHub releases.</li>
+<li><b>Security fact that drives the auth design</b>: cloudflared runs on the same
+box, so loopback checks can't protect the admin API — anything on the
+tunneled port is public. Decided design: <b>two ports</b>. Public port (lobby,
+watch, dash, WS, /api/me) gets the tunnel; a second Jetty bound to
+<code>127.0.0.1</code> serves the admin API + admin SPA + an always-host WS and is
+never tunneled. Container mode keeps <code>ADMIN_PASSWORD</code> login unchanged.</li>
+<li>Licensing of bundled parts: Temurin JRE (GPLv2+CE, bundling is standard),
+ffmpeg static builds (GPL — separate process, ship license + source
+pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org8154c19" class="outline-2">
+<h2 id="org8154c19">Plan</h2>
+<div class="outline-text-2" id="text-org8154c19">
+</div>
+<div id="outline-container-org72bff27" class="outline-3">
+<h3 id="org72bff27">1 · Server: desktop mode with two ports</h3>
+<div class="outline-text-3" id="text-org72bff27">
+<ol class="org-ol">
+<li><code>src/clj/goob_toob/config.clj</code>: <code>ADMIN_PASSWORD</code> becomes optional.
+Mode = <code>:desktop</code> when unset, <code>:container</code> when set (current behavior).
+New keys: <code>:admin-port</code> (<code>GOOB_ADMIN_PORT</code>, default 8081),
+<code>:ffmpeg-path</code> (<code>FFMPEG_PATH</code>, default <code>"ffmpeg"</code>). <code>STORAGE_DIR</code> stays
+required in both modes.</li>
+<li><code>src/clj/goob_toob/routes.clj</code>: <code>app</code> takes <code>{:keys [admin?]}</code>. When
+<code>admin?</code> is false: omit the <code>/api/admin</code> subtree, <code>/login</code>, <code>/logout</code> and
+the <code>/admin</code> SPA route. New <code>wrap-desktop-admin</code> middleware (assoc
+<code>:goob/admin true</code>) wraps the admin-port handler; <code>whoami</code> returns
+<code>{:admin true}</code> when that attribute is present.</li>
+<li><code>src/clj/goob_toob/ws.clj</code>: <code>admin? = (or (:goob/admin req) session :admin)</code>
+— admin-port sockets are always host, public-port sockets unchanged.</li>
+<li><code>src/clj/goob_toob/core.clj</code>: desktop mode starts two Jetty servers —
+public on <code>:port</code> (all interfaces) and admin on <code>:admin-port</code> with
+<code>:host "127.0.0.1"</code> (Jetty option). Container mode: single server, as today.</li>
+<li><code>src/clj/goob_toob/services/transcode.clj</code>: ffmpeg binary from
+<code>:ffmpeg-path</code>; drop the <code>nice</code> prefix on Windows
+(<code>(.contains (System/getProperty "os.name") "Windows")</code>).</li>
+<li><code>src/cljs/goob_toob/watch.cljs</code>: hide the "admin?" header link unless the
+welcome said <code>:is-host</code> (it would 404 on the public port).</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org465f5f8" class="outline-3">
+<h3 id="org465f5f8">2 · Build chain: uberjar + vendored binaries</h3>
+<div class="outline-text-3" id="text-org465f5f8">
+<ol class="org-ol">
+<li><code>deps.edn</code>: add <code>:build</code> alias (<code>io.github.clojure/tools.build</code>) +
+<code>build.clj</code> → <code>target/goob-toob.jar</code> uberjar.</li>
+<li><code>scripts/fetch-vendor.sh</code>: pinned downloads into <code>vendor/&lt;platform&gt;/</code> —
+<code>cloudflared-linux-amd64</code> / <code>cloudflared-windows-amd64.exe</code> (GitHub
+release, pinned tag) and static ffmpeg (johnvansickle linux / BtbN
+win64-gpl), each sha256-checked. Makefile target <code>vendor</code>.</li>
+<li>Makefile: <code>uberjar</code>, <code>vendor</code>, <code>desktop</code> (<code>electron-builder --dir</code> + run,
+local dev loop).</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org7a2eb65" class="outline-3">
+<h3 id="org7a2eb65">3 · Electron shell (<code>desktop/</code>)</h3>
+<div class="outline-text-3" id="text-org7a2eb65">
+<ol class="org-ol">
+<li><code>desktop/package.json</code> (electron, electron-builder, electron-store),
+<code>main.js</code>, <code>preload.js</code>, icon. Boot sequence:
+<ul class="org-ul">
+<li>read stored <code>storageDir</code>; if none → <code>dialog.showOpenDialog</code> first run.</li>
+<li>spawn bundled JRE: <code>java -jar &lt;res&gt;/goob-toob.jar</code> with env
+<code>STORAGE_DIR</code>, <code>PORT</code> (free ephemeral), <code>GOOB_ADMIN_PORT</code> (free),
+<code>FFMPEG_PATH</code> (bundled); wait for <code>GET /api/admin/me</code> 200.</li>
+<li>spawn <code>cloudflared tunnel --url http://127.0.0.1:&lt;public&gt; --no-autoupdate</code>;
+parse the trycloudflare URL from stderr.</li>
+<li>open BrowserWindow at <code>http://127.0.0.1:&lt;admin-port&gt;/admin</code> (no login —
+admin port is always-admin).</li>
+<li>preload exposes <code>window.goob</code> = {tunnelUrl, storageDir,
+pickStorageDir(), openWatch(token)} via contextBridge + IPC.</li>
+<li><code>pickStorageDir</code> → dialog → save config → restart server child → reload.
+Existing videos keep working (DB stores absolute paths); the new folder
+applies to new uploads. (Move-library is a follow-up.)</li>
+<li>quit / window-close kills both children; single-instance lock.</li>
+</ul></li>
+<li><code>src/cljs/goob_toob/admin.cljs</code>: a "sharing" card rendered only when
+<code>window.goob</code> exists: tunnel URL + copy button, storage folder + change
+button. Container mode never sees it.</li>
+<li>electron-builder config: appId <code>org.goobtoob.app</code>; linux <code>AppImage</code>;
+win <code>nsis</code> + <code>zip</code>; <code>extraResources</code>: jar, <code>jre/</code> (Temurin per platform),
+ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org3fe0ece" class="outline-3">
+<h3 id="org3fe0ece">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
+<div class="outline-text-3" id="text-org3fe0ece">
+<ol class="org-ol">
+<li>fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
+Tasks: uberjar + <code>shadow-cljs release client</code> → vendor downloads (both
+platforms) + Temurin JRE zips (linux + win, Adoptium API, pinned) →
+<code>electron-builder --linux AppImage --win nsis zip</code> → <code>artifact:</code> every
+installer → publish task gated on <code>git describe --exact-match 'v*'</code> :
+tiny <code>index.html</code> (links + sha256sums) + tar →
+<code>hut pages publish -d nathanb.srht.site -s /goob-toob-releases</code>.
+Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</code>,
+<code>goob-toob-win.zip</code>) so README links never rot.</li>
+<li>Version: <code>desktop/package.json</code> version == git tag; bump at release.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org1b59fe2" class="outline-3">
+<h3 id="org1b59fe2">5 · Front page</h3>
+<div class="outline-text-3" id="text-org1b59fe2">
+<ol class="org-ol">
+<li><code>README.md</code>: a <b>Download</b> section at the very top — Windows installer,
+Windows zip, Linux AppImage, each a direct <code>nathanb.srht.site</code> link, plus
+the SmartScreen note ("More info → Run anyway") and a pointer to the
+podman path for server folks. <code>README.org</code>: desktop quickstart section.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="outline-container-orge05faf9" class="outline-2">
+<h2 id="orge05faf9">Sequence diagram</h2>
+<div class="outline-text-2" id="text-orge05faf9">
+<style>
+.opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
+.opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opseq button{font:inherit;padding:4px 10px;border:1px solid #999;border-radius:4px;background:#f6f6f6;cursor:pointer;color:inherit}
+.opseq button:hover{background:#e9e9e9}
+.opseq .where{font-weight:600;margin-left:6px}
+.opseq .legend{margin-left:auto;display:flex;gap:10px}
+.opseq .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.opseq .svgwrap{overflow:auto;max-height:70vh;border:1px solid #ddd;background:#fff}
+.opseq svg{display:block}
+.opseq .lane rect{fill:#f3f4f6;stroke:#9aa0a6}
+.opseq .lane text{font-weight:600;font-size:13px;fill:#1b1f23}
+.opseq .lane .sub{font-weight:400;font-size:11px;fill:#555}
+.opseq .lifeline{stroke:#c4c8cc;stroke-dasharray:4 4}
+.opseq .phase rect{fill:#fafbfc}
+.opseq .phase text{font-size:12px;font-weight:700;fill:#333}
+.opseq .phase .ptag{font-weight:400;fill:#666}
+.opseq .step{cursor:pointer}
+.opseq .step .line{fill:none;stroke-width:1.6}
+.opseq .step text{font-size:11.5px;fill:#222}
+.opseq .step .num{font-weight:700;fill:#fff;font-size:10px}
+.opseq .step.future{opacity:.28}
+.opseq .step.past{opacity:.75}
+.opseq .halo{fill:none}
+.opseq .step.active .halo{fill:#fff3b0;opacity:.9}
+.opseq .note{margin-top:10px;padding:8px 10px;border-left:3px solid #999;background:#f7f7f9}
+.opseq .note b{margin-right:6px}
+.opseq .note span{color:#444}
+.opseq .state{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.opseq .card{border:1px solid #ddd;border-radius:6px;padding:8px 10px;background:#fcfcfd;min-height:96px}
+.opseq .card h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+.opseq .card.changed{border-color:#d98a00;background:#fff8e6}
+.opseq .card pre{margin:0;white-space:pre-wrap;font:12px/1.4 Menlo,Consolas,monospace;background:none;border:0;padding:0;box-shadow:none}
+</style>
+<script>
+window.orgPlanSequence = function (rootId, spec) {
+  var TAGS = Object.assign({built: '#2e8b57', spec: '#d98a00', browser: '#777', external: '#635bff', async: '#1f78b4'}, spec.tags || {});
+  var lanes = spec.lanes, steps = spec.steps, phases = spec.phases || {}, stores = spec.stores || [], init = spec.init || {};
+  var L = spec.laneWidth || 190, X0 = 110, TOP = 70, ROW = 46, PH = 34, NS = 'http://www.w3.org/2000/svg';
+  var W = X0 + (lanes.length - 1) * L + 120, xs = {};
+  lanes.forEach(function (l, i) { xs[l.id] = X0 + i * L; });
+
+  var root = document.getElementById(rootId);
+  root.className += ' opseq';
+  root.innerHTML = '<div class="bar"><button data-go="first">|&lt;</button><button data-go="prev">&larr; Prev</button>'
+    + '<button data-go="next">Next &rarr;</button><button data-go="last">&gt;|</button><button data-go="play">Play</button>'
+    + '<span class="where"></span><span class="legend"></span></div>'
+    + '<div class="svgwrap"><svg xmlns="' + NS + '"></svg></div><div class="note"></div><div class="state"></div>';
+  var svg = root.querySelector('svg');
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  function txt(x, y, s, a, p) { var t = el('text', Object.assign({x: x, y: y}, a || {}), p); t.textContent = s; return t; }
+  function color(tag) { return TAGS[tag] || '#555'; }
+
+  var y = TOP + 30, lastPh = null, bands = [];
+  steps.forEach(function (s) {
+    if (s.ph !== lastPh) { bands.push({phase: s.ph, y: y}); y += PH + 10; lastPh = s.ph; }
+    var lines = s.label.split('|'); s.y = y; s.h = ROW + (lines.length - 1) * 13; y += s.h;
+  });
+  var H = y + 20;
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  bands.forEach(function (b) {
+    var p = phases[b.phase] || {label: b.phase}, g = el('g', {class: 'phase'});
+    el('rect', {x: 0, y: b.y, width: W, height: PH - 4}, g);
+    txt(16, b.y + 15, p.label, {}, g);
+    if (p.tag) txt(16, b.y + 27, p.tag, {class: 'ptag'}, g);
+  });
+  lanes.forEach(function (l) {
+    var x = xs[l.id], g = el('g', {class: 'lane'});
+    el('line', {x1: x, y1: TOP, x2: x, y2: H, class: 'lifeline'});
+    var bw = Math.min(160, L - 16);
+    el('rect', {x: x - bw / 2, y: 16, width: bw, height: TOP - 24, rx: 5}, g);
+    txt(x, l.sub ? 38 : 46, l.label, {'text-anchor': 'middle'}, g);
+    if (l.sub) txt(x, 54, l.sub, {'text-anchor': 'middle', class: 'sub'}, g);
+  });
+
+  var gs = steps.map(function (s, i) {
+    var c = color(s.tag), g = el('g', {class: 'step'}), x1 = xs[s.from], x2 = xs[s.to], yy = s.y + 18, lines = s.label.split('|');
+    el('rect', {x: 0, y: s.y + 2, width: W, height: s.h - 4, class: 'halo'}, g);
+    if (s.from === s.to) {
+      el('path', {d: 'M' + x1 + ' ' + yy + ' h40 v16 h-34', class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + (x1 + 6) + ' ' + (yy + 16) + ' l8 -5 v10 z', fill: c}, g);
+      lines.forEach(function (t, k) { txt(x1 + 48, yy + 4 + k * 13, t, {}, g); });
+    } else {
+      var d = x2 > x1 ? 1 : -1;
+      el('line', {x1: x1, y1: yy, x2: x2 - d * 6, y2: yy, class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + x2 + ' ' + yy + ' l' + (-d * 9) + ' -5 v10 z', fill: c}, g);
+      var est = Math.max.apply(null, lines.map(function (t) { return t.length; })) * 6.2;
+      var cx = Math.min(Math.max((x1 + x2) / 2, 46 + est / 2), W - 10 - est / 2);
+      lines.forEach(function (t, k) { txt(cx, yy - 6 - (lines.length - 1 - k) * 13, t, {'text-anchor': 'middle'}, g); });
+    }
+    el('circle', {cx: 28, cy: yy, r: 9, fill: c}, g);
+    txt(28, yy + 3.5, String(i + 1), {'text-anchor': 'middle', class: 'num'}, g);
+    g.addEventListener('click', function () { go(i); });
+    return g;
+  });
+
+  var legend = root.querySelector('.legend');
+  Object.keys(TAGS).filter(function (t) { return steps.some(function (s) { return s.tag === t; }); })
+    .forEach(function (t) { var s = document.createElement('span'); s.innerHTML = '<i style="background:' + TAGS[t] + '"></i>' + t; legend.appendChild(s); });
+  var state = root.querySelector('.state');
+  stores.forEach(function (st) {
+    var c = document.createElement('div'); c.className = 'card'; c.dataset.store = st.id;
+    c.innerHTML = '<h5></h5><pre></pre>'; c.querySelector('h5').textContent = st.label; state.appendChild(c);
+  });
+
+  var cur = -1, timer = null, playBtn = root.querySelector('[data-go=play]');
+  function stateAt(i) {
+    var st = Object.assign({}, init), ch = {};
+    for (var k = 0; k <= i; k++) { var s = steps[k].state; if (s) for (var key in s) { st[key] = s[key]; ch[key] = (k === i); } }
+    return {st: st, ch: ch};
+  }
+  function go(i) {
+    cur = Math.max(-1, Math.min(steps.length - 1, i));
+    gs.forEach(function (g, k) { g.setAttribute('class', 'step ' + (k < cur ? 'past' : k === cur ? 'active' : 'future')); });
+    var r = stateAt(cur);
+    stores.forEach(function (st) {
+      var c = state.querySelector('[data-store="' + st.id + '"]');
+      c.querySelector('pre').textContent = r.st[st.id] || ''; c.className = 'card' + (r.ch[st.id] ? ' changed' : '');
+    });
+    var where = root.querySelector('.where'), note = root.querySelector('.note');
+    if (cur < 0) { where.textContent = spec.startLabel || 'Start'; note.innerHTML = '<b>Start.</b> Next, the right arrow key, or click a message.'; return; }
+    var s = steps[cur], p = phases[s.ph] || {label: s.ph};
+    where.textContent = 'Step ' + (cur + 1) + ' of ' + steps.length + ' · ' + p.label;
+    note.innerHTML = '<b>' + (cur + 1) + '.</b> ' + s.label.split('|').join(' ') + (s.note ? '<br><span>' + s.note + '</span>' : '');
+    note.style.borderLeftColor = color(s.tag);
+    var wrap = svg.parentNode, top = s.y - wrap.clientHeight / 2;
+    if (Math.abs(wrap.scrollTop - top) > wrap.clientHeight / 3) wrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+  }
+  function play() {
+    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = 'Play'; return; }
+    playBtn.textContent = 'Pause';
+    timer = setInterval(function () { if (cur >= steps.length - 1) play(); else go(cur + 1); }, spec.playMs || 1400);
+  }
+  root.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    ({first: function () { go(-1); }, prev: function () { go(cur - 1); }, next: function () { go(cur + 1); },
+      last: function () { go(steps.length - 1); }, play: play})[b.dataset.go]();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (root.offsetParent === null || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
+  });
+  go(spec.start == null ? -1 : spec.start);
+};
+</script>
+<div id="journey">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('journey', {
+  lanes:  [{id: 'app', label: 'Electron app'}, {id: 'srv', label: 'goob-toob (JVM)'},
+           {id: 'cfd', label: 'cloudflared'}, {id: 'host', label: 'Host browser'},
+           {id: 'fr', label: 'Friend browser'}],
+  phases: {boot: {label: '1 · App boot', tag: 'spec · desktop mode'},
+           share: {label: '2 · Share', tag: 'spec'},
+           watch: {label: '3 · Watch', tag: 'spec'}},
+  stores: [{id: 'cfg', label: 'Electron config'}, {id: 'adm', label: 'admin port (127.0.0.1)'},
+           {id: 'pub', label: 'public port'}, {id: 'cfd', label: 'tunnel'}],
+  init:   {cfg: 'no storage folder yet', adm: '—', pub: '—', cfd: '—'},
+  steps: [
+    {ph: 'boot', from: 'app', to: 'app', tag: 'spec',
+     label: 'first run: dialog.showOpenDialog|→ storageDir',
+     note: 'desktop/main.js (new). Folder picker replaces env-var-only config.',
+     state: {cfg: 'storageDir = D:\\Videos'}},
+    {ph: 'boot', from: 'app', to: 'srv', tag: 'spec',
+     label: 'spawn bundled java -jar goob-toob.jar|STORAGE_DIR, PORT, GOOB_ADMIN_PORT, FFMPEG_PATH',
+     note: 'core.clj desktop mode: two Jetty listeners (plan §1.4).',
+     state: {adm: 'binding 127.0.0.1:8081', pub: 'binding 0.0.0.0:8080'}},
+    {ph: 'boot', from: 'app', to: 'adm', tag: 'spec',
+     label: 'poll GET /api/admin/me → 200 {:admin true}',
+     note: 'routes.clj wrap-desktop-admin: admin port always admin, no login (plan §1.2).',
+     state: {adm: 'up · always-admin · no /login route'}},
+    {ph: 'boot', from: 'app', to: 'cfd', tag: 'spec',
+     label: 'cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate',
+     note: 'quick tunnel dials out; only the PUBLIC port is ever exposed.',
+     state: {cfd: 'starting · anonymous'}},
+    {ph: 'boot', from: 'cfd', to: 'app', tag: 'spec',
+     label: 'stderr: https://xyz.trycloudflare.com',
+     note: 'main.js parses the URL from stderr → IPC to renderer.',
+     state: {cfd: 'live → public port only', pub: 'no /api/admin, no /login'}},
+    {ph: 'boot', from: 'app', to: 'host', tag: 'spec',
+     label: 'BrowserWindow → http://127.0.0.1:8081/admin',
+     note: 'admin SPA sees window.goob → sharing card with tunnel URL.',
+     state: {adm: 'admin console, zero login'}},
+    {ph: 'share', from: 'host', to: 'app', tag: 'spec',
+     label: 'copy tunnel URL from sharing card'},
+    {ph: 'share', from: 'fr', to: 'pub', tag: 'spec',
+     label: 'GET https://xyz.trycloudflare.com/watch/<token>',
+     note: 'friends only ever reach the public port; admin port unroutable.',
+     state: {pub: 'watch page + /dash + WS'}},
+    {ph: 'share', from: 'fr', to: 'pub', tag: 'spec',
+     label: 'WS /ws/room/<token> → welcome :can-control false',
+     note: 'ws.clj:30 per-message control check still applies (co-host flag).',
+     state: {pub: 'viewer joined · admin? = false'}},
+    {ph: 'watch', from: 'host', to: 'adm', tag: 'spec',
+     label: 'openWatch → WS on admin port → welcome :is-host true',
+     note: 'host drives playback from localhost; friends follow.',
+     state: {adm: 'host socket · playback cmds accepted'}}
+  ]
+});
+</script>
+</div>
+</div>
+<div id="outline-container-orgb763d45" class="outline-2">
+<h2 id="orgb763d45">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orgb763d45">
+<ul class="org-ul">
+<li><b>srht.site budget</b>: 1 GiB per site shared with the plans site; three
+installers ≈ 550–650 MB. Fits, but tight — if it overflows, drop the
+portable zip or move releases to Codeberg (decision reversible, links are
+one file).</li>
+<li><b>wine/NSIS flakiness in CI</b>: the portable zip is always built, so a wine
+hiccup costs the installer, never the release.</li>
+<li><b>Unsigned Windows exe</b> → SmartScreen "unknown publisher" warning; documented
+in README. Code signing certs are out of scope.</li>
+<li><b>Quick tunnels are personal-use</b> per Cloudflare ToS: ephemeral URL per
+launch, no uptime promise. Right-sized for a watch party; say so in README.</li>
+<li><b>Two-port invariant</b>: the public port must never gain admin routes —
+regression-tested (new CLJ test asserts 404 on <code>/api/admin/*</code> when
+<code>admin?</code> is false).</li>
+<li><b>Full Temurin JRE bundled (~45 MB compressed)</b> rather than jlink-trimmed:
+robust first, jlink later as a size win.</li>
+<li>ffmpeg is GPL and cloudflared Apache: bundle =THIRD-PARTY.org~ with
+licenses + source pointers; AGPL app source = the repo link.</li>
+<li>Storage-dir change applies to new uploads only (absolute paths in DB);
+"move library" is a follow-up plan.</li>
+<li>Auto-update: out of scope; README says "download the latest".</li>
+<li>Container mode must not regress: <code>ADMIN_PASSWORD</code> set → today's single-port
+behavior, byte-for-byte.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org6264aeb" class="outline-2">
+<h2 id="org6264aeb">Verification</h2>
+<div class="outline-text-2" id="text-org6264aeb">
+<ol class="org-ol">
+<li><code>make test</code> — new route tests: <code>app {:admin? false}</code> → <code>/api/admin/videos</code>
+404, <code>/login</code> 404; <code>app {:admin? true}</code> + <code>wrap-desktop-admin</code> → <code>/me</code>
+<code>{:admin true}</code> without a session. Container-mode tests unchanged.</li>
+<li>Local desktop loop: <code>make uberjar vendor</code> → <code>cd desktop &amp;&amp; npm start</code>:
+first-run folder picker → window shows admin console <b>no login</b> → sharing
+card shows the tunnel URL → <code>curl &lt;tunnel&gt;/api/admin/me</code> must be <b>404</b>
+(proof the admin API is not exposed) → <code>curl &lt;tunnel&gt;/api/me</code> →
+<code>{:admin false}</code>.</li>
+<li>Upload via drop zone → transcode → make room → open the watch link
+(host, admin port) → native play → friend tab via the tunnel URL parks on
+the live frame → play → in sync; co-host toggle still live.</li>
+<li>Windows: <code>hut builds submit .builds/release.yml</code> on a <code>v0.1.0</code> tag →
+artifacts present → installer runs in a Windows VM: first run, upload,
+tunnel URL, watch from a phone over the tunnel.</li>
+<li>Releases page <code>nathanb.srht.site/goob-toob-releases/</code> lists installers +
+sha256; README.md links download the right binaries; <code>make run</code> (container
+mode) still logs in with <code>ADMIN_PASSWORD</code> as before.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-12</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-12 Mon 18:46</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

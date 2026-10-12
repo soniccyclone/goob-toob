@@ -7,6 +7,7 @@ Newest date wins when figuring out what we're building.
 
 | Written    | Plan                                          | Status                                    |
 |------------+-----------------------------------------------+-------------------------------------------|
+| 2026-10-12 | [[file:2026-10-12-desktop-distribution-releases.org][Desktop distribution, releases]] | planned — awaiting approval         |
 | 2026-10-12 | [[file:2026-10-12-watch-ux-cohost-controls.org][Watch UX, co-host control, gradual sync]] | shipped on master, 2026-10-12 |
 | 2026-10-12 | [[file:2026-10-12-honeysql-repo-queries.org][HoneySQL repo queries]]         | shipped on master, 2026-10-12 |
 | 2026-10-11 | [[file:2026-10-11-clojure-watch-together-dash.org][watch-together v1 (MPEG-DASH)]] | shipped as v0.0.1, 2026-10-12 |
