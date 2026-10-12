@@ -1,0 +1,10 @@
+target/
+node_modules/
+resources/public/js/
+storage/
+.cpcache/
+.shadow-cljs/
+*.log
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,10 @@
+{
+  "name": "goob-toob",
+  "private": true,
+  "dependencies": {
+    "dashjs": "^4.7.4"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.20"
+  }
+}
