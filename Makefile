@@ -43,8 +43,8 @@ clip: ## generate storage/testclip.mp4 (needs host ffmpeg)
 funnel: ## expose the running app (PORT=8080) to the internet via Tailscale Funnel
 	tailscale funnel --bg $(PORT)
 
-funnel-stop: ## stop the Tailscale Funnel (tailnet-only serve stays up)
-	tailscale funnel --stop
+funnel-stop: ## stop the Tailscale Funnel (clears the serve config too)
+	tailscale funnel reset
 
 # cloudflared quick tunnel: no account, ephemeral https://<random>.trycloudflare.com
 # URL printed in your terminal; runs in the foreground, Ctrl-C to stop.
