@@ -9,3 +9,5 @@ storage/
 *.db-wal
 *.db-shm
 test_data/
+tunnel.log
+.cloudflared.pid

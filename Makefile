@@ -6,7 +6,7 @@ PORT    ?= 8080
 MOUNTS := -v $(STORAGE):/data:z -v $(CURDIR):/app:z -w /app
 ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
-.PHONY: help image dev run test compile repl clip funnel funnel-stop
+.PHONY: help image dev run test compile repl clip tunnel tunnel-stop
 
 help:
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-12s\033[0m %s\n", $$1, $$2}'
@@ -38,15 +38,18 @@ clip: ## generate storage/testclip.mp4 (needs host ffmpeg)
 	  -f lavfi -i "sine=frequency=440:duration=20" \
 	  -c:v libopenh264 -c:a aac -shortest $(STORAGE)/testclip.mp4
 
-# tailscale funnel fronts the port itself (implies serve -> 443); friends
-# need no tailscale, just the https://<machine>.<tailnet>.ts.net URL it prints.
-funnel: ## expose the running app (PORT=8080) to the internet via Tailscale Funnel
-	tailscale funnel --bg $(PORT)
+# Cloudflare quick tunnel: no account, no open ports (dials out), ephemeral
+# https://<random>.trycloudflare.com URL. Preferred exposure while the
+# tailscale funnel DNS bug (tailscale/tailscale#21698) is unresolved.
+tunnel: ## start the public Cloudflare quick tunnel (background, prints URL)
+	@if [ -f .cloudflared.pid ] && kill -0 $$(cat .cloudflared.pid) 2>/dev/null; then \
+	  echo "tunnel already running (pid $$(cat .cloudflared.pid))"; \
+	else \
+	  nohup cloudflared tunnel --url http://localhost:$(PORT) > tunnel.log 2>&1 & \
+	  echo $$! > .cloudflared.pid; \
+	  echo "starting tunnel..."; sleep 6; \
+	  grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | head -1 || cat tunnel.log; \
+	fi
 
-funnel-stop: ## stop the Tailscale Funnel (clears the serve config too)
-	tailscale funnel reset
-
-# cloudflared quick tunnel: no account, ephemeral https://<random>.trycloudflare.com
-# URL printed in your terminal; runs in the foreground, Ctrl-C to stop.
-tunnel: ## temporary public URL via Cloudflare quick tunnel (Ctrl-C stops it)
-	cloudflared tunnel --url http://localhost:$(PORT)
+tunnel-stop: ## stop the Cloudflare quick tunnel
+	@if [ -f .cloudflared.pid ]; then kill $$(cat .cloudflared.pid) 2>/dev/null; rm -f .cloudflared.pid; echo "tunnel stopped"; else echo "no tunnel running"; fi

@@ -31,35 +31,36 @@ unless you set =ADMIN_PASSWORD=), upload videos, make a room, share the link.
 | DB_PATH           | sqlite file                                    | $STORAGE_DIR/... |
 
 * Sharing your party
-** Tailscale Funnel (friends need nothing)
-Friends just get a link — no Tailscale install needed:
-#+begin_src sh
-make funnel        # = tailscale funnel --bg 8080 (implies serve -> 443)
-make funnel-stop   # back to tailnet-only
-#+end_src
-Enable Funnel once for the tailnet (the first =make funnel= prints an enable
-link if it isn't on yet). Funnel only fronts ports 443/8443/10000. The whole
-internet can now reach the app at =https://<machine>.<tailnet>.ts.net=: the
-admin password (rate-limited, 5/min) and the unguessable room tokens are the
-entire defense.
-
-** Tailscale Serve (friends on your tailnet)
-=tailscale serve --bg 8080= and share =https://<machine>.<tailnet>.ts.net= —
-only tailnet members can reach it.
-
-** Cloudflare quick tunnel (zero-install fallback)
-If Funnel is misbehaving (or you just need a URL in five seconds), a Cloudflare
-quick tunnel needs no account and no open ports — it dials *out* to Cloudflare:
+** Cloudflare quick tunnel (works today, friends need nothing)
+No account, no open ports (it dials *out* to Cloudflare), no tailscale:
 #+begin_src sh
 # one-time: grab the static binary
 curl -fsSL -o ~/.local/bin/cloudflared \
   https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x ~/.local/bin/cloudflared
 
-make tunnel        # prints a random https://<words>.trycloudflare.com URL; Ctrl-C stops
+make tunnel        # background; prints a random https://<words>.trycloudflare.com URL
+make tunnel-stop   # tear it down
 #+end_src
-The URL is ephemeral (new one each run) and quick tunnels are rate-limited —
-fine for a party, not for permanent hosting. Coexists happily with Tailscale.
+The URL is ephemeral (new one each run, logged to =tunnel.log=) and quick
+tunnels are rate-limited — fine for a party, not permanent hosting. The admin
+password (rate-limited, 5/min) and the unguessable room tokens are the defense.
+
+** Tailscale Funnel (friends need nothing)
+#+begin_src sh
+tailscale serve --bg 8080      # once
+tailscale funnel 443 --bg      # publishes https://<machine>.<tailnet>.ts.net
+#+end_src
+Enable Funnel once in the Tailscale admin console. Funnel only fronts ports
+443/8443/10000. NOTE: as of 2026-10-12 Tailscale is failing to publish public
+DNS records for funnel hostnames on some tailnets
+(https://github.com/tailscale/tailscale/issues/21698) — the funnel looks up
+locally but is unreachable from the internet. Use the cloudflared tunnel above
+until that ships a fix.
+
+** Tailscale Serve (friends on your tailnet)
+=tailscale serve --bg 8080= and share =https://<machine>.<tailnet>.ts.net= —
+only tailnet members can reach it.
 
 ** Raw port forwarding
 Works, but ships video + chat unencrypted. Last resort.
