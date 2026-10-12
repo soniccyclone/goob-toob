@@ -111,6 +111,18 @@ video.stage {
   border: 3px solid var(--slime);
   box-shadow: 0 0 30px rgba(143, 224, 50, 0.25);
 }
+/* ---- tap-to-start overlay: video idles on its first frame until clicked ---- */
+.stage-wrap { position: relative; display: block; }
+.start-ovl {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; background: rgba(4, 26, 22, 0.55);
+  border-radius: var(--radius); cursor: pointer;
+}
+.start-ovl span {
+  font-size: 1.15rem; font-weight: 800; color: var(--slime-brite);
+  padding: 0.7rem 1.7rem; border: 2px solid var(--slime); border-radius: 999px;
+  background: rgba(7, 35, 31, 0.75); box-shadow: 0 0 24px rgba(143, 224, 50, 0.35);
+}
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {

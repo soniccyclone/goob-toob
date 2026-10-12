@@ -13,7 +13,7 @@
   (try (.catch (.play video) (fn [_] nil)) (catch js/Error _ nil)))
 
 (defn- apply-policy! [st video]
-  (when-let [room (.-room st)]
+  (when-let [room (when (.-started st) (.-room st))]
     (let [now (+ (ui/perf-now) (.-offset st))
           expected (sc/expected-pos {:pos (:pos room) :t0 (:t0 room)
                                      :now now :playing? (:playing room)
@@ -28,16 +28,30 @@
         :nudge-slow (set! (.-playbackRate video) sc/nudge-slow-rate)
         nil))))
 
+(defn- start! [st video ovl]
+  ;; first user gesture: jump to where the room is and join playback.
+  ;; before this the video just sits on its first frame (autoplay is
+  ;; blocked anyway, and seeking a paused video makes a slideshow).
+  (set! (.-started st) true)
+  (set! (.-display (.-style ovl)) "none")
+  (when-let [room (.-room st)]
+    (when (:playing room)
+      (let [now (+ (ui/perf-now) (.-offset st))]
+        (set! (.-currentTime video)
+              (sc/expected-pos (assoc room :now now :playing? true))))
+      (play! video))))
+
 (defn- apply-state-msg! [st video msg]
   (set! (.-room st) msg)
-  (case (:op msg)
-    "play"  (do (set! (.-currentTime video) (:pos msg))
-                (play! video))
-    "pause" (do (.pause video)
-                (set! (.-currentTime video) (:pos msg))
-                (set! (.-playbackRate video) 1.0))
-    "seek"  (set! (.-currentTime video) (:pos msg))
-    nil))
+  (when (.-started st)
+    (case (:op msg)
+      "play"  (do (set! (.-currentTime video) (:pos msg))
+                  (play! video))
+      "pause" (do (.pause video)
+                  (set! (.-currentTime video) (:pos msg))
+                  (set! (.-playbackRate video) 1.0))
+      "seek"  (set! (.-currentTime video) (:pos msg))
+      nil)))
 
 (defn- render-peers! [peers-el peers host?]
   (ui/clear! peers-el)
@@ -95,13 +109,7 @@
                   (player/create video (get-in msg [:video :dash])
                     (fn [ctx]
                       (ui/clear! res-slot)
-                      (ui/add! res-slot (res-menu st))))))
-                ;; join mid-party: jump to where the room is
-                (when (:playing (:state msg))
-                  (let [now (+ (ui/perf-now) (.-offset st))]
-                    (set! (.-currentTime video)
-                      (sc/expected-pos (assoc (:state msg) :now now :playing? true)))
-                    (play! video))))
+                      (ui/add! res-slot (res-menu st)))))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st video)
@@ -124,7 +132,12 @@
 (defn- shell [st]
   (let [video (.createElement js/document "video")
         _ (set! (.-className video) "stage")
+        start-ovl (h :div.start-ovl (h :span "▶ tap to start"))
+        stage-wrap (h :div.stage-wrap video start-ovl)
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
+        admin-link (h :a {:href "/admin" :title "admin console"
+                          :style "margin-left:auto;font-size:0.8rem;opacity:0.7"}
+                      "admin?")
         play-btn (h :button.btn "▶ play")
         pause-btn (h :button.btn.aqua "⏸ pause")
         seek (h :input.seek {:type "range" :value 0 :min 0 :step 0.5})
@@ -140,14 +153,15 @@
                         (set! (.-value chat-input) ""))))]
     (set! (.-onwaiting video) #(set! (.-buffering st) true))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
-    (set! (.-onclick video)
-          #(when (and (.-room st) (:playing (.-room st)) (.-paused video))
-             (play! video)))
+    (set! (.-onclick video) #(start! st video start-ovl))
+    (set! (.-onclick start-ovl) #(start! st video start-ovl))
     (set! (.-onseeking video) #(set! (.-seeking st) true))
     (set! (.-onseeked video) #(set! (.-seeking st) false))
     (set! (.-onkeydown chat-input) #(when (= "Enter" (.-key %)) (send-chat)))
     (set! (.-onclick play-btn)
-          #(wsx/send! (.-ws st) {:type "cmd" :op "play" :pos (.-currentTime video)}))
+          #(do (set! (.-started st) true)
+               (set! (.-display (.-style start-ovl)) "none")
+               (wsx/send! (.-ws st) {:type "cmd" :op "play" :pos (.-currentTime video)})))
     (set! (.-onclick pause-btn)
           #(wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (.-currentTime video)}))
     (set! (.-onchange seek)
@@ -163,8 +177,9 @@
      :layout (h :div.watch-layout
                 (h :div.row-gap
                    (h :div.card.row-gap
-                      (h :div {} title-el)
-                      video
+                      (h :div {:style "display:flex;align-items:center;gap:0.5rem"}
+                         title-el admin-link)
+                      stage-wrap
                       host-row))
                 (h :div.row-gap
                    (h :div.card
@@ -194,7 +209,8 @@
       1000)))
 
 (defn page [token]
-  (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false)
+  (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
+                  "started" false)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
