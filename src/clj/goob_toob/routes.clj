@@ -3,6 +3,7 @@
   (:require [reitit.ring :as ring]
             [ring.middleware.json :refer [wrap-json-params wrap-json-response]]
             [ring.middleware.session :refer [wrap-session]]
+            [ring.middleware.session.memory :refer [memory-store]]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
             [ring.middleware.multipart-params :refer [wrap-multipart-params]]
@@ -160,7 +161,11 @@
 
 ;; ---- router ------------------------------------------------------------------
 
-(def common [wrap-keyword-params wrap-params wrap-session])
+;; One shared session store: reitit compiles the middleware chain per
+;; endpoint, so wrap-session's default store would give every endpoint its
+;; own isolated store (login writes to one, /api/me reads another).
+(def session-store (memory-store))
+(def common [wrap-keyword-params wrap-params #(wrap-session % {:store session-store})])
 (def json-body #(wrap-json-params % {:key-fn keyword}))
 
 (defn app []
