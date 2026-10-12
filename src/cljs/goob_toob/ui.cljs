@@ -1,17 +1,24 @@
 (ns goob-toob.ui
   "Tiny vanilla-DOM helpers: no framework, we patch what changes."
+  (:require [clojure.string :as str])
   (:refer-clojure :exclude [next]))
 
 (defn $ [sel] (.querySelector js/document sel))
 (defn $$ [sel] (array-seq (.querySelectorAll js/document sel)))
 
 (defn h
-  "h tag [attrs] & children — tag is :div etc, attrs a map (:class :onclick
-  :oninput :onchange :onkeydown :value :href :type :id :placeholder :title),
-  children are strings or nodes."
+  "h tag [attrs] & children — tag is :div or :button.btn.aqua (dot shorthand
+  for classes), attrs a map (:class :onclick :oninput :onchange :onkeydown
+  :value :href :type :id :placeholder :title :disabled), children are strings
+  or nodes."
   [tag & args]
-  (let [[attrs kids] (if (map? (first args)) [(first args) (rest args)] [{} args])
-        node (.createElement js/document (name tag))]
+  (let [[tag-shorthand class-shorthand] (-> tag name (str/split #"\."))
+        [attrs kids] (if (map? (first args)) [(first args) (rest args)] [{} args])
+        attrs (if (seq class-shorthand)
+                (update attrs :class
+                        #(str/join " " (remove nil? [% (str/join "." class-shorthand)])))
+                attrs)
+        node (.createElement js/document tag-shorthand)]
     (doseq [[k v] attrs]
       (cond
         (nil? v)      nil

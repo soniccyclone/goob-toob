@@ -82,7 +82,7 @@
       (fn [msg _ws]
         (case (:type msg)
           "welcome"
-          (do (set! (.-host? st) (:is-host msg))
+          (do (set! (.-ishost st) (:is-host msg))
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
               (when-not (.-player st)
@@ -108,7 +108,7 @@
                     (set! (.-samples st) (take 8 (cons sample (.-samples st))))
                     (set! (.-offset st) (sc/best-offset (.-samples st))))
           "chat"  (append-chat! chat-log msg)
-          "peers" (render-peers! peers-el (:peers msg) (.-host? st))
+          "peers" (render-peers! peers-el (:peers msg) (.-ishost st))
           "error" (set! (.-textContent title-el) (:message msg))
           nil))
       (fn [ws]
@@ -186,7 +186,7 @@
       1000)))
 
 (defn page [token]
-  (let [st (js-obj "offset" 0 "samples" [] "buffering" false "host?" false)
+  (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
@@ -215,7 +215,7 @@
               (fn []
                 (when (and (not (.-done started)) (.-room st))
                   (set! (.-done started) true)
-                  (when (.-host? st)
+                  (when (.-ishost st)
                     (set! (.-display (.-style (:host-row refs))) "flex"))
                   (loops! st refs)))
               800))

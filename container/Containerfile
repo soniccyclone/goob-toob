@@ -1,6 +1,6 @@
 FROM docker.io/library/fedora:44
 
-RUN dnf -y install default-jdk-headless nodejs npm git curl which \
+RUN dnf -y install java-25-openjdk-headless nodejs npm git curl which \
  && dnf clean all
 
 # ffmpeg with libx264 (host ffmpeg lacks it; RPM Fusion's build has it)

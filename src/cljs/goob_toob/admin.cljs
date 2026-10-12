@@ -120,7 +120,7 @@
             rtbody))
       (h :div.goo
          (h :button.btn.ghost {:onclick #(-> (api/post! "/api/logout" {})
-                                             (.then #(set! (.-href js/location "/"))))}
+                                             (.then (fn [_] (set! (.-href js/location) "/"))))}
             "log out")))
     (-> (api/get-json "/api/admin/info")
         (.then (fn [{:keys [data]}]

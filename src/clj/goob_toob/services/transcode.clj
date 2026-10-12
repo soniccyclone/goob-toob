@@ -64,7 +64,7 @@
 
 (defn- run-ffmpeg [cmd video-id dur]
   "Runs the encode; updates DB progress on each out_time_ms line (~1/s)."
-  (let [p (-> (ProcessBuilder. cmd) .start)
+  (let [p (-> (ProcessBuilder. (vec cmd)) .start)
         err-lines (java.util.concurrent.ConcurrentLinkedQueue.)]
     (a/thread ; stderr -> ring buffer for error reporting
       (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]

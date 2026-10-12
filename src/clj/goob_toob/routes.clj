@@ -37,7 +37,7 @@
   (cond
     (not (allow-login? remote-addr))
     (-> (response {:error "too many login attempts, wait a minute"}) (status 429))
-    (pw-equal? (:password params) (:admin-pass (config/cfg)))
+    (pw-equal? (str (:password params "")) (:admin-pass (config/cfg)))
     (-> (response {:ok true}) (assoc :session (assoc session :admin true)))
     :else
     (-> (response {:error "wrong password"}) (status 401))))
@@ -124,17 +124,17 @@
 
 (defn- limited-stream [^java.io.File f start end]
   (let [raf (doto (RandomAccessFile. f "r") (.seek start))
-        remaining (long (- (inc end) start))]
+        remaining (long-array [(long (- (inc end) start))])]
     (proxy [java.io.InputStream] []
       (read []
-        (if (pos? remaining)
-          (let [b (.read raf)] (when (pos? b) (set! remaining (dec remaining))) b)
+        (if (pos? (aget remaining 0))
+          (let [b (.read raf)] (when (pos? b) (aset remaining 0 (dec (aget remaining 0)))) b)
           -1))
       (read [^bytes bs off len]
-        (if (zero? remaining)
+        (if (zero? (aget remaining 0))
           -1
-          (let [n (.read raf bs off (int (min len remaining)))]
-            (when (pos? n) (set! remaining (- remaining n)))
+          (let [n (.read raf bs off (int (min len (aget remaining 0))))]
+            (when (pos? n) (aset remaining 0 (- (aget remaining 0) n)))
             n)))
       (close [] (.close raf)))))
 
