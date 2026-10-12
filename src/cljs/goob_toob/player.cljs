@@ -12,7 +12,7 @@
          (fn [_] (on-ready ctx)))
     (.updateSettings ctx #js {:streaming #js {:buffer #js {:fastSwitchEnabled true}}
                               :debug #js {:logLevel 1}})
-    (.initialize ctx url video-el false)
+    (.initialize ctx video-el url false)
     ctx))
 
 (defn video-representations [ctx]
