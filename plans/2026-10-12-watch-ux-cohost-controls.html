@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-12 Mon 14:45 -->
+<!-- 2026-10-12 Mon 15:00 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Watch-page UX, co-host control, gradual sync catch-up</title>
@@ -30,45 +30,46 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgaa68953">Goal</a></li>
-<li><a href="#orged2c6d5">Findings</a></li>
-<li><a href="#org8b324c4">Plan</a>
+<li><a href="#org421f8e5">Goal</a></li>
+<li><a href="#orgbdc5b09">Findings</a></li>
+<li><a href="#org22510ae">Plan</a>
 <ul>
-<li><a href="#org721baeb">1. Gradual catch-up (sync_core + watch)</a></li>
-<li><a href="#orge061c7a">2. Viewer controls row (volume, mute, res lock)</a></li>
-<li><a href="#org3537fa3">3. Per-room co-host control</a></li>
-<li><a href="#orgf6c18de">4. Chat that scrolls properly</a></li>
-<li><a href="#orgb24589d">5. Big obvious play button</a></li>
-<li><a href="#orgf51dfe0">6. Admin upload + room UI</a></li>
+<li><a href="#org78ac354">1. Gradual catch-up (sync_core + watch)</a></li>
+<li><a href="#org764d429">2. Viewer controls row (res lock; volume comes free from the UA bar)</a></li>
+<li><a href="#org490339a">3. Per-room co-host control</a></li>
+<li><a href="#org59d9116">4. Chat that scrolls properly</a></li>
+<li><a href="#org7deacbb">5. Native play button — the video element starts itself (replaces the overlay)</a></li>
+<li><a href="#org9fec528">6. Admin upload + room UI</a></li>
 </ul>
 </li>
-<li><a href="#org8e57464">Risks and open questions</a></li>
-<li><a href="#orgfffe3c1">Verification</a></li>
+<li><a href="#org9a154ff">Risks and open questions</a></li>
+<li><a href="#orgc63db2b">Verification</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgaa68953" class="outline-2">
-<h2 id="orgaa68953">Goal</h2>
-<div class="outline-text-2" id="text-orgaa68953">
+<div id="outline-container-org421f8e5" class="outline-2">
+<h2 id="org421f8e5">Goal</h2>
+<div class="outline-text-2" id="text-org421f8e5">
 <p>
 Six fixes that take the app from "works" to "party-ready": a friendlier admin
 upload/room UI, a per-room <b>co-host</b> setting so non-admins can drive playback,
 a chat box that scrolls sanely, <b>gradual</b> catch-up (speed-ramp instead of hard
-seek) to kill the post-stall stutter, real viewer controls (volume, mute,
-resolution lock), and an unmistakable big play button so the idle video
-visibly waits for you.
+seek) to kill the post-stall stutter, real viewer controls (res lock; volume
+via the UA bar), and letting the <b>video element's own play button</b> be the
+start affordance — parked at the room's position so it visibly waits for you.
 </p>
 </div>
 </div>
-<div id="outline-container-orged2c6d5" class="outline-2">
-<h2 id="orged2c6d5">Findings</h2>
-<div class="outline-text-2" id="text-orged2c6d5">
+<div id="outline-container-orgbdc5b09" class="outline-2">
+<h2 id="orgbdc5b09">Findings</h2>
+<div class="outline-text-2" id="text-orgbdc5b09">
 <ul class="org-ul">
 <li><b>Controls are host-gated</b>: the resolution picker lives inside <code>host-row</code>
 (<code>src/cljs/goob_toob/watch.cljs:172-175</code>) which is <code>display:none</code> for
 non-hosts (<code>src/cljs/goob_toob/watch.cljs:242-243</code>) — viewers today can
-touch <b>nothing</b>: no volume, no res lock. <code>res-menu</code> itself works and
-persists to localStorage already.</li>
+touch <b>nothing</b>. The native <code>controls</code> bar (§5) supplies volume/mute/
+fullscreen for free; only the res lock needs a custom home. <code>res-menu</code>
+itself works and persists to localStorage already.</li>
 <li><b>Playback commands</b> are <code>admin?</code> only: ws handler <code>src/clj/goob_toob/ws.clj:22</code>
 (<code>cmd → when admin?</code>); <code>welcome</code> sends <code>:is-host</code> (<code>src/clj/goob_toob/ws.clj:47</code>).
 The <code>rooms</code> table (<code>resources/migrations/001-init.sql</code>) has no control flag.</li>
@@ -82,8 +83,34 @@ so every stall ends in a jump. Nudge band (±5 %) exists but only covers
 viewports, and <code>append-chat!</code> force-scrolls to bottom on every message
 (<code>src/cljs/goob_toob/watch.cljs:67-72</code>), yanking anyone who scrolled up.</li>
 <li><b>Start overlay</b> exists (<code>src/cljs/goob_toob/watch.cljs:135</code>, CSS
-<code>resources/public/css/theme.css:116-124</code>) but is a small text pill — easy
-to miss, doesn't read as "press me".</li>
+<code>resources/public/css/theme.css:116-124</code>) but is a small text pill <b>outside</b>
+the UA's own affordance — and the UA affordance works. Proven in a live
+browser experiment (scratch harness: dash.js + real room WS, driven via the
+in-app browser):
+<ul class="org-ul">
+<li><code>&lt;video controls playsinline&gt;</code> + <code>dashjs.initialize(v, url, false)</code> loads
+and buffers fully (readyState 4) and sits paused showing the native
+control bar with its play button — the platform's own "press me".</li>
+<li>dash.js with autoplay=false does <b>not</b> composite a first frame: the video
+is <b><b>black</b></b> until a real seek happens. Parking with
+<code>v.currentTime = expected</code> renders the frame at the sync position — but
+only if the value actually changes (same-value assignment is a no-op seek,
+so parking at pos 0 stays black; nudge by +0.001 s to force the frame).</li>
+<li>The native play button is exposed in the a11y tree and fires <code>play</code> with
+<code>navigator.userActivation.isActive=true</code> — a genuine gesture, which is
+what <code>play()</code> needs. Programmatic <code>play()</code> before any gesture is rejected
+in real browsers (the in-app pane does <b>not</b> enforce autoplay policy, so
+the client should also guard the start path on <code>userActivation</code>).</li>
+<li>Full flow verified live against the running server: parked paused at the
+room position (late joiner at pos 40 → correct frame + play button) →
+native click → synced @40.00, drift 0.00 → injected −6 s stall →
+playbackRate ramped to 1.33× and glided back to drift 0.00 with <b>no seek</b>
+→ host pause → viewer followed, paused exactly at expected.</li>
+</ul></li>
+<li>The existing client already has the follow rule (<code>apply-state-msg!</code>,
+~src/cljs/goob_toob/watch.cljs:44-54=): host play/pause/seek drive every
+viewer's element. Only the <b>start trigger</b> changes: the native play button
+replaces the overlay click.</li>
 <li><b>Admin UI</b>: bare <code>&lt;input type=file multiple&gt;</code> + label/bar rows
 (<code>src/cljs/goob_toob/admin.cljs:85-101</code>); room creation answers with
 <code>js/alert</code> (<code>src/cljs/goob_toob/admin.cljs:76-78</code>); rooms table has no
@@ -91,13 +118,13 @@ per-room controls and no delete button (the DELETE endpoint exists).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org8b324c4" class="outline-2">
-<h2 id="org8b324c4">Plan</h2>
-<div class="outline-text-2" id="text-org8b324c4">
+<div id="outline-container-org22510ae" class="outline-2">
+<h2 id="org22510ae">Plan</h2>
+<div class="outline-text-2" id="text-org22510ae">
 </div>
-<div id="outline-container-org721baeb" class="outline-3">
-<h3 id="org721baeb">1. Gradual catch-up (sync_core + watch)</h3>
-<div class="outline-text-3" id="text-org721baeb">
+<div id="outline-container-org78ac354" class="outline-3">
+<h3 id="org78ac354">1. Gradual catch-up (sync_core + watch)</h3>
+<div class="outline-text-3" id="text-org78ac354">
 <ul class="org-ul">
 <li><p>
 <code>sync_core.cljc</code>: replace <code>policy</code> bands —
@@ -158,25 +185,27 @@ once at player create so 1.5× doesn't sound like a chipmunk.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orge061c7a" class="outline-3">
-<h3 id="orge061c7a">2. Viewer controls row (volume, mute, res lock)</h3>
-<div class="outline-text-3" id="text-orge061c7a">
+<div id="outline-container-org764d429" class="outline-3">
+<h3 id="org764d429">2. Viewer controls row (res lock; volume comes free from the UA bar)</h3>
+<div class="outline-text-3" id="text-org764d429">
 <ul class="org-ul">
-<li>~watch.cljs=: split <code>host-row</code> into two rows:
+<li>Native <code>controls</code> (§5) already gives every viewer volume, mute, fullscreen
+and PiP inside the video — <b>no custom volume slider needed</b>. The custom row
+shrinks to what the UA can't do:
 <ul class="org-ul">
-<li><b>viewer row</b> (always visible once joined): volume slider + mute toggle +
-the existing <code>res-menu</code> (moved out of <code>host-row</code>). Volume/mute persist to
-localStorage (<code>goob-vol</code>, <code>goob-mute</code>) and set <code>.-volume</code> / <code>.-muted</code> on
-the video element.</li>
+<li><b>viewer row</b> (always visible once joined): the existing <code>res-menu</code> moved
+out of <code>host-row</code> (~src/cljs/goob_toob/watch.cljs:172-175=) so viewers
+can lock 480p/720p/… or leave auto. Persists to localStorage as today.</li>
 <li><b>host row</b> (now <code>can-control</code>, see §3): play/pause/seek + "you drive" badge.</li>
 </ul></li>
-<li>CSS: <code>.controls</code> already flex-wraps; add <code>.vol { width: 90px; accent-color: slime }</code>.</li>
+<li>Native seekbar lets a viewer scrub away from the room — the drift policy
+(§1) seeks them back within ~2 s; accepted trade for real controls.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org3537fa3" class="outline-3">
-<h3 id="org3537fa3">3. Per-room co-host control</h3>
-<div class="outline-text-3" id="text-org3537fa3">
+<div id="outline-container-org490339a" class="outline-3">
+<h3 id="org490339a">3. Per-room co-host control</h3>
+<div class="outline-text-3" id="text-org490339a">
 <ul class="org-ul">
 <li>Migration <code>002-room-control.sql</code>: <code>ALTER TABLE rooms ADD COLUMN
   allow_control INTEGER NOT NULL DEFAULT 0;</code></li>
@@ -197,9 +226,9 @@ scope (see Risks).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgf6c18de" class="outline-3">
-<h3 id="orgf6c18de">4. Chat that scrolls properly</h3>
-<div class="outline-text-3" id="text-orgf6c18de">
+<div id="outline-container-org59d9116" class="outline-3">
+<h3 id="org59d9116">4. Chat that scrolls properly</h3>
+<div class="outline-text-3" id="text-org59d9116">
 <ul class="org-ul">
 <li>CSS: <code>.chat { height: min(480px, 55vh); }</code> so the card always fits the
 viewport with its input reachable.</li>
@@ -209,19 +238,43 @@ their position and show a small "↓ new messages" pill that jumps on click.</li
 </ul>
 </div>
 </div>
-<div id="outline-container-orgb24589d" class="outline-3">
-<h3 id="orgb24589d">5. Big obvious play button</h3>
-<div class="outline-text-3" id="text-orgb24589d">
+<div id="outline-container-org7deacbb" class="outline-3">
+<h3 id="org7deacbb">5. Native play button — the video element starts itself (replaces the overlay)</h3>
+<div class="outline-text-3" id="text-org7deacbb">
+<p>
+Design proven end-to-end in the scratch experiment (Findings); implement exactly
+that mechanism in <code>watch.cljs</code>:
+</p>
 <ul class="org-ul">
-<li>Restyle <code>.start-ovl</code>: dim stage + centered 84 px slime circle with a ▶
-glyph, gentle pulse animation, "tap to start" caption under it. Click
-anywhere on the overlay still starts (existing <code>start!</code> wiring unchanged).</li>
+<li>Video element gets <code>controls</code> + <code>playsinline</code>; <b>delete</b> <code>.start-ovl</code>, its
+CSS, and the <code>onclick</code> handlers on video/overlay (<code>watch.cljs:135-136,
+  156-157</code>). The UA's own play button is the affordance: paused video parked
+at the room's position = it visibly "isn't running" until you press play.</li>
+<li>New <code>park!</code> : when <code>started</code> is false and room state + stream are ready,
+seek to <code>expected-pos</code> with the epsilon nudge (if
+<code>|currentTime − e| &lt; 0.01</code> seek to <code>(+ e 0.001)</code> so pos-0 parking still
+composites a frame), keep paused. Call it from <code>welcome</code>, dash <code>on-ready</code>,
+and every <code>state</code> msg while unstarted (re-parks as the room moves).</li>
+<li><code>play</code> event handler is the new start trigger:
+<ul class="org-ul">
+<li>guard: <code>started</code> false and <code>navigator.userActivation.isActive</code> false →
+pause + re-park (belt-and-braces; real browsers reject gesture-less
+<code>play()</code> anyway, the pane doesn't).</li>
+<li>first real play → <code>started=true</code>, epsilon-seek to fresh <code>expected-pos</code>;
+if <code>can-control</code> and the room is paused, send <code>cmd play</code> (host pressing
+play starts the room for everyone — same as today's play button).</li>
+<li>later plays while the room is paused → pause + re-park (no solo-play;
+<code>apply-state-msg!</code> already enforces this, the handler just doesn't fight it).</li>
+</ul></li>
+<li><code>apply-policy!</code> and the follow rule gate on <code>started</code> exactly as today;
+set <code>preservesPitch</code> (+ <code>webkitPreservesPitch</code>) at player create.</li>
+<li>dash.js keeps <code>autoplay=false</code> (~player.cljs= unchanged otherwise).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgf51dfe0" class="outline-3">
-<h3 id="orgf51dfe0">6. Admin upload + room UI</h3>
-<div class="outline-text-3" id="text-orgf51dfe0">
+<div id="outline-container-org9fec528" class="outline-3">
+<h3 id="org9fec528">6. Admin upload + room UI</h3>
+<div class="outline-text-3" id="text-org9fec528">
 <ul class="org-ul">
 <li><b>Drop zone</b>: styled dashed-border card ("drop videos here, or click")
 wrapping the file input; <code>dragover=/=drop</code> handlers feed the same upload
@@ -236,9 +289,9 @@ appears highlighted.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-org8e57464" class="outline-2">
-<h2 id="org8e57464">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org8e57464">
+<div id="outline-container-org9a154ff" class="outline-2">
+<h2 id="org9a154ff">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org9a154ff">
 <ul class="org-ul">
 <li><b>Co-host semantics assumption</b>: per-room "anyone with the link can drive",
 not per-person grants (no viewer auth exists). Multiple controllers can
@@ -264,21 +317,23 @@ every existing room admin-only.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgfffe3c1" class="outline-2">
-<h2 id="orgfffe3c1">Verification</h2>
-<div class="outline-text-2" id="text-orgfffe3c1">
+<div id="outline-container-orgc63db2b" class="outline-2">
+<h2 id="orgc63db2b">Verification</h2>
+<div class="outline-text-2" id="text-orgc63db2b">
 <ol class="org-ol">
 <li><code>make test</code> — updated <code>sync_core_test</code> (policy bands, <code>catch-rate</code>) plus
 existing repo tests (rooms insert/select with new column).</li>
 <li>Rebuild image, recreate container.</li>
 <li>Browser pane walkthrough: admin → drag-drop testclip → upload card fills →
 ✓; make room → toast + row appears; tick co-host box.</li>
-<li>Two viewer tabs (no admin): big play button visible → click → plays in
-sync; volume slider + mute work; res select locks 480p and survives
-reload; flood chat, scroll up, new messages no longer yank.</li>
+<li>Two viewer tabs (no admin): video sits paused on the room's frame with the
+native play button → click → plays in sync (drift &lt; 0.3 s); native volume
+works; res select locks 480p and survives reload; host pause → both pause
+at the same frame; flood chat, scroll up, new messages no longer yank.</li>
 <li>Catch-up: in a viewer tab run <code>video.currentTime -</code> 6= from the console —
 it should speed up (~1.5×) and glide back within a few seconds, no jump.
-Then <code>-</code> 40 → hard seek (over the 30 s ceiling).</li>
+Then <code>-</code> 40 → hard seek (over the 30 s ceiling). (Both proven in the
+scratch harness already; re-verify in the real client.)</li>
 <li>Toggle co-host off from admin → viewer's host row disappears without
 reconnect (next cmd message refused server-side regardless).</li>
 </ol>
@@ -288,7 +343,7 @@ reconnect (next cmd message refused server-side regardless).</li>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-12 Mon 14:45</p>
+<p class="date">Created: 2026-10-12 Mon 15:00</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

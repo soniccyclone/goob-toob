@@ -7,16 +7,17 @@
 Six fixes that take the app from "works" to "party-ready": a friendlier admin
 upload/room UI, a per-room *co-host* setting so non-admins can drive playback,
 a chat box that scrolls sanely, *gradual* catch-up (speed-ramp instead of hard
-seek) to kill the post-stall stutter, real viewer controls (volume, mute,
-resolution lock), and an unmistakable big play button so the idle video
-visibly waits for you.
+seek) to kill the post-stall stutter, real viewer controls (res lock; volume
+via the UA bar), and letting the *video element's own play button* be the
+start affordance — parked at the room's position so it visibly waits for you.
 
 * Findings
 - *Controls are host-gated*: the resolution picker lives inside =host-row=
   (~src/cljs/goob_toob/watch.cljs:172-175~) which is =display:none= for
   non-hosts (~src/cljs/goob_toob/watch.cljs:242-243~) — viewers today can
-  touch *nothing*: no volume, no res lock. =res-menu= itself works and
-  persists to localStorage already.
+  touch *nothing*. The native =controls= bar (§5) supplies volume/mute/
+  fullscreen for free; only the res lock needs a custom home. =res-menu=
+  itself works and persists to localStorage already.
 - *Playback commands* are =admin?= only: ws handler ~src/clj/goob_toob/ws.clj:22~
   (=cmd → when admin?=); =welcome= sends =:is-host= (~src/clj/goob_toob/ws.clj:47~).
   The =rooms= table (~resources/migrations/001-init.sql~) has no control flag.
@@ -30,8 +31,32 @@ visibly waits for you.
   viewports, and =append-chat!= force-scrolls to bottom on every message
   (~src/cljs/goob_toob/watch.cljs:67-72~), yanking anyone who scrolled up.
 - *Start overlay* exists (~src/cljs/goob_toob/watch.cljs:135~, CSS
-  ~resources/public/css/theme.css:116-124~) but is a small text pill — easy
-  to miss, doesn't read as "press me".
+  ~resources/public/css/theme.css:116-124~) but is a small text pill *outside*
+  the UA's own affordance — and the UA affordance works. Proven in a live
+  browser experiment (scratch harness: dash.js + real room WS, driven via the
+  in-app browser):
+  - =<video controls playsinline>= + =dashjs.initialize(v, url, false)= loads
+    and buffers fully (readyState 4) and sits paused showing the native
+    control bar with its play button — the platform's own "press me".
+  - dash.js with autoplay=false does *not* composite a first frame: the video
+    is **black** until a real seek happens. Parking with
+    =v.currentTime = expected= renders the frame at the sync position — but
+    only if the value actually changes (same-value assignment is a no-op seek,
+    so parking at pos 0 stays black; nudge by +0.001 s to force the frame).
+  - The native play button is exposed in the a11y tree and fires =play= with
+    =navigator.userActivation.isActive=true= — a genuine gesture, which is
+    what =play()= needs. Programmatic =play()= before any gesture is rejected
+    in real browsers (the in-app pane does *not* enforce autoplay policy, so
+    the client should also guard the start path on =userActivation=).
+  - Full flow verified live against the running server: parked paused at the
+    room position (late joiner at pos 40 → correct frame + play button) →
+    native click → synced @40.00, drift 0.00 → injected −6 s stall →
+    playbackRate ramped to 1.33× and glided back to drift 0.00 with *no seek*
+    → host pause → viewer followed, paused exactly at expected.
+- The existing client already has the follow rule (=apply-state-msg!=,
+  ~src/cljs/goob_toob/watch.cljs:44-54=): host play/pause/seek drive every
+  viewer's element. Only the *start trigger* changes: the native play button
+  replaces the overlay click.
 - *Admin UI*: bare =<input type=file multiple>= + label/bar rows
   (~src/cljs/goob_toob/admin.cljs:85-101~); room creation answers with
   =js/alert= (~src/cljs/goob_toob/admin.cljs:76-78~); rooms table has no
@@ -56,14 +81,16 @@ visibly waits for you.
   once at player create so 1.5× doesn't sound like a chipmunk.
 - Update ~sync_core_test.clj= thresholds + add =catch-rate= bounds tests.
 
-** 2. Viewer controls row (volume, mute, res lock)
-- ~watch.cljs=: split =host-row= into two rows:
-  - *viewer row* (always visible once joined): volume slider + mute toggle +
-    the existing =res-menu= (moved out of =host-row=). Volume/mute persist to
-    localStorage (=goob-vol=, =goob-mute=) and set =.-volume= / =.-muted= on
-    the video element.
+** 2. Viewer controls row (res lock; volume comes free from the UA bar)
+- Native =controls= (§5) already gives every viewer volume, mute, fullscreen
+  and PiP inside the video — *no custom volume slider needed*. The custom row
+  shrinks to what the UA can't do:
+  - *viewer row* (always visible once joined): the existing =res-menu= moved
+    out of =host-row= (~src/cljs/goob_toob/watch.cljs:172-175=) so viewers
+    can lock 480p/720p/… or leave auto. Persists to localStorage as today.
   - *host row* (now =can-control=, see §3): play/pause/seek + "you drive" badge.
-- CSS: =.controls= already flex-wraps; add =.vol { width: 90px; accent-color: slime }=.
+- Native seekbar lets a viewer scrub away from the room — the drift policy
+  (§1) seeks them back within ~2 s; accepted trade for real controls.
 
 ** 3. Per-room co-host control
 - Migration ~002-room-control.sql~: =ALTER TABLE rooms ADD COLUMN
@@ -90,10 +117,30 @@ visibly waits for you.
   bottom (=scrollHeight - scrollTop - clientHeight < 40=); otherwise leave
   their position and show a small "↓ new messages" pill that jumps on click.
 
-** 5. Big obvious play button
-- Restyle =.start-ovl=: dim stage + centered 84 px slime circle with a ▶
-  glyph, gentle pulse animation, "tap to start" caption under it. Click
-  anywhere on the overlay still starts (existing =start!= wiring unchanged).
+** 5. Native play button — the video element starts itself (replaces the overlay)
+Design proven end-to-end in the scratch experiment (Findings); implement exactly
+that mechanism in ~watch.cljs~:
+- Video element gets =controls= + =playsinline=; *delete* =.start-ovl=, its
+  CSS, and the =onclick= handlers on video/overlay (~watch.cljs:135-136,
+  156-157~). The UA's own play button is the affordance: paused video parked
+  at the room's position = it visibly "isn't running" until you press play.
+- New =park!= : when =started= is false and room state + stream are ready,
+  seek to =expected-pos= with the epsilon nudge (if
+  =|currentTime − e| < 0.01= seek to =(+ e 0.001)= so pos-0 parking still
+  composites a frame), keep paused. Call it from =welcome=, dash =on-ready=,
+  and every =state= msg while unstarted (re-parks as the room moves).
+- =play= event handler is the new start trigger:
+  - guard: =started= false and =navigator.userActivation.isActive= false →
+    pause + re-park (belt-and-braces; real browsers reject gesture-less
+    =play()= anyway, the pane doesn't).
+  - first real play → =started=true=, epsilon-seek to fresh =expected-pos=;
+    if =can-control= and the room is paused, send =cmd play= (host pressing
+    play starts the room for everyone — same as today's play button).
+  - later plays while the room is paused → pause + re-park (no solo-play;
+    =apply-state-msg!= already enforces this, the handler just doesn't fight it).
+- =apply-policy!= and the follow rule gate on =started= exactly as today;
+  set =preservesPitch= (+ =webkitPreservesPitch=) at player create.
+- dash.js keeps =autoplay=false= (~player.cljs= unchanged otherwise).
 
 ** 6. Admin upload + room UI
 - *Drop zone*: styled dashed-border card ("drop videos here, or click")
@@ -129,11 +176,13 @@ visibly waits for you.
 2. Rebuild image, recreate container.
 3. Browser pane walkthrough: admin → drag-drop testclip → upload card fills →
    ✓; make room → toast + row appears; tick co-host box.
-4. Two viewer tabs (no admin): big play button visible → click → plays in
-   sync; volume slider + mute work; res select locks 480p and survives
-   reload; flood chat, scroll up, new messages no longer yank.
+4. Two viewer tabs (no admin): video sits paused on the room's frame with the
+   native play button → click → plays in sync (drift < 0.3 s); native volume
+   works; res select locks 480p and survives reload; host pause → both pause
+   at the same frame; flood chat, scroll up, new messages no longer yank.
 5. Catch-up: in a viewer tab run =video.currentTime -= 6= from the console —
    it should speed up (~1.5×) and glide back within a few seconds, no jump.
-   Then =-= 40 → hard seek (over the 30 s ceiling).
+   Then =-= 40 → hard seek (over the 30 s ceiling). (Both proven in the
+   scratch harness already; re-verify in the real client.)
 6. Toggle co-host off from admin → viewer's host row disappears without
    reconnect (next cmd message refused server-side regardless).
