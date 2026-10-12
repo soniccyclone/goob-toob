@@ -1,0 +1,191 @@
+/* goob-toob — waterpark slime: deep teal water, bright slime green,
+   aqua splash, foam white. No orange anywhere. */
+
+:root {
+  --water-deep: #07231f;
+  --water-mid:  #0b3a33;
+  --water-lite: #10514a;
+  --slime:      #8fe032;
+  --slime-brite:#b3ff4d;
+  --aqua:       #1fc8db;
+  --aqua-soft:  #7fe7f2;
+  --foam:       #eafff4;
+  --danger:     #ff5c8a;
+  --radius:     1.4rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Trebuchet MS", "Comic Sans MS", system-ui, sans-serif;
+  background: radial-gradient(circle at 50% -20%, var(--water-lite), var(--water-deep) 70%);
+  min-height: 100vh;
+  color: var(--foam);
+}
+
+a { color: var(--aqua-soft); }
+
+/* ---- header ---- */
+header.topbar {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.8rem 1.4rem;
+  background: linear-gradient(180deg, var(--water-mid), transparent);
+}
+.logo {
+  font-size: 1.9rem; font-weight: 900; letter-spacing: 0.03em;
+  color: var(--slime);
+  text-shadow: 0 0 14px rgba(143, 224, 50, 0.55), 0 2px 0 #2c5e10;
+}
+.logo .drip { color: var(--aqua); }
+
+/* wavy divider under the header */
+.wave {
+  height: 26px;
+  background:
+    radial-gradient(circle at 12px -8px, transparent 14px, var(--slime) 15px) repeat-x;
+  background-size: 24px 26px;
+  opacity: 0.85;
+}
+
+main { max-width: 1100px; margin: 0 auto; padding: 1.2rem; }
+
+/* ---- gooey buttons ---- */
+.goo { filter: url(#goo); display: inline-flex; gap: 0.4rem; }
+.btn {
+  display: inline-block;
+  border: none; cursor: pointer;
+  font: inherit; font-weight: 800;
+  padding: 0.6rem 1.3rem;
+  border-radius: 999px;
+  background: var(--slime);
+  color: #10330a;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.btn:hover { transform: scale(1.07) translateY(-2px); background: var(--slime-brite); }
+.btn:active { transform: scale(0.96); }
+.btn.aqua { background: var(--aqua); color: #043038; }
+.btn.ghost { background: var(--water-lite); color: var(--foam); }
+.btn.danger { background: var(--danger); color: #3d0016; }
+.btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+/* ---- cards ---- */
+.card {
+  background: linear-gradient(160deg, var(--water-mid), var(--water-deep));
+  border: 2px solid rgba(31, 200, 219, 0.35);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), inset 0 0 40px rgba(31, 200, 219, 0.06);
+}
+.card h3 { margin: 0 0 0.6rem; color: var(--slime); }
+
+/* pool-tile backdrop behind the lobby grid */
+.tiles {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 46px, rgba(31,200,219,0.10) 46px 48px),
+    repeating-linear-gradient(90deg, transparent 0 46px, rgba(31,200,219,0.10) 46px 48px);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
+
+/* ---- forms ---- */
+input[type=text], input[type=password], select {
+  font: inherit;
+  background: var(--water-deep);
+  color: var(--foam);
+  border: 2px solid var(--aqua);
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  outline: none;
+}
+input:focus, select:focus { box-shadow: 0 0 0 3px rgba(143, 224, 50, 0.4); }
+
+/* ---- watch page ---- */
+.watch-layout { display: grid; grid-template-columns: 1fr 300px; gap: 1rem; }
+@media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
+
+video.stage {
+  width: 100%; border-radius: var(--radius);
+  background: #000;
+  border: 3px solid var(--slime);
+  box-shadow: 0 0 30px rgba(143, 224, 50, 0.25);
+}
+/* ---- tap-to-start overlay: video idles on its first frame until clicked ---- */
+.stage-wrap { position: relative; display: block; }
+.start-ovl {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; background: rgba(4, 26, 22, 0.55);
+  border-radius: var(--radius); cursor: pointer;
+}
+.start-ovl span {
+  font-size: 1.15rem; font-weight: 800; color: var(--slime-brite);
+  padding: 0.7rem 1.7rem; border: 2px solid var(--slime); border-radius: 999px;
+  background: rgba(7, 35, 31, 0.75); box-shadow: 0 0 24px rgba(143, 224, 50, 0.35);
+}
+.controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
+.seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
+.badge {
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+  padding: 0.15rem 0.6rem; border-radius: 999px;
+  background: var(--aqua); color: #043038;
+}
+.badge.host { background: var(--slime); color: #10330a; }
+.badge.lag { background: var(--danger); color: #fff; }
+
+/* ---- chat ---- */
+.chat { display: flex; flex-direction: column; height: 480px; position: relative; overflow: hidden; }
+.chat .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.3rem; }
+.bubble {
+  align-self: flex-start; max-width: 92%;
+  background: var(--water-lite);
+  border-radius: 1rem 1rem 1rem 0.2rem;
+  padding: 0.4rem 0.7rem;
+  animation: bob 0.5s ease;
+}
+.bubble .who { font-weight: 800; color: var(--slime); font-size: 0.8rem; }
+.chat .row { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+.chat .row input { flex: 1; }
+@keyframes bob { from { transform: translateY(8px); opacity: 0; } }
+
+/* rising bubbles decoration in the chat */
+.chat::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 60%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle 6px at 15% 100%, rgba(127,231,242,0.25) 98%, transparent) ,
+    radial-gradient(circle 4px at 55% 100%, rgba(127,231,242,0.20) 98%, transparent),
+    radial-gradient(circle 8px at 85% 100%, rgba(127,231,242,0.18) 98%, transparent);
+  animation: rise 7s linear infinite;
+}
+@keyframes rise { to { transform: translateY(-320px); opacity: 0; } }
+
+/* ---- peers ---- */
+.peer { display: flex; justify-content: space-between; align-items: center; padding: 0.25rem 0; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--slime); display: inline-block; }
+.dot.stall { background: var(--danger); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+/* ---- progress bars ---- */
+.bar { height: 10px; border-radius: 999px; background: var(--water-deep); overflow: hidden; border: 1px solid var(--aqua); }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--aqua), var(--slime)); transition: width 0.4s; }
+
+/* ---- status colors ---- */
+.status-ready { color: var(--slime); font-weight: 800; }
+.status-failed { color: var(--danger); font-weight: 800; }
+.status-transcoding, .status-uploaded { color: var(--aqua-soft); }
+
+/* ---- join overlay ---- */
+.overlay {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(7, 35, 31, 0.92); z-index: 10;
+}
+.overlay .card { width: min(420px, 92vw); text-align: center; }
+.overlay .card input { width: 100%; margin: 0.8rem 0; }
+
+table.lib { width: 100%; border-collapse: collapse; }
+table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid rgba(31,200,219,0.2); text-align: left; }
+.muted { opacity: 0.65; font-size: 0.85rem; }
+.err { color: var(--danger); white-space: pre-wrap; font-size: 0.8rem; }
+.ok { color: var(--slime); }
+.row-gap > * + * { margin-top: 0.8rem; }

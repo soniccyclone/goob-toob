@@ -1,0 +1,10 @@
+#+TITLE: goob-toob plans
+#+DATE: 2026-10-12
+
+Plans live here, one per feature, filename-prefixed with the date the plan
+was written (=YYYY-MM-DD-slug.org=, plus the rendered =.html= snapshot).
+Newest date wins when figuring out what we're building.
+
+| Written    | Plan                                          | Status                                    |
+|------------+-----------------------------------------------+-------------------------------------------|
+| 2026-10-11 | [[file:2026-10-11-clojure-watch-together-dash.org][watch-together v1 (MPEG-DASH)]] | shipped as v0.0.1, 2026-10-12 |

@@ -1,0 +1,102 @@
+#+TITLE: goob-toob
+#+AUTHOR: Nathan Barlow
+
+Self-hosted watch-together video app. Clojure server, ClojureScript browser,
+ffmpeg -> MPEG-DASH, one slime-green waterpark theme. You run it on your box,
+upload your library, open a room, toss friends a link, everyone watches in
+sync. You drive playback; viewers pick auto (best sync) or a locked
+resolution and catch themselves up when their internet wobbles.
+
+* Quickstart (podman)
+#+begin_src sh
+make image          # one-time: fedora + jdk + node + ffmpeg(libx264) + clojure CLI
+STORAGE=/path/to/video/drive make dev   # dev loop: CLJS watch + server on :8080
+# or production-style (assets baked into the image):
+STORAGE=/path/to/video/drive make run
+#+end_src
+
+Then open http://localhost:8080, hit =/admin#, log in (=goob-dev-password=
+unless you set =ADMIN_PASSWORD=), upload videos, make a room, share the link.
+
+=make dev= mounts the repo live; =make run= uses the image's compiled assets.
+
+* Env vars
+| var               | meaning                                        | default          |
+|-------------------+------------------------------------------------+------------------|
+| STORAGE_DIR       | required: where videos/uploads/db live         | -                |
+| ADMIN_PASSWORD    | required: the one and only admin password      | -                |
+| PORT              | HTTP port                                      | 8080             |
+| TRANSCODE_WORKERS | parallel ffmpeg jobs (keep it 1 while hosting) | 1                |
+| KEEP_ORIGINAL     | keep uploaded source after transcode           | true             |
+| DB_PATH           | sqlite file                                    | $STORAGE_DIR/... |
+
+* Sharing your party
+** Cloudflare quick tunnel (works today, friends need nothing)
+No account, no open ports (it dials *out* to Cloudflare), no tailscale:
+#+begin_src sh
+# one-time: grab the static binary
+curl -fsSL -o ~/.local/bin/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/.local/bin/cloudflared
+
+make tunnel        # background; prints a random https://<words>.trycloudflare.com URL
+make tunnel-stop   # tear it down
+#+end_src
+The URL is ephemeral (new one each run, logged to =tunnel.log=) and quick
+tunnels are rate-limited — fine for a party, not permanent hosting. The admin
+password (rate-limited, 5/min) and the unguessable room tokens are the defense.
+
+** Tailscale Funnel (friends need nothing)
+#+begin_src sh
+tailscale serve --bg 8080      # once
+tailscale funnel 443 --bg      # publishes https://<machine>.<tailnet>.ts.net
+#+end_src
+Enable Funnel once in the Tailscale admin console. Funnel only fronts ports
+443/8443/10000. NOTE: as of 2026-10-12 Tailscale is failing to publish public
+DNS records for funnel hostnames on some tailnets
+(https://github.com/tailscale/tailscale/issues/21698) — the funnel looks up
+locally but is unreachable from the internet. Use the cloudflared tunnel above
+until that ships a fix.
+
+** Tailscale Serve (friends on your tailnet)
+=tailscale serve --bg 8080= and share =https://<machine>.<tailnet>.ts.net= —
+only tailnet members can reach it.
+
+** Raw port forwarding
+Works, but ships video + chat unencrypted. Last resort.
+
+* How sync works
+- The server holds each room's authoritative clock: media position + play/pause
+  on a monotonic timeline. Host actions (play/pause/seek) update it and are
+  broadcast; a heartbeat goes out every 2 s.
+- Viewers estimate the server clock NTP-style (min-RTT ping samples), then
+  apply a drift policy (=src/cljc/goob_toob/sync_core.cljc=):
+  | drift          | action                          |
+  |----------------+---------------------------------|
+  | < 0.3 s        | nothing                         |
+  | 0.3-1.5 s      | playbackRate nudge +/-5 %       |
+  | > 1.5 s        | hard seek (the catch-up)        |
+  | buffering      | wait it out, then the above     |
+- The room never pauses for one stalling viewer; when their buffer refills,
+  the policy snaps them back. That's the catch-up feature.
+
+* Layout
+#+begin_example
+src/clj/goob_toob/    server: routes, ws, db, repos (sqlite + fs), services
+  config.clj db.clj routes.clj ws.clj core.clj
+  repos/{video,room,storage}.clj
+  services/{transcode,sync}.clj
+src/cljc/             shared pure sync math (JVM + browser)
+src/cljs/goob_toob/   the whole browser app (shadow-cljs + dash.js)
+resources/public/     static shell + waterpark slime theme
+container/            Containerfile + dev entrypoint (podman)
+test/clj/             repo + sync-policy tests
+#+end_example
+
+* Dev
+#+begin_src sh
+make test      # clojure tests (repos, sync policy)
+make compile   # shadow-cljs release build
+make repl      # nrepl-ish REPL in the container
+make clip      # 20s test clip to feed the pipeline
+#+end_src

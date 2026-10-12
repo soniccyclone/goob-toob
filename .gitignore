@@ -1,0 +1,13 @@
+target/
+node_modules/
+resources/public/js/
+storage/
+.cpcache/
+.shadow-cljs/
+*.log
+*.db
+*.db-wal
+*.db-shm
+test_data/
+tunnel.log
+.cloudflared.pid

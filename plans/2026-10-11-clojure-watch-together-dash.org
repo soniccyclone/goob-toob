@@ -1,0 +1,296 @@
+#+TITLE: goob-toob: self-hosted watch-together over MPEG-DASH
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-11
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+# Status: approved 2026-10-11; shipped as v0.0.1 on 2026-10-12 (feature/watch-together-v1).
+# The .html next to this file is the rendered snapshot from the plan date.
+
+* Goal
+Build v1 of goob-toob from scratch: a self-hosted "watch together" video app,
+written entirely in Clojure (server) + ClojureScript (browser). The admin runs
+it on their own box, bulk-uploads their video library, and ffmpeg transcodes
+each file into multi-bitrate MPEG-DASH. The admin shares a room URL (over
+Tailscale or a port forward); friends open it and watch in near-perfect sync
+with a server-authoritative clock, a per-viewer resolution picker (auto or a
+locked height), catch-up after buffer stalls, and a lobby chat box where
+everyone joins under a temp nickname — all dressed in a gooey waterpark
+slime-green theme.
+
+* Findings
+- The repo is greenfield. One file: ~ARCHITECTURE.org:1-21~. Git history shows
+  deleted python and dotnet stubs ("Delete it all again"), so nothing to reuse.
+- So: no, there are /not/ many notes about what the app is — just those 21 lines.
+  They say: controllers/services/repos layers (~ARCHITECTURE.org:6-9~), repo
+  layer covers both sqlite and the filesystem (~ARCHITECTURE.org:11-12~),
+  services handle web requests + async media work + sockets
+  (~ARCHITECTURE.org:14-16~), static HTML/CSS/JS, no HTMX, vanilla JS, minimal
+  DOM churn except a chatbox (~ARCHITECTURE.org:18-21~).
+- ~ARCHITECTURE.org:15~ says /gstreamer/ for the async media calls; your
+  instruction now says ffmpeg. This plan uses ffmpeg; the doc gets updated.
+- Host toolchain (checked): java 25, node 22, npm, podman 5.8.7, ffmpeg 8.1.3
+  present. Missing: clojure CLI, lein, sqlite3 CLI → podman covers them.
+- The host ffmpeg has /no/ =libx264= (only libopenh264 + hw encoders; verified
+  with =ffmpeg -encoders=). H.264 via libx264 is the safe DASH baseline for all
+  browsers, so transcoding runs through a container ffmpeg that has it.
+- dash.js (the reference MPEG-DASH browser client) is used as an npm dependency
+  through shadow-cljs. Assumption: "must be clojure+clojurescript" means all
+  code we write is Clojure/CLJS, not that no JS library may be linked. Writing
+  our own DASH client is a much larger project — flagged below.
+
+* Plan
+** 0 · Toolchain via podman (container/Containerfile, Makefile)
+1. =container/Containerfile=: =FROM fedora=, install =java-25-openjdk-headless=,
+   =nodejs=, a full ffmpeg with =libx264= (RPM Fusion or a static build), then
+   the official Clojure CLI install script. One image serves dev and deploy.
+   Build-time check: =ffmpeg -encoders | grep libx264= must pass.
+2. =Makefile=: =image= (podman build), =dev= (podman run with the repo bind
+   mounted, =-p 8080:8080=, storage dir mounted at =/data=, env vars passed,
+   =clojure -M:dev= + shadow-cljs watch), =run= (prod), =test=, =repl=.
+
+** 1 · Scaffold (deps.edn, shadow-cljs.edn, package.json)
+1. =deps.edn=: ring + ring-jetty, reitit, next.jdbc + sqlite-jdbc,
+   ring-websocket, org.httpkit/server (websocket-friendly), cheshire,
+   core.async, ring-multipart. Aliases: =:dev=, =:test=, =:shadow=.
+2. =shadow-cljs.edn= + =package.json= (devDep shadow-cljs, dep =dashjs=),
+   =:main= builds =resources/public/js/main.js=.
+3. =src/clj/goob_toob/config.clj=: env-driven config — =STORAGE_DIR= (required,
+   the admin's chosen video location), =ADMIN_PASSWORD=, =PORT=, transcode
+   ladder + worker count.
+4. Layout:
+#+begin_example
+src/clj/goob_toob/core.clj  config.clj  routes.clj  db.clj  ws.clj
+src/clj/goob_toob/repos/{video,room,storage}.clj
+src/clj/goob_toob/services/{transcode,sync}.clj
+src/cljs/goob_toob/{core,api,player,sync,ui}.cljs
+resources/public/{index.html,css/}  resources/migrations/
+test/clj/goob_toob/  container/Containerfile  Makefile  README.org
+#+end_example
+
+** 2 · Repo layer (per ARCHITECTURE.org:11-12)
+1. =db.clj=: sqlite datasource (WAL mode), tiny SQL-file migration runner.
+2. =repos/video.clj=: =videos= table — id, title, original path, status
+   (=uploaded → transcoding → ready | failed=), progress %, duration, ladder
+   json, error text, timestamps.
+3. =repos/room.clj=: =rooms= — id, secret token, video id, created-by,
+   created-at.
+4. =repos/storage.clj=: filesystem under =STORAGE_DIR= — =uploads/<id>.<ext>=,
+   =dash/<id>/manifest.mpd= + segments; path-traversal guards, free-space check
+   before upload.
+
+** 3 · Upload + ffmpeg → MPEG-DASH pipeline (services/transcode.clj)
+1. =POST /api/admin/videos= accepts multipart, streams to =uploads/=, inserts
+   a video row, enqueues a job. Bulk = multiple files in one form post.
+2. Job queue: core.async channel + worker pool (default 1 worker so encoding
+   doesn't starve serving; =nice= the ffmpeg process).
+3. =ffprobe -print_format json= for duration/streams; ladder default
+   1080/720/480/360 + aac audio, all H.264 so dash.js ABR can switch freely.
+4. One ffmpeg pass per video producing the whole DASH tree:
+#+begin_src sh
+ffmpeg -hide_banner -nice 10 -i "$IN" \
+  -filter_complex "[0:v]split=4[s0][s1][s2][s3];[s0]scale=-2:1080[v0];[s1]scale=-2:720[v1];[s2]scale=-2:480[v2];[s3]scale=-2:360[v3]" \
+  -map "[v0]" -map "[v1]" -map "[v2]" -map "[v3]" \
+  -map 0:a:0 -map 0:a:0 -map 0:a:0 -map 0:a:0 \
+  -c:v libx264 -preset veryfast -profile:v high -pix_fmt yuv420p \
+  -g 240 -keyint_min 240 -sc_threshold 0 \
+  -b:v:0 6000k -b:v:1 3000k -b:v:2 1200k -b:v:3 600k \
+  -c:a aac -b:a 128k \
+  -f dash -seg_duration 4 -use_template 1 -use_timeline 0 \
+  -adaptation_sets "id=0,streams=v id=1,streams=a" \
+  -progress pipe:1 -y "$STORAGE_DIR/dash/$ID/manifest.mpd"
+#+end_src
+   Exact flags get tuned during implementation; the point is one pass, one
+   manifest, GOP-aligned keyframes at segment boundaries so ABR switching is
+   clean. =-progress= output is parsed to update the video row's % complete.
+5. Status transitions + failure capture (tail of stderr into the row).
+   =KEEP_ORIGINAL= env decides whether the source file survives.
+
+** 4 · HTTP API + static serving (routes.clj)
+1. reitit routes: admin login (password → session cookie), admin middleware;
+   =GET/POST /api/admin/videos=, =DELETE /api/admin/videos/:id=;
+   =GET /api/videos= (public list for the lobby), =POST /api/rooms= (admin
+   creates a room → returns =/watch/<token>= URL to hand to friends).
+2. DASH serving: =GET /dash/:video-id/manifest.mpd= (=application/dash+xml=)
+   and =GET /dash/:video-id/:seg= with correct types and HTTP Range support
+   (ring's =resource-ranges= middleware covers it).
+3. Static: shadow-cljs output + css via =ring-resource-data=.
+
+** 5 · Sync service — server-authoritative room clock (ws.clj, services/sync.clj)
+1. ring-websocket endpoint =/ws/room/:token=; the room token in the URL is the
+   only viewer credential.
+2. Room state = one atom per room: ={:video-id :pos :t0 :playing? :rate}= where
+   =pos= is media seconds at monotonic instant =t0=. Expected position for any
+   client = pos + (now − t0) · rate.
+3. Messages: =hello= (join, nick), =ping/ping-ack= (clock-offset estimation),
+   host commands =play/pause/seek/select-video=, =heartbeat= broadcast every
+   2 s, =chat=, and a viewer =status= report (local pos, buffering) every 5 s
+   so the admin sees who is lagging.
+4. Host = the room creator (admin) in v1. Viewer messages are chat + status
+   only. Server broadcasts every state change immediately.
+5. All timing on =System/nanoTime= monotonic clocks; wall clock never used for
+   sync math.
+
+** 6 · Frontend — CLJS + dash.js (src/cljs)
+1. =player.cljs=: thin dash.js wrapper. Resolution menu: =auto= → ABR on
+   (recommended, best sync); a fixed height → =autoSwitch=false= + lock the
+   matching Representation. Choice persisted per browser in localStorage.
+2. =sync.cljs= — pure, unit-testable functions: offset estimate from ping RTT
+   samples (min-RTT, NTP-style); drift = local − expected; policy:
+   | drift                | action                                  |
+   |----------------------+-----------------------------------------|
+   | abs < 0.3 s          | nothing                                  |
+   | 0.3–1.5 s            | playbackRate nudge ±5 % until < 0.15 s   |
+   | abs > 1.5 s          | hard seek to expected                    |
+   | stalled (buffering)  | do nothing until recovery, then policy   |
+   The last row /is/ the catch-up feature: the room never pauses for one
+   buffering viewer; when their buffer refills the policy snaps them back.
+3. =ui.cljs=: lobby (video grid, join/create), watch page (player + resolution
+   menu + chat box — the one DOM-heavy area per ARCHITECTURE.org:18-21), admin
+   page (storage dir display, en-masse upload with per-file job status,
+   library management, room creation + copyable link).
+4. Nickname on join: first open of a room link shows a join overlay asking
+   "who are you?"; the name is a temp handle kept in localStorage (pre-filled
+   next time, re-editable), sent in the WS =hello=, and shown on chat
+   messages + the participant list. The participant list is also the admin's
+   "who's lagging" view (fed by the 5 s status reports). No accounts — the
+   name is cosmetic, not an identity.
+5. Vanilla-DOM style per ARCHITECTURE.org:19 — plain CLJS DOM interop, no SPA
+   framework; pages are static HTML, CLJS hydrates and patches only what
+   changes.
+6. Theme — gooey waterpark slime (hand-written =resources/public/css/theme.css=,
+   CSS custom properties, no CSS framework):
+   - Palette: deep teal-black water background (=#07231F=), slime/lime green
+     primary (=#8FE032=), aqua-turquoise splash accent (=#1FC8DB=), foam white
+     text; /no orange anywhere/.
+   - Gooey: blobby rounded buttons that merge/stretch on hover (SVG gooey
+     blur-contrast filter), dripping-blob accents, wavy section dividers;
+     waterpark: aqua gradient washes, pool-tile texture behind the lobby grid,
+     bubble animation in the chat box.
+   - Player chrome stays dark + minimal so video colors aren't tinted; the
+     slime goes on the chrome around it (headers, buttons, chat, badges).
+
+** 7 · Auth + deploy docs
+1. Auth: single admin password from env, session cookie, =/api/admin/*=
+   middleware. No user accounts; room URL = capability. Room tokens are long
+   random strings; admin login is rate-limited per IP — this matters because
+   Funnel puts the whole internet one guess away from the login form.
+2. README.org sharing options, in order of preference:
+   - /Tailscale Funnel/ (the "send a link to friends" path): =tailscale funnel
+     443= publishes the app publicly at =https://<machine>.<tailnet>.ts.net=
+     with free TLS — friends need /no/ Tailscale install, just the link.
+     One-time: enable Funnel in the Tailscale admin console; Funnel fronts
+     only ports 443/8443/10000.
+   - /Tailscale Serve/ (private): friends must run Tailscale and be in your
+     tailnet; use for housemates/family machines.
+   - Raw port forwarding: last resort, ships video + chat unencrypted.
+3. Update ARCHITECTURE.org: gstreamer → ffmpeg, record the layering this plan
+   implements.
+
+* Sync + catch-up journey
+All steps tagged =spec= — nothing is built yet. Cards show what each store
+holds after the highlighted step.
+
+#+INCLUDE: "~/.config/opencode/skills/org-plan/diagrams/sequence.html" export html
+#+BEGIN_EXPORT html
+<div id="journey">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('journey', {
+  lanes: [
+    {id: 'host', label: 'Admin', sub: 'host browser'},
+    {id: 'srv', label: 'Server', sub: 'room clock atom'},
+    {id: 'view', label: 'Viewer', sub: 'dash.js + sync'}
+  ],
+  phases: {
+    join:  {label: '1 · Join', tag: 'spec · ws.clj'},
+    live:  {label: '2 · Live playback', tag: 'spec · services/sync.clj'},
+    stall: {label: '3 · Stall & catch-up', tag: 'spec · cljs sync.cljs'}
+  },
+  stores: [{id: 'room', label: 'Room state (server)'}, {id: 'player', label: 'Viewer player'}],
+  init: {room: 'video X · pos 0 · paused', player: 'nothing'},
+  startLabel: 'Before joining',
+  steps: [
+    {ph: 'join', from: 'view', to: 'srv', tag: 'spec',
+     label: 'WS /ws/room/:token {hello, nick}',
+     note: 'Room token in the shared URL is the only viewer credential.'},
+    {ph: 'join', from: 'view', to: 'srv', tag: 'spec', label: 'ping ×3 (clock probe)'},
+    {ph: 'join', from: 'srv', to: 'view', tag: 'spec',
+     label: 'ping-acks + snapshot {pos, t0, playing}',
+     state: {player: 'clock offset ≈ +40 ms (min-RTT)\nmanifest fetched'},
+     note: 'NTP-style: smallest RTT wins. Monotonic clocks only.'},
+    {ph: 'live', from: 'host', to: 'srv', tag: 'spec', label: 'play {pos 0}',
+     state: {room: 'video X · playing · pos 0 @ t0'}},
+    {ph: 'live', from: 'srv', to: 'view', tag: 'spec',
+     label: 'broadcast {playing, pos, t0}',
+     state: {player: 'expected = pos + (now − t0)'}},
+    {ph: 'live', from: 'srv', to: 'view', tag: 'spec',
+     label: 'heartbeat every 2 s {pos, t0}',
+     note: 'Also re-broadcast on every host action. Heartbeat keeps drift bounded.'},
+    {ph: 'live', from: 'view', to: 'view', tag: 'spec',
+     label: 'drift 0.05 s < 0.3 → no action',
+     state: {player: 'local 12.05 s · expected 12.0 s · drift +0.05 s'}},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'buffer empty → dash.js stalls',
+     note: 'The room keeps playing. No pause propagates for one slow viewer — that is the catch-up design.',
+     state: {player: 'local 41.2 s · expected 55.0 s · drift −13.8 s · STALLED'}},
+    {ph: 'stall', from: 'view', to: 'srv', tag: 'spec',
+     label: 'status {localPos, buffering: true}',
+     note: '5 s status report; admin dashboard shows who is lagging.'},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'buffer refills → drift > 1.5 s → hard seek',
+     state: {player: 'local 55.0 s · drift 0 · playing'},
+     note: 'sync.cljs policy: |drift| > 1.5 s → seek to expected.'},
+    {ph: 'stall', from: 'view', to: 'view', tag: 'spec',
+     label: 'small drift 0.3–1.5 s → rate nudge ±5 %',
+     note: 'Imperceptible catch-up until |drift| < 0.15 s, then rate back to 1.',
+     state: {player: 'playbackRate 1.05 → 1.0'}}
+  ]
+});
+</script>
+#+END_EXPORT
+
+* Risks and open questions
+- ARCHITECTURE.org:15 says gstreamer; you said ffmpeg. Plan follows ffmpeg and
+  updates the doc. Say the word if gstreamer was actually meant.
+- "MUST be clojure+clojurescript": assumed to allow dash.js as an npm library
+  (shadow-cljs npm support). Hand-rolling a DASH client (manifest parse, ABR,
+  segment fetch/buffer via MSE) is CLJS-only but multiplies the scope — needs
+  your call before building.
+- Host model assumed: the admin who creates a room is the sole playback
+  controller; viewers watch + chat. No "everyone drives" mode in v1.
+- Auth assumed minimal: one admin password via env; room URL is a secret
+  capability; nicknames are cosmetic, not identity. Funnel = the app is
+  publicly reachable, so the password + room tokens are the entire defense
+  (hence rate limiting + long random tokens); Serve mode or raw forwarding
+  without TLS is weaker still.
+- Host ffmpeg lacks libx264 (verified) → the container image must ship a full
+  ffmpeg; =make image= fails loudly if it doesn't.
+- Encoding on the same box that serves streams: CPU contention mid-party.
+  Mitigated by 1 transcode worker + =nice= + =veryfast=; transcode before the
+  party is the documented workflow.
+- Room state is in-memory; a server restart drops live rooms (DB rows survive).
+  Acceptable for v1.
+- =use_timeline 0= + segment templates assumes dash.js template handling; exact
+  dash muxer flags get tuned against a real clip early (step 3 is deliberately
+  before the frontend).
+- Ladder assumes one audio track; multi-audio/subtitles deferred.
+
+* Verification
+1. =make image= builds; inside it =ffmpeg -encoders | grep libx264= and
+   =clojure --version= pass.
+2. =make dev= → app on :8080. Set a test =STORAGE_DIR=.
+3. Test clip: =ffmpeg -f lavfi -i testsrc2= + sine audio, 60 s; upload via the
+   admin page; watch progress % climb; on =ready= verify
+   =dash/<id>/manifest.mpd= lists 4 video Representations + audio and segment
+   files exist; =curl= the manifest and one segment (200, right Content-Type).
+4. Two browser tabs + the admin tab join the room: pause/seek as host → both
+   viewers follow within one heartbeat; DevTools network throttling (Slow 3G)
+   on one viewer → it stalls, room continues, on recovery it hard-seeks back
+   (visible in the sync debug overlay).
+5. Resolution menu: pick 480p → DevTools network shows only 480p segments;
+   =auto= → ABR switches with throttling.
+6. =clojure -X:test=: repo-layer tests against a temp sqlite (video lifecycle,
+   room tokens) and pure sync-policy tests (drift thresholds, offset estimate).
+7. =npx shadow-cljs check client= compiles clean; join two tabs with different
+   nicknames → both names appear in the participant list and on chat messages,
+   and survive a reload via localStorage; eyeball the theme (slime green +
+   aqua, no orange anywhere).
