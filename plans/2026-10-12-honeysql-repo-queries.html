@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-12 Mon 14:04 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Replace raw SQL with HoneySQL in the repo layer</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Replace raw SQL with HoneySQL in the repo layer</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgdf6327d">Goal</a></li>
+<li><a href="#org93ae2c7">Findings</a></li>
+<li><a href="#org54d0741">Plan</a></li>
+<li><a href="#org396cbdb">Risks and open questions</a></li>
+<li><a href="#orgca7bae6">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgdf6327d" class="outline-2">
+<h2 id="orgdf6327d">Goal</h2>
+<div class="outline-text-2" id="text-orgdf6327d">
+<p>
+Swap every hand-written SQL string in the persistence layer for
+<a href="https://github.com/seancorfield/honeysql">HoneySQL</a> data structures (<code>com.github.seancorfield/honeysql</code>
+<code>2.7.1479</code>, current on Clojars), keeping <code>next.jdbc</code> as the executor. Pure
+refactor: identical behavior, identical function signatures, identical result
+shapes. <code>test/clj/goob_toob/repos_test.clj</code> is the gate — it must pass
+<b>unchanged</b>.
+</p>
+</div>
+</div>
+<div id="outline-container-org93ae2c7" class="outline-2">
+<h2 id="org93ae2c7">Findings</h2>
+<div class="outline-text-2" id="text-org93ae2c7">
+<ul class="org-ul">
+<li>13 raw statements across three files; nothing else touches SQL
+(<code>routes.clj</code>, <code>services/*</code> go through the repos).</li>
+<li><code>src/clj/goob_toob/repos/video.clj:13</code> — 8 statements:
+<ul class="org-ul">
+<li><code>insert!</code> (INSERT with inline <code>'uploaded'</code> literal), <code>get-by-id</code>,
+<code>list-all</code>, <code>list-ready</code> (SELECT with ORDER BY),
+<code>set-status!</code> (UPDATE with two <code>COALESCE(?, col)</code> and
+<code>datetime('now')</code>), <code>set-progress!</code>, <code>set-duration!</code>,
+<code>delete!</code> (two DELETEs, rooms then videos), <code>requeue-stuck</code>
+(SELECT with <code>status IN (...)</code>).</li>
+</ul></li>
+<li><code>src/clj/goob_toob/repos/room.clj:20</code> — 5 statements: INSERT, two
+SELECT-by-key, a rooms⋈videos JOIN with aliased columns
+(<code>src/clj/goob_toob/repos/room.clj:35-37</code>), DELETE.</li>
+<li><code>src/clj/goob_toob/db.clj:17-29</code> — migration runner: bootstrap
+<code>CREATE TABLE IF NOT EXISTS schema_migrations</code>, <code>SELECT name FROM
+  schema_migrations</code>, <code>INSERT INTO schema_migrations (name) VALUES (?)</code>.
+The runner slurps <code>resources/migrations/*.sql</code> (<code>src/clj/goob_toob/db.clj:23</code>).</li>
+<li>Result rows are built with <code>rs/as-unqualified-kebab-maps</code> /
+<code>as-unqualified-lower-maps</code> — those stay untouched, so callers see the same
+keys regardless of how the SQL is generated.</li>
+<li><code>deps.edn</code> already has <code>next.jdbc 1.3.1118</code>; HoneySQL is not yet a dep.</li>
+<li><code>sql/format</code> returns <code>[sql &amp; params]</code> — exactly the vector shape
+<code>jdbc/execute!=/=execute-one!</code> already take, so call sites become
+<code>(jdbc/execute! (db/db) (sql/format q))</code>.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org54d0741" class="outline-2">
+<h2 id="org54d0741">Plan</h2>
+<div class="outline-text-2" id="text-org54d0741">
+<ol class="org-ol">
+<li><b>deps.edn</b>: add <code>com.github.seancorfield/honeysql {:mvn/version
+   "2.7.1479"}</code> to <code>:deps</code>.</li>
+<li><p>
+<b>repos/video.clj</b>: require <code>[honey.sql :as sql]</code> and <code>[honey.sql.raw :as
+   raw]</code>. Rewrite all 8 statements as HoneySQL maps, e.g.:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-comment-delimiter">;; </span><span class="org-comment">insert!
+</span><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">jdbc</span>/execute! <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">db</span>/db<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:insert-into</span> <span class="org-clojure-keyword">:videos</span>
+               <span class="org-clojure-keyword">:values</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:id</span> id <span class="org-clojure-keyword">:title</span> title <span class="org-clojure-keyword">:original-path</span> original-path
+                         <span class="org-clojure-keyword">:dash-dir</span> <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"dash/"</span> id<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:status</span> <span class="org-string">"uploaded"</span><span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">set-status! &#8212; COALESCE as a HoneySQL fn vector, datetime via honey.sql.raw
+</span><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">jdbc</span>/execute! <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">db</span>/db<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:update</span> <span class="org-clojure-keyword">:videos</span>
+               <span class="org-clojure-keyword">:set</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:status</span> status<span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:progress</span> <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-clojure-keyword">:coalesce</span> ? <span class="org-clojure-keyword">:progress</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:error</span> error<span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:duration</span> <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-clojure-keyword">:coalesce</span> ? <span class="org-clojure-keyword">:duration</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:updated-at</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">raw</span>/sql <span class="org-string">"datetime('now')"</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">]</span>
+               <span class="org-clojure-keyword">:where</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:=</span> <span class="org-clojure-keyword">:id</span> id<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">requeue-stuck
+</span><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:select</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:id</span><span class="org-rainbow-delimiters-depth-3">]</span> <span class="org-clojure-keyword">:from</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:videos</span><span class="org-rainbow-delimiters-depth-3">]</span>
+             <span class="org-clojure-keyword">:where</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:status</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:in</span> <span class="org-string">"uploaded"</span> <span class="org-string">"transcoding"</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+The <code>?</code> in <code>[:coalesce ? :progress]</code> is HoneySQL's parameter placeholder —
+it renders <code>coalesce(?, progress)</code> and keeps param order correct without
+any raw SQL. <code>datetime('now')</code> carries no params, so <code>honey.sql.raw</code> is
+safe there.
+</p></li>
+<li><p>
+<b>repos/room.clj</b>: same treatment; the JOIN becomes
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:select</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">r</span><span class="org-default">/</span><span class="org-clojure-keyword">id</span><span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">r</span><span class="org-default">/</span><span class="org-clojure-keyword">token</span><span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">r</span><span class="org-default">/</span><span class="org-clojure-keyword">video_id</span><span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">v</span><span class="org-default">/</span><span class="org-clojure-keyword">title</span><span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">v</span><span class="org-default">/</span><span class="org-clojure-keyword">status</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span>
+             <span class="org-clojure-keyword">:from</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:rooms</span> <span class="org-clojure-keyword">:r</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span>
+             <span class="org-clojure-keyword">:join</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:videos</span> <span class="org-clojure-keyword">:v</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:=</span> <span class="org-clojure-keyword">:v.id</span> <span class="org-clojure-keyword">:r.video_id</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span>
+             <span class="org-clojure-keyword">:order-by</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:</span><span class="org-type">r</span><span class="org-default">/</span><span class="org-clojure-keyword">created-at</span> <span class="org-clojure-keyword">:desc</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>as-unqualified-kebab-maps</code> keeps the result keys
+(<code>:id :token :video-id :title :status</code>) exactly as today.
+</p></li>
+<li><b>db.clj</b>: convert the two bookkeeping DML statements (<code>SELECT name FROM
+   schema_migrations</code>, <code>INSERT INTO schema_migrations ...</code>) to HoneySQL.
+<b>Leave as raw SQL</b>: the bootstrap <code>CREATE TABLE IF NOT EXISTS</code> and the
+<code>resources/migrations/*.sql</code> files — DDL migrations as checked-in .sql
+files is the normal pattern and the runner already handles them.</li>
+<li>No signature or result-shape changes anywhere; <code>storage.clj</code> untouched
+(filesystem, no SQL).</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org396cbdb" class="outline-2">
+<h2 id="org396cbdb">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org396cbdb">
+<ul class="org-ul">
+<li><b>Assumption</b>: migration <code>.sql</code> files and the bootstrap DDL stay raw.
+HoneySQL can emit <code>CREATE TABLE</code> but it buys nothing for versioned
+migrations. Say so if you want those converted too.</li>
+<li>Parameter-order bugs are the classic hazard — avoided by using HoneySQL
+placeholders/fn vectors instead of raw fragments containing <code>?</code>.</li>
+<li>HoneySQL kebab→snake conversion (<code>video-id</code> → <code>video_id</code>) matches the
+schema; the <code>IN</code> list renders as separate params, not interpolation.</li>
+<li>Container rebuild needed for the new dep (<code>make image</code> / <code>make test</code> pull
+it at build time).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgca7bae6" class="outline-2">
+<h2 id="orgca7bae6">Verification</h2>
+<div class="outline-text-2" id="text-orgca7bae6">
+<ol class="org-ol">
+<li><code>make test</code> — all 8 tests / 31 assertions green, <code>repos_test.clj</code>
+<b>unchanged</b> (that's the proof of behavior preservation).</li>
+<li><code>grep -rn "SELECT \|INSERT INTO \|UPDATE \|DELETE FROM " src/clj</code> — only
+the migration bootstrap + runner remain.</li>
+<li>Live smoke: rebuild image, recreate container, <code>make tunnel</code> optional —
+upload → transcode → room → play still works end to end.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-12</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-12 Mon 14:04</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

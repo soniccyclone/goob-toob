@@ -1,0 +1,103 @@
+#+TITLE: Replace raw SQL with HoneySQL in the repo layer
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-12
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+Swap every hand-written SQL string in the persistence layer for
+[[https://github.com/seancorfield/honeysql][HoneySQL]] data structures (=com.github.seancorfield/honeysql=
+=2.7.1479=, current on Clojars), keeping =next.jdbc= as the executor. Pure
+refactor: identical behavior, identical function signatures, identical result
+shapes. =test/clj/goob_toob/repos_test.clj= is the gate — it must pass
+*unchanged*.
+
+* Findings
+- 13 raw statements across three files; nothing else touches SQL
+  (=routes.clj=, =services/*= go through the repos).
+- ~src/clj/goob_toob/repos/video.clj:13~ — 8 statements:
+  - =insert!= (INSERT with inline ='uploaded'= literal), =get-by-id=,
+    =list-all=, =list-ready= (SELECT with ORDER BY),
+    =set-status!= (UPDATE with two =COALESCE(?, col)= and
+    =datetime('now')=), =set-progress!=, =set-duration!=,
+    =delete!= (two DELETEs, rooms then videos), =requeue-stuck=
+    (SELECT with =status IN (...)=).
+- ~src/clj/goob_toob/repos/room.clj:20~ — 5 statements: INSERT, two
+  SELECT-by-key, a rooms⋈videos JOIN with aliased columns
+  (~src/clj/goob_toob/repos/room.clj:35-37~), DELETE.
+- ~src/clj/goob_toob/db.clj:17-29~ — migration runner: bootstrap
+  =CREATE TABLE IF NOT EXISTS schema_migrations=, =SELECT name FROM
+  schema_migrations=, =INSERT INTO schema_migrations (name) VALUES (?)=.
+  The runner slurps =resources/migrations/*.sql= (~src/clj/goob_toob/db.clj:23~).
+- Result rows are built with =rs/as-unqualified-kebab-maps= /
+  =as-unqualified-lower-maps= — those stay untouched, so callers see the same
+  keys regardless of how the SQL is generated.
+- =deps.edn= already has =next.jdbc 1.3.1118=; HoneySQL is not yet a dep.
+- =sql/format= returns =[sql & params]= — exactly the vector shape
+  =jdbc/execute!=/=execute-one!= already take, so call sites become
+  =(jdbc/execute! (db/db) (sql/format q))=.
+
+* Plan
+1. *deps.edn*: add =com.github.seancorfield/honeysql {:mvn/version
+   "2.7.1479"}= to =:deps=.
+2. *repos/video.clj*: require =[honey.sql :as sql]= and =[honey.sql.raw :as
+   raw]=. Rewrite all 8 statements as HoneySQL maps, e.g.:
+   #+begin_src clojure
+   ;; insert!
+   (jdbc/execute! (db/db)
+     (sql/format {:insert-into :videos
+                  :values [{:id id :title title :original-path original-path
+                            :dash-dir (str "dash/" id) :status "uploaded"}]}))
+
+   ;; set-status! — COALESCE as a HoneySQL fn vector, datetime via honey.sql.raw
+   (jdbc/execute! (db/db)
+     (sql/format {:update :videos
+                  :set [[:status status]
+                        [:progress [:coalesce ? :progress]]
+                        [:error error]
+                        [:duration [:coalesce ? :duration]]
+                        [:updated-at (raw/sql "datetime('now')")]]
+                  :where [:= :id id]}))
+
+   ;; requeue-stuck
+   (sql/format {:select [:id] :from [:videos]
+                :where [:status [:in "uploaded" "transcoding"]]})
+   #+end_src
+   The =?= in =[:coalesce ? :progress]= is HoneySQL's parameter placeholder —
+   it renders =coalesce(?, progress)= and keeps param order correct without
+   any raw SQL. =datetime('now')= carries no params, so =honey.sql.raw= is
+   safe there.
+3. *repos/room.clj*: same treatment; the JOIN becomes
+   #+begin_src clojure
+   (sql/format {:select [[:r/id] [:r/token] [:r/video_id] [:v/title] [:v/status]]
+                :from [[:rooms :r]]
+                :join [:videos :v [:= :v.id :r.video_id]]
+                :order-by [[:r/created-at :desc]]})
+   #+end_src
+   =as-unqualified-kebab-maps= keeps the result keys
+   (=:id :token :video-id :title :status=) exactly as today.
+4. *db.clj*: convert the two bookkeeping DML statements (=SELECT name FROM
+   schema_migrations=, =INSERT INTO schema_migrations ...=) to HoneySQL.
+   *Leave as raw SQL*: the bootstrap =CREATE TABLE IF NOT EXISTS= and the
+   =resources/migrations/*.sql= files — DDL migrations as checked-in .sql
+   files is the normal pattern and the runner already handles them.
+5. No signature or result-shape changes anywhere; =storage.clj= untouched
+   (filesystem, no SQL).
+
+* Risks and open questions
+- *Assumption*: migration =.sql= files and the bootstrap DDL stay raw.
+  HoneySQL can emit =CREATE TABLE= but it buys nothing for versioned
+  migrations. Say so if you want those converted too.
+- Parameter-order bugs are the classic hazard — avoided by using HoneySQL
+  placeholders/fn vectors instead of raw fragments containing =?=.
+- HoneySQL kebab→snake conversion (=video-id= → =video_id=) matches the
+  schema; the =IN= list renders as separate params, not interpolation.
+- Container rebuild needed for the new dep (=make image= / =make test= pull
+  it at build time).
+
+* Verification
+1. =make test= — all 8 tests / 31 assertions green, =repos_test.clj=
+   *unchanged* (that's the proof of behavior preservation).
+2. =grep -rn "SELECT \|INSERT INTO \|UPDATE \|DELETE FROM " src/clj= — only
+   the migration bootstrap + runner remain.
+3. Live smoke: rebuild image, recreate container, =make tunnel= optional —
+   upload → transcode → room → play still works end to end.
