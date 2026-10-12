@@ -11,7 +11,7 @@
   [{:keys [pos t0 now playing? rate]}]
   (if playing?
     (+ pos (* (max 0 (- now t0)) (or rate 1) 0.001))
-    pos))
+    (double pos)))
 
 (defn ntp-offset
   "Server-clock offset estimate: t0 = client ms at send, st = server ms at

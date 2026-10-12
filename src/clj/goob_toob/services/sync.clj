@@ -16,7 +16,7 @@
 (defn room-for [room-id]
   (or (get @rooms* room-id)
       (when-let [row (rooms/get-by-id room-id)]
-        (let [r {:video-id (:video_id row) :pos 0.0 :t0 (mono-ms)
+        (let [r {:video-id (:video-id row) :pos 0.0 :t0 (mono-ms)
                  :playing? false :rate 1.0 :clients {}}]
           (swap! rooms* assoc room-id r)
           r))))

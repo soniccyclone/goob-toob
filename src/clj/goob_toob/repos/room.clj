@@ -7,7 +7,7 @@
 (defn- random-token []
   (let [b (byte-array 24)]
     (.nextBytes (java.security.SecureRandom.) b)
-    (-> b java.util.Base64/urlEncoder (.withoutPadding) (.encodeToString))))
+    (.encodeToString (.withoutPadding (java.util.Base64/getUrlEncoder)) b)))
 
 (defn- random-id [] (str (java.util.UUID/randomUUID)))
 
@@ -23,19 +23,19 @@
 (defn get-by-token [token]
   (some-> (jdbc/execute-one! (db/db)
               ["SELECT * FROM rooms WHERE token = ?" token]
-              {:return-keys true :builder-fn rs/as-unqualified-lower-maps})))
+              {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn get-by-id [id]
   (some-> (jdbc/execute-one! (db/db)
               ["SELECT * FROM rooms WHERE id = ?" id]
-              {:return-keys true :builder-fn rs/as-unqualified-lower-maps})))
+              {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn list-all []
   (->> (jdbc/execute! (db/db)
           ["SELECT r.id, r.token, r.video_id, v.title, v.status
              FROM rooms r JOIN videos v ON v.id = r.video_id
             ORDER BY r.created_at DESC"]
-          {:return-keys true :builder-fn rs/as-unqualified-lower-maps})))
+          {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn delete! [id]
   (jdbc/execute! (db/db) ["DELETE FROM rooms WHERE id = ?" id]))

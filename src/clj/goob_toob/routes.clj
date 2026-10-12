@@ -60,7 +60,7 @@
   (select-keys v [:id :title :duration :status :progress]))
 
 (defn public-videos [_] (response (map public-video (videos/list-ready))))
-(defn admin-videos [_] (response (map #(update % :error #(some-> % (str/join (take 800))))
+(defn admin-videos [_] (response (map #(update % :error (fn [e] (some-> e (take 800) str/join)))
                                        (videos/list-all))))
 
 (defn public-rooms [_]
@@ -123,20 +123,11 @@
       (when (<= start end) [start end]))))
 
 (defn- limited-stream [^java.io.File f start end]
-  (let [raf (doto (RandomAccessFile. f "r") (.seek start))
-        remaining (long-array [(long (- (inc end) start))])]
-    (proxy [java.io.InputStream] []
-      (read []
-        (if (pos? (aget remaining 0))
-          (let [b (.read raf)] (when (pos? b) (aset remaining 0 (dec (aget remaining 0)))) b)
-          -1))
-      (read [^bytes bs off len]
-        (if (zero? (aget remaining 0))
-          -1
-          (let [n (.read raf bs off (int (min len (aget remaining 0))))]
-            (when (pos? n) (aset remaining 0 (- (aget remaining 0) n)))
-            n)))
-      (close [] (.close raf)))))
+  (let [len (inc (- end start))
+        buf (byte-array len)]
+    (with-open [raf (doto (RandomAccessFile. f "r") (.seek start))]
+      (.readFully raf buf))
+    (java.io.ByteArrayInputStream. buf)))
 
 (defn- serve-file [^java.io.File f req]
   (let [len (.length f)
@@ -175,19 +166,19 @@
 (defn app []
   (let [router
         (ring/router
-         ["" {:middlewares common}]
-         ["/api" {:middlewares [json-body wrap-json-response]}
+         ["" {:middleware common}
+         ["/api" {:middleware [json-body wrap-json-response]}
           ["/login" {:post login}]
           ["/logout" {:post logout}]
           ["/me" {:get whoami}]
           ["/videos" {:get public-videos}]
           ["/rooms" {:get public-rooms}]
-          ["/admin" {:middlewares [require-admin]}
+          ["/admin" {:middleware [require-admin]}
            ["/me" {:get whoami}]
            ["/videos" {:get admin-videos}]
            ["/videos/:id" {:delete delete-video}]
            ["/upload" {:post upload
-                       :middlewares [wrap-multipart-params]}]
+                       :middleware [wrap-multipart-params]}]
            ["/info" {:get storage-info}]
            ["/rooms" {:post create-room}]
            ["/rooms/:id" {:delete delete-room}]]]
@@ -196,7 +187,7 @@
          ["/ws/room/:token" {:get ws/endpoint}]
          ["/" {:get spa}]
          ["/watch/*" {:get spa}]
-         ["/admin" {:get spa}])]
+         ["/admin" {:get spa}]])
         not-found (ring/routes
                    (wrap-resource (constantly nil) "public")
                    (constantly (-> (response "not found") (status 404))))]

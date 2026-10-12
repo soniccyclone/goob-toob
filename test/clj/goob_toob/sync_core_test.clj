@@ -26,7 +26,7 @@
   (is (= 0.0 (sc/ntp-offset 1000 1010 1020))))
 
 (deftest best-offset-prefers-lowest-rtt
-  (is (= 42.0
+  (is (= 42
          (sc/best-offset [{:rtt 80 :offset 30}
                           {:rtt 12 :offset 42}
                           {:rtt 55 :offset 50}]))))

@@ -37,7 +37,7 @@
                         "guest")
             admin?  (boolean (get-in req [:session :admin]))
             room-id (:id room-row)
-            video   (videos/get-by-id (:video_id room-row))]
+            video   (videos/get-by-id (:video-id room-row))]
         (wa/go-websocket [in out]
           (let [send! #(a/put! out (json/generate-string %))]
             (swap! sync/conns* assoc cid {:send #(a/put! out %) ; takes a json string

@@ -2,7 +2,8 @@
   "Filesystem repo: everything lives under STORAGE_DIR. uploads/<id>.<ext>
   for originals, dash/<id>/ for the DASH tree. All paths are checked to stay
   inside the storage root."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.string :as str]
+            [clojure.java.io :as io]
             [goob-toob.config :as config])
   (:import [java.nio.file Path Files StandardCopyOption]))
 
@@ -18,12 +19,14 @@
   (doto (io/file (root) "dash" video-id) (.mkdirs)))
 
 (defn dash-file
-  "Safe lookup of a file inside a video's DASH dir (blocks ../ tricks)."
+  "Safe lookup of a file inside a video's DASH dir (blocks ../ and absolute
+  path tricks)."
   [video-id ^String rel]
-  (let [dir  (.getCanonicalFile (dash-dir video-id))
-        f    (.getCanonicalFile (io/file dir rel))]
-    (when (and (.startsWith (.toPath f) (.toPath dir)) (.exists f) (.isFile f))
-      f)))
+  (when-not (str/starts-with? rel "/")
+    (let [dir  (.getCanonicalFile (dash-dir video-id))
+          f    (.getCanonicalFile (io/file dir rel))]
+      (when (and (.startsWith (.toPath f) (.toPath dir)) (.exists f) (.isFile f))
+        f))))
 
 (defn original-file [video-id ext]
   (let [f (io/file (uploads-dir) (str video-id (when (seq ext) (str "." ext))))]
