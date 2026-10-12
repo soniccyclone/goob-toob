@@ -61,7 +61,7 @@
   (select-keys v [:id :title :duration :status :progress]))
 
 (defn public-videos [_] (response (map public-video (videos/list-ready))))
-(defn admin-videos [_] (response (map #(update % :error (fn [e] (some-> e (take 800) str/join)))
+(defn admin-videos [_] (response (map #(update % :error (fn [e] (some->> e (take 800) str/join)))
                                        (videos/list-all))))
 
 (defn public-rooms [_]

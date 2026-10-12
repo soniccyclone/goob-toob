@@ -25,7 +25,8 @@
         exit (.waitFor p)]
     (if (zero? exit)
       (json/read-str out :key-fn keyword)
-      (throw (ex-info "ffprobe failed" {:exit exit :err err})))))
+      (throw (ex-info (str "ffprobe failed (exit " exit "): "
+                           (apply str (take-last 400 err))) {:exit exit :err err})))))
 
 (defn- probe-media [probe]
   (let [v (first (filter #(= "video" (:codec_type %)) (:streams probe)))

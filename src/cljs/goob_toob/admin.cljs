@@ -36,7 +36,7 @@
                (h :div.bar {:style "width:140px;margin-top:4px"}
                   (h :i {:style (str "width:" (int (* 100 (or (:progress v) 0))) "%")}))))
           (h :td (or (ui/fmt-time (:duration v)) "—"))
-          (h :td {:class "err"} (some-> (:error v) (subs 0 80)))
+          (h :td {:class "err"} (some-> (:error v) (#(subs % 0 (min 80 (count %))))))
           (h :td
              (h :div.goo
                (h :button.btn.aqua {:disabled (not= st "ready")
