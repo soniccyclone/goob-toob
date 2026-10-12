@@ -34,12 +34,14 @@ unless you set =ADMIN_PASSWORD=), upload videos, make a room, share the link.
 ** Tailscale Funnel (friends need nothing)
 Friends just get a link — no Tailscale install needed:
 #+begin_src sh
-tailscale serve --bg 8080      # once
-tailscale funnel 443 --bg      # publishes https://<machine>.<tailnet>.ts.net
+make funnel        # = tailscale funnel --bg 8080 (implies serve -> 443)
+make funnel-stop   # back to tailnet-only
 #+end_src
-Enable Funnel once in the Tailscale admin console. Funnel only fronts ports
-443/8443/10000. The whole internet can now reach the app: the admin password
-(rate-limited, 5/min) and the unguessable room tokens are the entire defense.
+Enable Funnel once for the tailnet (the first =make funnel= prints an enable
+link if it isn't on yet). Funnel only fronts ports 443/8443/10000. The whole
+internet can now reach the app at =https://<machine>.<tailnet>.ts.net=: the
+admin password (rate-limited, 5/min) and the unguessable room tokens are the
+entire defense.
 
 ** Tailscale Serve (friends on your tailnet)
 =tailscale serve --bg 8080= and share =https://<machine>.<tailnet>.ts.net= —

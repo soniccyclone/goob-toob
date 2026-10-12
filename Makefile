@@ -6,10 +6,10 @@ PORT    ?= 8080
 MOUNTS := -v $(STORAGE):/data:z -v $(CURDIR):/app:z -w /app
 ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
-.PHONY: help image dev run test compile repl clip
+.PHONY: help image dev run test compile repl clip funnel funnel-stop
 
 help:
-	@grep -hE '^[a-z]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-9s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-12s\033[0m %s\n", $$1, $$2}'
 
 image: ## build the podman image (dev + deploy)
 	podman build -f container/Containerfile -t $(IMAGE) .
@@ -37,3 +37,11 @@ clip: ## generate storage/testclip.mp4 (needs host ffmpeg)
 	ffmpeg -y -hide_banner -loglevel error -f lavfi -i "testsrc2=size=1280x720:rate=30:duration=20" \
 	  -f lavfi -i "sine=frequency=440:duration=20" \
 	  -c:v libopenh264 -c:a aac -shortest $(STORAGE)/testclip.mp4
+
+# tailscale funnel fronts the port itself (implies serve -> 443); friends
+# need no tailscale, just the https://<machine>.<tailnet>.ts.net URL it prints.
+funnel: ## expose the running app (PORT=8080) to the internet via Tailscale Funnel
+	tailscale funnel --bg $(PORT)
+
+funnel-stop: ## stop the Tailscale Funnel (tailnet-only serve stays up)
+	tailscale funnel --stop
