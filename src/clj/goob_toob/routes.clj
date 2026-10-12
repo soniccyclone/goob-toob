@@ -71,7 +71,7 @@
 (defn create-room [{:keys [params]}]
   (try
     (let [r (rooms/create! (:video-id params))]
-      (response {:token (:token r) :url (str "/watch/" (:token r))} 201))
+      (-> (response {:token (:token r) :url (str "/watch/" (:token r))}) (status 201)))
     (catch Exception e
       (-> (response {:error (.getMessage e)}) (status 400)))))
 
@@ -97,7 +97,7 @@
             dest  (storage/save-upload! (io/file tempfile) id ext)]
         (videos/insert! {:id id :title title :original-path (.getPath dest)})
         (transcode/submit! id)
-        (response {:id id :status "queued" :free-mb (storage/free-space-mb)} 202)))))
+        (-> (response {:id id :status "queued" :free-mb (storage/free-space-mb)}) (status 202))))))
 
 (defn storage-info [_]
   (let [cfg (config/cfg)]
