@@ -9,6 +9,16 @@ upload your library, open a room, toss friends a link, everyone watches in
 sync. You drive playback; viewers pick auto (best sync) or a locked
 resolution and catch themselves up when their internet wobbles.
 
+* Links
+| [[https://git.sr.ht/~nathanb/goob-toob][repo]]        | sourcehut home: summary, tree, log, refs |
+| [[https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans][plans]]       | dated plan files (+ rendered html snapshots) |
+| [[https://nathanb.srht.site/goob-toob-plans/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
+| [[https://builds.sr.ht/~nathanb/goob-toob][builds]]      | CI: runs on every master push, republishes the plans site |
+
+Note: git.sr.ht only renders *markdown* readmes on its summary page (see
+=README.md= — it's a stub pointing here). The tree view shows =.org= files as
+plain text, so for pretty org reading use the plans site above.
+
 * Quickstart (podman)
 #+begin_src sh
 make image          # one-time: fedora + jdk + node + ffmpeg(libx264) + clojure CLI
