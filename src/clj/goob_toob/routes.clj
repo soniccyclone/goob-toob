@@ -117,11 +117,14 @@
 
 (defn- parse-range [^String hdr len]
   (when-let [[_ a b] (re-find #"^bytes=(\d*)-(\d*)$" hdr)]
-    (let [start (if (str/blank? a)
-                  (max 0 (- len (Long/parseLong b)))
-                  (Long/parseLong a))
-          end   (if (str/blank? b) (dec len) (min (dec len) (Long/parseLong b)))]
-      (when (<= start end) [start end]))))
+    (if (str/blank? a)
+      ;; suffix form: last N bytes
+      (when-not (str/blank? b)
+        (let [n (Long/parseLong b)]
+          (when (pos? n) [(max 0 (- len n)) (dec len)])))
+      (let [start (Long/parseLong a)
+            end   (if (str/blank? b) (dec len) (min (dec len) (Long/parseLong b)))]
+        (when (<= start end) [start end])))))
 
 (defn- limited-stream [^java.io.File f start end]
   (let [len (inc (- end start))
