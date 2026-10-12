@@ -7,6 +7,11 @@
             [goob-toob.player :as player]
             [goob-toob.sync-core :as sc]))
 
+(defn- play! [video]
+  ;; browsers reject .play() without a user gesture; the video's click handler
+  ;; below lets the viewer recover with one tap. Swallow the rejection.
+  (try (.catch (.play video) (fn [_] nil)) (catch js/Error _ nil)))
+
 (defn- apply-policy! [st video]
   (when-let [room (.-room st)]
     (let [now (+ (ui/perf-now) (.-offset st))
@@ -27,7 +32,7 @@
   (set! (.-room st) msg)
   (case (:op msg)
     "play"  (do (set! (.-currentTime video) (:pos msg))
-                (.play video))
+                (play! video))
     "pause" (do (.pause video)
                 (set! (.-currentTime video) (:pos msg))
                 (set! (.-playbackRate video) 1.0))
@@ -96,7 +101,7 @@
                   (let [now (+ (ui/perf-now) (.-offset st))]
                     (set! (.-currentTime video)
                       (sc/expected-pos (assoc (:state msg) :now now :playing? true)))
-                    (.play video))))
+                    (play! video))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st video)
@@ -135,6 +140,9 @@
                         (set! (.-value chat-input) ""))))]
     (set! (.-onwaiting video) #(set! (.-buffering st) true))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
+    (set! (.-onclick video)
+          #(when (and (.-room st) (:playing (.-room st)) (.-paused video))
+             (play! video)))
     (set! (.-onseeking video) #(set! (.-seeking st) true))
     (set! (.-onseeked video) #(set! (.-seeking st) false))
     (set! (.-onkeydown chat-input) #(when (= "Enter" (.-key %)) (send-chat)))
