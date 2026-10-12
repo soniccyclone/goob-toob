@@ -201,7 +201,7 @@
                     (let [n (str/trim (.-value input))]
                       (when-not (empty? n)
                         (ui/store-set! "goob-nick" n)
-                        (js/location.reload))))]
+                        (.reload js/location))))]
         (set! (.-onclick join-btn) join!)
         (set! (.-onkeydown input) #(when (= "Enter" (.-key %)) (join!)))
         overlay)

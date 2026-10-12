@@ -12,7 +12,7 @@
         (h :div.card.row-gap
            (h :h3 (:title r))
            (h :a {:href (str "/watch/" (:token r))}
-              (h :button.btn "▶ watch together"))))))
+              (h :button.btn "▶ watch together")))))))
 
 (defn page []
   (let [grid (h :div.grid {})

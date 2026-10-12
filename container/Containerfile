@@ -16,8 +16,9 @@ COPY deps.edn shadow-cljs.edn package.json ./
 RUN clojure -P -M:dev:test
 
 COPY . .
-RUN npm install --no-audit --no-fund \
- && npx shadow-cljs release client
+RUN npm install --no-audit --no-fund
+RUN npx shadow-cljs release client
+RUN clojure -M:dev -e '(require (quote goob-toob.core)) (println "clj compile OK")'
 
 EXPOSE 8080
 CMD ["clojure", "-M:dev", "-m", "goob-toob.core"]

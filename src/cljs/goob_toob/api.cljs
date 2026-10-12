@@ -9,13 +9,13 @@
                            (catch js/Error _ nil))}))))
 
 (defn get-json [url]
-  (-> (js/fetch url) .then (fn [r] (->result r))))
+  (.then (js/fetch url) (fn [r] (->result r))))
 
 (defn req [method url body]
-  (-> (js/fetch url #js {:method method
-                         :headers #js {"Content-Type" "application/json"}
-                         :body (js/JSON.stringify (clj->js body))})
-      .then (fn [r] (->result r))))
+  (.then (js/fetch url #js {:method method
+                            :headers #js {"Content-Type" "application/json"}
+                            :body (js/JSON.stringify (clj->js body))})
+         (fn [r] (->result r))))
 
 (def post! (partial req "POST"))
 (def delete! (partial req "DELETE"))

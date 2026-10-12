@@ -83,7 +83,7 @@
     (when-let [v (videos/get-by-id id)]
       (videos/delete! id)
       (storage/delete-video-files! id))
-    (response {:ok true}))
+    (response {:ok true})))
 
 (defn upload [{:keys [params]}]
   (let [{:keys [tempfile filename size]} (:file params)]
