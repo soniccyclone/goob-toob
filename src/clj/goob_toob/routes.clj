@@ -182,7 +182,6 @@
            ["/info" {:get storage-info}]
            ["/rooms" {:post create-room}]
            ["/rooms/:id" {:delete delete-room}]]]
-         ["/dash/:video-id/manifest.mpd" {:get dash-file}]
          ["/dash/:video-id/*path" {:get dash-file}]
          ["/ws/room/:token" {:get ws/endpoint}]
          ["/" {:get spa}]
