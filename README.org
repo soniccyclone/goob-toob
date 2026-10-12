@@ -1,6 +1,8 @@
 #+TITLE: goob-toob
 #+AUTHOR: Nathan Barlow
 
+[[https://builds.sr.ht/~nathanb/goob-toob][https://builds.sr.ht/~nathanb/goob-toob.svg]]
+
 Self-hosted watch-together video app. Clojure server, ClojureScript browser,
 ffmpeg -> MPEG-DASH, one slime-green waterpark theme. You run it on your box,
 upload your library, open a room, toss friends a link, everyone watches in
@@ -100,3 +102,13 @@ make compile   # shadow-cljs release build
 make repl      # nrepl-ish REPL in the container
 make clip      # 20s test clip to feed the pipeline
 #+end_src
+
+* Plans site
+Plans live in =plans/= (date-prefixed =.org= + rendered =.html= snapshot; see
+the index in =plans/README.org=). Pushing master runs =.build.yml= on
+builds.sr.ht, which re-renders every =plans/*.org= with the org-plan skill's
+bigblow theme (vendored into =site/themes/=), builds an index page, vendors
+the theme's CDN assets (srht.site's CSP is 'self'-only), and publishes to
+[[https://nathanb.srht.site/goob-toob-plans/]]. Build it locally with
+=sh scripts/build-plans-site.sh= (needs emacs + htmlize; output in =gen/www/=).
+

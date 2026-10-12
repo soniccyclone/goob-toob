@@ -11,3 +11,4 @@ storage/
 test_data/
 tunnel.log
 .cloudflared.pid
+gen/
