@@ -5,7 +5,7 @@
   (:require [clojure.string :as str]
             [clojure.java.io :as io]
             [goob-toob.config :as config])
-  (:import [java.nio.file Path Files StandardCopyOption]))
+  (:import [java.nio.file Path Files StandardCopyOption CopyOption]))
 
 (defn root [] (io/file (config/storage-dir)))
 
@@ -43,7 +43,8 @@
 (defn save-upload! [^java.io.File tmp video-id ^String ext]
   (let [dest (original-file video-id ext)]
     (when-not dest (throw (ex-info "path escapes storage root" {:video-id video-id})))
-    (Files/move (.toPath tmp) (.toPath dest) StandardCopyOption/REPLACE_EXISTING)
+    (Files/move (.toPath tmp) (.toPath dest)
+                (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
     dest))
 
 (defn delete-original! [video-id]
