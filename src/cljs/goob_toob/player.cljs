@@ -23,10 +23,10 @@
        (sort-by :height >)))
 
 (defn set-auto [ctx]
-  (.updateSettings ctx #js {:streaming #js {:abr #js {:autoSwitch true}}}))
+  (.updateSettings ctx #js {:streaming #js {:abr #js {:autoSwitchBitrate #js {:video true}}}}))
 
 (defn set-height [ctx idx]
-  (.updateSettings ctx #js {:streaming #js {:abr #js {:autoSwitch false}}})
+  (.updateSettings ctx #js {:streaming #js {:abr #js {:autoSwitchBitrate #js {:video false}}}})
   (.setQualityFor ctx "video" idx))
 
 (defn on [ctx event cb]
