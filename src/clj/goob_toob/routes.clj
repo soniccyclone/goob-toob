@@ -91,7 +91,7 @@
     (if-not (and tempfile (.exists (io/file tempfile)))
       (-> (response {:error "multipart 'file' field required"}) (status 400))
       (let [ext   (some-> filename (str/split #"\.") last str/lower-case
-                          #(when (re-matches #"[a-z0-9]{1,5}" %) %))
+                          (#(when (re-matches #"[a-z0-9]{1,5}" %) %)))
             id    (str (java.util.UUID/randomUUID))
             title (or (some-> filename (str/replace #"\.[^.]*$" "") (not-empty)) id)
             dest  (storage/save-upload! (io/file tempfile) id ext)]
@@ -183,7 +183,7 @@
            ["/videos" {:get admin-videos}]
            ["/videos/:id" {:delete delete-video}]
            ["/upload" {:post upload
-                       :middleware [wrap-multipart-params]}]
+                       :middleware [wrap-multipart-params wrap-keyword-params]}]
            ["/info" {:get storage-info}]
            ["/rooms" {:post create-room}]
            ["/rooms/:id" {:delete delete-room}]]]
