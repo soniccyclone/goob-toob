@@ -112,7 +112,9 @@ published to srht.site and linked from the repo front page.
     platforms) + Temurin JRE zips (linux + win, Adoptium API, pinned) →
     =electron-builder --linux AppImage --win nsis zip= → =artifact:= every
     installer → publish task gated on =git describe --exact-match 'v*'= :
-    tiny =index.html= (links + sha256sums) + tar →
+    publishes *only* the AppImage + NSIS setup.exe (the zip duplicates the
+    installer's payload; it stays a CI artifact and is published only if the
+    wine/NSIS step failed) + tiny =index.html= (links + sha256sums) + tar →
     =hut pages publish -d nathanb.srht.site -s /goob-toob-releases=.
     Stable filenames (=goob-toob-setup.exe=, =goob-toob.AppImage=,
     =goob-toob-win.zip=) so README links never rot.
@@ -184,10 +186,14 @@ orgPlanSequence('journey', {
 #+END_EXPORT
 
 * Risks and open questions
-- *srht.site budget*: 1 GiB per site shared with the plans site; three
-  installers ≈ 550–650 MB. Fits, but tight — if it overflows, drop the
-  portable zip or move releases to Codeberg (decision reversible, links are
-  one file).
+- *srht.site budget*: 1 GiB per site shared with the plans site. Publishing
+  only the AppImage + NSIS installer (the zip would duplicate the installer's
+  payload) puts the release set at ≈ 450–500 MB — comfortable headroom. The
+  heavy parts (Electron runtime, JRE, ffmpeg, cloudflared) are all
+  platform-specific binaries; the shared JS is ~2 MB, so a combined
+  cross-platform artifact would only make every user download both
+  platforms' runtimes. If the budget ever tightens, jlink-trim the JRE or
+  move releases to Codeberg (links are one file).
 - *wine/NSIS flakiness in CI*: the portable zip is always built, so a wine
   hiccup costs the installer, never the release.
 - *Unsigned Windows exe* → SmartScreen "unknown publisher" warning; documented

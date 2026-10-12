@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-12 Mon 18:46 -->
+<!-- 2026-10-12 Mon 18:50 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</title>
@@ -30,26 +30,26 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org00e78b5">Goal</a></li>
-<li><a href="#org25036a4">Findings</a></li>
-<li><a href="#org8154c19">Plan</a>
+<li><a href="#org3373e07">Goal</a></li>
+<li><a href="#org50824c2">Findings</a></li>
+<li><a href="#org011ac26">Plan</a>
 <ul>
-<li><a href="#org72bff27">1 · Server: desktop mode with two ports</a></li>
-<li><a href="#org465f5f8">2 · Build chain: uberjar + vendored binaries</a></li>
-<li><a href="#org7a2eb65">3 · Electron shell (<code>desktop/</code>)</a></li>
-<li><a href="#org3fe0ece">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
-<li><a href="#org1b59fe2">5 · Front page</a></li>
+<li><a href="#org1444c6e">1 · Server: desktop mode with two ports</a></li>
+<li><a href="#org72718bd">2 · Build chain: uberjar + vendored binaries</a></li>
+<li><a href="#org6b0542c">3 · Electron shell (<code>desktop/</code>)</a></li>
+<li><a href="#org4dbd794">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
+<li><a href="#org6108bcf">5 · Front page</a></li>
 </ul>
 </li>
-<li><a href="#orge05faf9">Sequence diagram</a></li>
-<li><a href="#orgb763d45">Risks and open questions</a></li>
-<li><a href="#org6264aeb">Verification</a></li>
+<li><a href="#orga69c694">Sequence diagram</a></li>
+<li><a href="#org98207e9">Risks and open questions</a></li>
+<li><a href="#org1de0f81">Verification</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org00e78b5" class="outline-2">
-<h2 id="org00e78b5">Goal</h2>
-<div class="outline-text-2" id="text-org00e78b5">
+<div id="outline-container-org3373e07" class="outline-2">
+<h2 id="org3373e07">Goal</h2>
+<div class="outline-text-2" id="text-org3373e07">
 <p>
 Turn goob-toob into a double-click desktop app for Windows (primary audience)
 and Linux. An Electron shell owns the Clojure server, a <b>vendored cloudflared</b>
@@ -60,9 +60,9 @@ published to srht.site and linked from the repo front page.
 </p>
 </div>
 </div>
-<div id="outline-container-org25036a4" class="outline-2">
-<h2 id="org25036a4">Findings</h2>
-<div class="outline-text-2" id="text-org25036a4">
+<div id="outline-container-org50824c2" class="outline-2">
+<h2 id="org50824c2">Findings</h2>
+<div class="outline-text-2" id="text-org50824c2">
 <ul class="org-ul">
 <li>Boot today: <code>clojure -M:dev -m goob-toob.core</code> (<code>container/Containerfile:26</code>);
 <code>config/load!</code> <b>requires</b> <code>STORAGE_DIR</code> and <code>ADMIN_PASSWORD</code>
@@ -103,13 +103,13 @@ pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org8154c19" class="outline-2">
-<h2 id="org8154c19">Plan</h2>
-<div class="outline-text-2" id="text-org8154c19">
+<div id="outline-container-org011ac26" class="outline-2">
+<h2 id="org011ac26">Plan</h2>
+<div class="outline-text-2" id="text-org011ac26">
 </div>
-<div id="outline-container-org72bff27" class="outline-3">
-<h3 id="org72bff27">1 · Server: desktop mode with two ports</h3>
-<div class="outline-text-3" id="text-org72bff27">
+<div id="outline-container-org1444c6e" class="outline-3">
+<h3 id="org1444c6e">1 · Server: desktop mode with two ports</h3>
+<div class="outline-text-3" id="text-org1444c6e">
 <ol class="org-ol">
 <li><code>src/clj/goob_toob/config.clj</code>: <code>ADMIN_PASSWORD</code> becomes optional.
 Mode = <code>:desktop</code> when unset, <code>:container</code> when set (current behavior).
@@ -134,9 +134,9 @@ welcome said <code>:is-host</code> (it would 404 on the public port).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org465f5f8" class="outline-3">
-<h3 id="org465f5f8">2 · Build chain: uberjar + vendored binaries</h3>
-<div class="outline-text-3" id="text-org465f5f8">
+<div id="outline-container-org72718bd" class="outline-3">
+<h3 id="org72718bd">2 · Build chain: uberjar + vendored binaries</h3>
+<div class="outline-text-3" id="text-org72718bd">
 <ol class="org-ol">
 <li><code>deps.edn</code>: add <code>:build</code> alias (<code>io.github.clojure/tools.build</code>) +
 <code>build.clj</code> → <code>target/goob-toob.jar</code> uberjar.</li>
@@ -149,9 +149,9 @@ local dev loop).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org7a2eb65" class="outline-3">
-<h3 id="org7a2eb65">3 · Electron shell (<code>desktop/</code>)</h3>
-<div class="outline-text-3" id="text-org7a2eb65">
+<div id="outline-container-org6b0542c" class="outline-3">
+<h3 id="org6b0542c">3 · Electron shell (<code>desktop/</code>)</h3>
+<div class="outline-text-3" id="text-org6b0542c">
 <ol class="org-ol">
 <li><code>desktop/package.json</code> (electron, electron-builder, electron-store),
 <code>main.js</code>, <code>preload.js</code>, icon. Boot sequence:
@@ -180,16 +180,18 @@ ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org3fe0ece" class="outline-3">
-<h3 id="org3fe0ece">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
-<div class="outline-text-3" id="text-org3fe0ece">
+<div id="outline-container-org4dbd794" class="outline-3">
+<h3 id="org4dbd794">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
+<div class="outline-text-3" id="text-org4dbd794">
 <ol class="org-ol">
 <li>fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
 Tasks: uberjar + <code>shadow-cljs release client</code> → vendor downloads (both
 platforms) + Temurin JRE zips (linux + win, Adoptium API, pinned) →
 <code>electron-builder --linux AppImage --win nsis zip</code> → <code>artifact:</code> every
 installer → publish task gated on <code>git describe --exact-match 'v*'</code> :
-tiny <code>index.html</code> (links + sha256sums) + tar →
+publishes <b>only</b> the AppImage + NSIS setup.exe (the zip duplicates the
+installer's payload; it stays a CI artifact and is published only if the
+wine/NSIS step failed) + tiny <code>index.html</code> (links + sha256sums) + tar →
 <code>hut pages publish -d nathanb.srht.site -s /goob-toob-releases</code>.
 Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</code>,
 <code>goob-toob-win.zip</code>) so README links never rot.</li>
@@ -197,9 +199,9 @@ Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</co
 </ol>
 </div>
 </div>
-<div id="outline-container-org1b59fe2" class="outline-3">
-<h3 id="org1b59fe2">5 · Front page</h3>
-<div class="outline-text-3" id="text-org1b59fe2">
+<div id="outline-container-org6108bcf" class="outline-3">
+<h3 id="org6108bcf">5 · Front page</h3>
+<div class="outline-text-3" id="text-org6108bcf">
 <ol class="org-ol">
 <li><code>README.md</code>: a <b>Download</b> section at the very top — Windows installer,
 Windows zip, Linux AppImage, each a direct <code>nathanb.srht.site</code> link, plus
@@ -209,9 +211,9 @@ podman path for server folks. <code>README.org</code>: desktop quickstart sectio
 </div>
 </div>
 </div>
-<div id="outline-container-orge05faf9" class="outline-2">
-<h2 id="orge05faf9">Sequence diagram</h2>
-<div class="outline-text-2" id="text-orge05faf9">
+<div id="outline-container-orga69c694" class="outline-2">
+<h2 id="orga69c694">Sequence diagram</h2>
+<div class="outline-text-2" id="text-orga69c694">
 <style>
 .opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
 .opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -415,14 +417,18 @@ orgPlanSequence('journey', {
 </script>
 </div>
 </div>
-<div id="outline-container-orgb763d45" class="outline-2">
-<h2 id="orgb763d45">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgb763d45">
+<div id="outline-container-org98207e9" class="outline-2">
+<h2 id="org98207e9">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org98207e9">
 <ul class="org-ul">
-<li><b>srht.site budget</b>: 1 GiB per site shared with the plans site; three
-installers ≈ 550–650 MB. Fits, but tight — if it overflows, drop the
-portable zip or move releases to Codeberg (decision reversible, links are
-one file).</li>
+<li><b>srht.site budget</b>: 1 GiB per site shared with the plans site. Publishing
+only the AppImage + NSIS installer (the zip would duplicate the installer's
+payload) puts the release set at ≈ 450–500 MB — comfortable headroom. The
+heavy parts (Electron runtime, JRE, ffmpeg, cloudflared) are all
+platform-specific binaries; the shared JS is ~2 MB, so a combined
+cross-platform artifact would only make every user download both
+platforms' runtimes. If the budget ever tightens, jlink-trim the JRE or
+move releases to Codeberg (links are one file).</li>
 <li><b>wine/NSIS flakiness in CI</b>: the portable zip is always built, so a wine
 hiccup costs the installer, never the release.</li>
 <li><b>Unsigned Windows exe</b> → SmartScreen "unknown publisher" warning; documented
@@ -444,9 +450,9 @@ behavior, byte-for-byte.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org6264aeb" class="outline-2">
-<h2 id="org6264aeb">Verification</h2>
-<div class="outline-text-2" id="text-org6264aeb">
+<div id="outline-container-org1de0f81" class="outline-2">
+<h2 id="org1de0f81">Verification</h2>
+<div class="outline-text-2" id="text-org1de0f81">
 <ol class="org-ol">
 <li><code>make test</code> — new route tests: <code>app {:admin? false}</code> → <code>/api/admin/videos</code>
 404, <code>/login</code> 404; <code>app {:admin? true}</code> + <code>wrap-desktop-admin</code> → <code>/me</code>
@@ -472,7 +478,7 @@ mode) still logs in with <code>ADMIN_PASSWORD</code> as before.</li>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-12 Mon 18:46</p>
+<p class="date">Created: 2026-10-12 Mon 18:50</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
