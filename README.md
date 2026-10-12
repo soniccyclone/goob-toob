@@ -33,8 +33,8 @@ tunnel, no account needed) — details in README.org.
 
 ## License
 
-Copyright (C) 2026 Nathan Barlow — **AGPL-3.0-or-later** ([LICENSE](LICENSE)).
+Copyright (C) 2026 Nathan Barlow — **AGPL-3.0-or-later** ([LICENSE](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/LICENSE)).
 Free to use, modify, and host; modified versions served over a network must
 publish their source. Closed-source / commercial use = dual-license, [talk to
 me](mailto:nathanjbarlow@gmail.com). Contributions are subject to the CLA in
-[CONTRIBUTING.org](tree/master/item/CONTRIBUTING.org).
+[CONTRIBUTING.org](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/CONTRIBUTING.org).
