@@ -111,18 +111,8 @@ video.stage {
   border: 3px solid var(--slime);
   box-shadow: 0 0 30px rgba(143, 224, 50, 0.25);
 }
-/* ---- tap-to-start overlay: video idles on its first frame until clicked ---- */
+/* ---- stage: the video's own controls are the play affordance ---- */
 .stage-wrap { position: relative; display: block; }
-.start-ovl {
-  position: absolute; inset: 0; display: flex; align-items: center;
-  justify-content: center; background: rgba(4, 26, 22, 0.55);
-  border-radius: var(--radius); cursor: pointer;
-}
-.start-ovl span {
-  font-size: 1.15rem; font-weight: 800; color: var(--slime-brite);
-  padding: 0.7rem 1.7rem; border: 2px solid var(--slime); border-radius: 999px;
-  background: rgba(7, 35, 31, 0.75); box-shadow: 0 0 24px rgba(143, 224, 50, 0.35);
-}
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {
@@ -134,8 +124,15 @@ video.stage {
 .badge.lag { background: var(--danger); color: #fff; }
 
 /* ---- chat ---- */
-.chat { display: flex; flex-direction: column; height: 480px; position: relative; overflow: hidden; }
+.chat { display: flex; flex-direction: column; height: min(480px, 55vh); position: relative; overflow: hidden; }
 .chat .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.3rem; }
+.chat .new-msgs {
+  position: absolute; left: 50%; bottom: 3.4rem; transform: translateX(-50%);
+  border: 2px solid var(--slime); border-radius: 999px; cursor: pointer;
+  background: var(--water-deep); color: var(--slime-brite);
+  font: inherit; font-weight: 800; font-size: 0.8rem; padding: 0.3rem 0.9rem;
+  box-shadow: 0 0 16px rgba(143, 224, 50, 0.4);
+}
 .bubble {
   align-self: flex-start; max-width: 92%;
   background: var(--water-lite);
@@ -189,3 +186,28 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
 .err { color: var(--danger); white-space: pre-wrap; font-size: 0.8rem; }
 .ok { color: var(--slime); }
 .row-gap > * + * { margin-top: 0.8rem; }
+
+/* ---- admin: drop zone, upload cards, toasts ---- */
+.dropzone {
+  border: 3px dashed var(--slime); border-radius: var(--radius);
+  padding: 1.6rem; text-align: center; cursor: pointer;
+  color: var(--slime-brite); font-weight: 800;
+  background: rgba(143, 224, 50, 0.04);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.dropzone:hover { background: rgba(143, 224, 50, 0.1); }
+.dropzone.over { background: rgba(143, 224, 50, 0.2); transform: scale(1.01); }
+.upload-card {
+  background: var(--water-deep); border: 1px solid rgba(31, 200, 219, 0.35);
+  border-radius: 0.9rem; padding: 0.6rem 0.9rem; font-size: 0.9rem;
+}
+.toast {
+  position: fixed; right: 1.2rem; bottom: 1.2rem; z-index: 20;
+  background: var(--water-deep); border: 2px solid var(--slime);
+  color: var(--foam); border-radius: 0.9rem; padding: 0.7rem 1.1rem;
+  box-shadow: 0 0 24px rgba(143, 224, 50, 0.35);
+  animation: toast-in 0.25s ease; max-width: 70vw;
+}
+@keyframes toast-in { from { transform: translateY(16px); opacity: 0; } }
+.cohost { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; }
+.cohost input { accent-color: var(--slime); width: 1.05rem; height: 1.05rem; }

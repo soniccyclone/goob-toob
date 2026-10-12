@@ -14,10 +14,20 @@
     0.0   :none
     0.29  :none
     -0.29 :none
-    -0.5  :nudge-fast   ; behind a little -> speed up
-    0.5   :nudge-slow   ; ahead a little -> slow down
-    -1.51 :seek         ; way behind (buffer stall) -> hard seek = catch-up
-    1.51  :seek))       ; way ahead -> seek back
+    -0.5  :catch-up    ; behind a little -> glide back, never seek
+    0.5   :nudge-slow  ; ahead a little -> slow down
+    -1.51 :catch-up    ; buffer stall -> glide, not the old hard seek
+    -29.9 :catch-up    ; huge stall -> still glide
+    -30.1 :seek        ; truly lost the plot -> jump
+    1.51  :seek))      ; way ahead -> seek back
+
+(deftest catch-rate-ramps-continuously
+  (is (= 1.05 (sc/catch-rate -0.5)))
+  (is (= 1.5  (sc/catch-rate -5.0)))
+  (is (= 1.5  (sc/catch-rate -29.0)))  ; capped
+  (is (< (sc/catch-rate -0.5) (sc/catch-rate -2.0)))
+  (is (< (sc/catch-rate -2.0) (sc/catch-rate -5.0)))
+  (is (every? #(<= 1.0 % 1.5) (map sc/catch-rate (range -0.4 -30.0 -0.4)))))
 
 (deftest ntp-offset-estimates-server-skew
   ;; client sent at 0, server stamped 100, client received at 20 (rtt 20)

@@ -12,11 +12,11 @@
   :value :href :type :id :placeholder :title :disabled), children are strings
   or nodes."
   [tag & args]
-  (let [[tag-shorthand class-shorthand] (-> tag name (str/split #"\."))
+  (let [[tag-shorthand & class-shorthands] (-> tag name (str/split #"\."))
         [attrs kids] (if (map? (first args)) [(first args) (rest args)] [{} args])
-        attrs (if (seq class-shorthand)
+        attrs (if (seq class-shorthands)
                 (update attrs :class
-                        #(str/join " " (remove nil? [% (str/replace class-shorthand "." " ")])))
+                        #(str/join " " (remove nil? (cons % class-shorthands))))
                 attrs)
         node (.createElement js/document tag-shorthand)]
     (doseq [[k v] attrs]

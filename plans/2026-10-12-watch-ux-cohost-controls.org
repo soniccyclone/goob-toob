@@ -2,6 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-12
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: approved 2026-10-12; shipped on master 2026-10-12 (see Implementation notes).
 
 * Goal
 Six fixes that take the app from "works" to "party-ready": a friendlier admin
@@ -186,3 +187,37 @@ that mechanism in ~watch.cljs~:
    scratch harness already; re-verify in the real client.)
 6. Toggle co-host off from admin → viewer's host row disappears without
    reconnect (next cmd message refused server-side regardless).
+
+* Implementation notes
+Shipped on master 2026-10-12. All six items landed as specced, plus three
+findings from building it:
+
+- *pong re-park*: the first =park!= runs before any NTP pong, so the clock
+  offset is still 0 and =expected-pos= collapses to the stale =pos= — a late
+  joiner sat parked on the last host-action frame. The =pong= handler now
+  re-parks unstarted viewers, so the parked frame tracks the live position
+  every 5 s until play. (=watch.cljs=)
+- *policy tick*: =apply-policy!= now also runs on a 500 ms interval, not just
+  on =beat= — the rate ramp needs finer resolution than 2 s to feel like a
+  glide.
+- *=h= multi-class bug*: =ui.cljs= =h= only kept the *first* dot-class of a
+  tag shorthand, so =:div.card.chat= rendered as =card= (and =.aqua= was
+  silently dropped from every =:button.btn.aqua=). Fixed to join all
+  dot-classes.
+
+Verified in the browser pane against the live container:
+- =make test=: 9 tests / 39 assertions (new =catch-rate= test, updated
+  policy bands).
+- Drag-drop upload (real =DataTransfer= drop): =.over= highlight, upload card
+  progress → ✓ queued; toast on room create; room row copy/delete work.
+- Parked viewer shows the live frame (epsilon fix, no black frame at 0);
+  native play button click → sync (drift 0.00); late joiner parked at live
+  pos 14 s after pong re-park.
+- Drift injection =-6= → rate 1.45 (=1+0.1·4.5=), glided to drift 0.00, no
+  seek.
+- Res lock 480p persisted across reload; host row hidden for non-admins.
+- Chat: scroll-up stays put, "↓ new messages" pill appears, pill click and
+  at-bottom auto-follow both scroll; height =min(480px, 55vh)=.
+- Co-host: admin checkbox → =PATCH= → non-admin reload shows host row with
+  "co-hosting" badge; co-host seek accepted server-side (room re-parked
+  viewers at 5).

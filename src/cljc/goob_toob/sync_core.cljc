@@ -28,18 +28,24 @@
 
 (defn policy
   "What a viewer should do given drift (local - expected, seconds):
-  :none         in sync
-  :nudge-fast   behind by a little -> playbackRate 1.05
-  :nudge-slow   ahead by a little -> playbackRate 0.95
-  :seek         behind/ahead by a lot -> hard seek (this is the catch-up)"
+  :none        in sync
+  :catch-up    behind -> glide back at catch-rate (no jump)
+  :nudge-slow  ahead by a little -> playbackRate 0.95
+  :seek        ahead by a lot, or >30 s behind (lost the plot) -> hard seek"
   [d]
   (let [a (abs d)]
     (cond
-      (< a 0.3)  :none
-      (> a 1.5)  :seek
-      (neg? d)   :nudge-fast
-      :else      :nudge-slow)))
+      (< a 0.3)   :none
+      (neg? d)    (if (>= a 30.0) :seek :catch-up)
+      (<= a 1.5)  :nudge-slow
+      :else       :seek)))
 
-(def nudge-fast-rate 1.05)
+(defn catch-rate
+  "Gradual catch-up playback rate for negative drift: 0.5 s behind -> 1.05x,
+  5 s or more behind -> 1.5x. Continuous, so stalls heal with a glide, not a
+  seek."
+  [d]
+  (min 1.5 (+ 1.0 (* 0.1 (abs d)))))
+
 (def nudge-slow-rate 0.95)
 (def settle-threshold 0.15)

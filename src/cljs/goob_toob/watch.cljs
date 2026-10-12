@@ -1,6 +1,7 @@
 (ns goob-toob.watch
-  "The watch page: join overlay -> dash.js player + server-synced playback
-  with per-viewer catch-up, resolution choice, peers and chat."
+  "The watch page: dash.js player parked at the room's position — the video
+  element's own play button is the join gesture — then server-synced playback
+  with gradual catch-up, resolution lock, peers and chat."
   (:require [clojure.string :as str]
             [goob-toob.ui :as ui :refer [h]]
             [goob-toob.ws :as wsx]
@@ -8,42 +9,47 @@
             [goob-toob.sync-core :as sc]))
 
 (defn- play! [video]
-  ;; browsers reject .play() without a user gesture; the video's click handler
-  ;; below lets the viewer recover with one tap. Swallow the rejection.
+  ;; browsers reject .play() without a user gesture; the video's native play
+  ;; button supplies one. Swallow the rejection anyway (e.g. autoplay-blocked).
   (try (.catch (.play video) (fn [_] nil)) (catch js/Error _ nil)))
 
-(defn- apply-policy! [st video]
-  (when-let [room (when (.-started st) (.-room st))]
-    (let [now (+ (ui/perf-now) (.-offset st))
-          expected (sc/expected-pos {:pos (:pos room) :t0 (:t0 room)
-                                     :now now :playing? (:playing room)
-                                     :rate (:rate room)})
-          pol (sc/policy (sc/drift (.-currentTime video) expected))]
-      (case pol
-        :none (when (not= 1.0 (.-playbackRate video))
-                (set! (.-playbackRate video) 1.0))
-        :seek (do (set! (.-currentTime video) expected)
-                  (set! (.-playbackRate video) 1.0))
-        :nudge-fast (set! (.-playbackRate video) sc/nudge-fast-rate)
-        :nudge-slow (set! (.-playbackRate video) sc/nudge-slow-rate)
-        nil))))
+(defn- expected-now [st room]
+  (sc/expected-pos {:pos (:pos room) :t0 (:t0 room)
+                    :now (+ (ui/perf-now) (.-offset st))
+                    :playing? (:playing room)
+                    :rate (:rate room)}))
 
-(defn- start! [st video ovl]
-  ;; first user gesture: jump to where the room is and join playback.
-  ;; before this the video just sits on its first frame (autoplay is
-  ;; blocked anyway, and seeking a paused video makes a slideshow).
-  (set! (.-started st) true)
-  (set! (.-display (.-style ovl)) "none")
+(defn- park! [st video]
+  ;; Sit paused at the room's position: the native play button is the
+  ;; "press me" affordance, and a *real* seek is what makes dash composite
+  ;; the frame there (same-value seek is a no-op -> black frame at pos 0).
   (when-let [room (.-room st)]
-    (when (:playing room)
-      (let [now (+ (ui/perf-now) (.-offset st))]
-        (set! (.-currentTime video)
-              (sc/expected-pos (assoc room :now now :playing? true))))
-      (play! video))))
+    (let [e (max 0.0 (expected-now st room))
+          e (if (< (sc/abs (- (.-currentTime video) e)) 0.01) (+ e 0.001) e)]
+      (.pause video)
+      (try (set! (.-currentTime video) e) (catch js/Error _ nil)))))
+
+(defn- apply-policy! [st video]
+  (when (.-started st)
+    (when-let [room (.-room st)]
+      ;; while stalling, do nothing: seeking into an empty buffer is what
+      ;; turns a stall into a stutter spiral
+      (when-not (.-buffering st)
+        (let [expected (expected-now st room)
+              d (sc/drift (.-currentTime video) expected)]
+          (case (sc/policy d)
+            :none       (when-not (= 1.0 (.-playbackRate video))
+                          (set! (.-playbackRate video) 1.0))
+            :catch-up   (set! (.-playbackRate video) (sc/catch-rate d))
+            :nudge-slow (set! (.-playbackRate video) sc/nudge-slow-rate)
+            :seek       (do (set! (.-currentTime video) expected)
+                            (set! (.-playbackRate video) 1.0))
+            nil))))))
 
 (defn- apply-state-msg! [st video msg]
   (set! (.-room st) msg)
-  (when (.-started st)
+  (if-not (.-started st)
+    (park! st video) ;; unstarted: keep the parked frame fresh as the room moves
     (case (:op msg)
       "play"  (do (set! (.-currentTime video) (:pos msg))
                   (play! video))
@@ -64,12 +70,20 @@
          (when host?
            (h :span.muted (or (ui/fmt-lag (:lag p)) "")))))))
 
-(defn- append-chat! [log-el msg]
-  (ui/add! log-el
-    (h :div.bubble
-       (h :span.who {:style (str "color:" (ui/nick-color (:from msg)))} (:from msg))
-       (h :div (:text msg))))
-  (set! (.-scrollTop log-el) (.-scrollHeight log-el)))
+(defn- near-bottom? [el]
+  (< (- (.-scrollHeight el) (.-scrollTop el) (.-clientHeight el)) 40))
+
+(defn- append-chat! [log-el pill-el msg]
+  ;; stick to the bottom only if the reader was already there; otherwise
+  ;; surface the "new messages" pill and leave their scroll alone
+  (let [stick (near-bottom? log-el)]
+    (ui/add! log-el
+      (h :div.bubble
+         (h :span.who {:style (str "color:" (ui/nick-color (:from msg)))} (:from msg))
+         (h :div (:text msg))))
+    (if stick
+      (set! (.-scrollTop log-el) (.-scrollHeight log-el))
+      (set! (.-display (.-style pill-el)) "block"))))
 
 (defn- res-menu [st]
   (let [sel (h :select {:title "resolution"})
@@ -92,7 +106,7 @@
     sel))
 
 (defn- connect! [st token refs]
-  (let [{:keys [video title-el seek res-slot peers-el chat-log]} refs
+  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
                  "?nick=" (js/encodeURIComponent (.-nick st)))]
@@ -102,14 +116,18 @@
         (case (:type msg)
           "welcome"
           (do (set! (.-ishost st) (:is-host msg))
+              (set! (.-cancontrol st) (boolean (:can-control msg)))
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
               (when-not (.-player st)
+                (set! (.-preservesPitch video) true)     ; 1.5x catch-up ≠ chipmunks
+                (set! (.-webkitPreservesPitch video) true)
                 (set! (.-player st)
                   (player/create video (get-in msg [:video :dash])
                     (fn [ctx]
                       (ui/clear! res-slot)
-                      (ui/add! res-slot (res-menu st)))))))
+                      (ui/add! res-slot (res-menu st))
+                      (park! st video))))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st video)
@@ -119,8 +137,11 @@
                         sample {:rtt (- t1 (:t msg))
                                 :offset (sc/ntp-offset (:t msg) (:st msg) t1)}]
                     (set! (.-samples st) (take 8 (cons sample (.-samples st))))
-                    (set! (.-offset st) (sc/best-offset (.-samples st))))
-          "chat"  (append-chat! chat-log msg)
+                    (set! (.-offset st) (sc/best-offset (.-samples st)))
+                    ;; the first pong is what makes `expected` trustworthy —
+                    ;; keep the parked frame live until the viewer presses play
+                    (when-not (.-started st) (park! st video)))
+          "chat"  (append-chat! chat-log new-msgs msg)
           "peers" (render-peers! peers-el (:peers msg) (.-ishost st))
           "error" (set! (.-textContent title-el) (:message msg))
           nil))
@@ -131,9 +152,10 @@
 
 (defn- shell [st]
   (let [video (.createElement js/document "video")
-        _ (set! (.-className video) "stage")
-        start-ovl (h :div.start-ovl (h :span "▶ tap to start"))
-        stage-wrap (h :div.stage-wrap video start-ovl)
+        _ (do (set! (.-className video) "stage")
+              (.setAttribute video "controls" "")
+              (.setAttribute video "playsinline" ""))
+        stage-wrap (h :div.stage-wrap video)
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
         admin-link (h :a {:href "/admin" :title "admin console"
                           :style "margin-left:auto;font-size:0.8rem;opacity:0.7"}
@@ -142,8 +164,11 @@
         pause-btn (h :button.btn.aqua "⏸ pause")
         seek (h :input.seek {:type "range" :value 0 :min 0 :step 0.5})
         res-slot (h :span {})
+        viewer-row (h :div.controls {})
         host-row (h :div.controls {:style "display:none"})
+        badge (h :span.badge.host "you drive")
         chat-log (h :div.log {})
+        new-msgs (h :button.new-msgs {:style "display:none"} "↓ new messages")
         chat-input (h :input {:type "text" :placeholder "say something gooey…"})
         peers-el (h :div {})
         send-chat (fn []
@@ -153,14 +178,35 @@
                         (set! (.-value chat-input) ""))))]
     (set! (.-onwaiting video) #(set! (.-buffering st) true))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
-    (set! (.-onclick video) #(start! st video start-ovl))
-    (set! (.-onclick start-ovl) #(start! st video start-ovl))
     (set! (.-onseeking video) #(set! (.-seeking st) true))
     (set! (.-onseeked video) #(set! (.-seeking st) false))
+    ;; the native play button is the start trigger (proven in the scratch harness)
+    (set! (.-onplay video)
+      (fn []
+        (if (.-started st)
+          ;; already in: the room rules — a paused room means no solo-play
+          (when-let [room (.-room st)]
+            (when-not (:playing room) (park! st video)))
+          ;; first play: this is the join gesture
+          (let [act (.-userActivation js/navigator)]
+            (if (and act (not (.-isActive act)))
+              (park! st video) ;; gesture-less play; real browsers reject it anyway
+              (do (set! (.-started st) true)
+                  (when-let [room (.-room st)]
+                    (cond
+                      (:playing room)   (set! (.-currentTime video) (expected-now st room))
+                      (.-cancontrol st) (do (set! (.-currentTime video) (expected-now st room))
+                                            (wsx/send! (.-ws st) {:type "cmd" :op "play"
+                                                                   :pos (expected-now st room)}))
+                      :else             (park! st video)))))))))
     (set! (.-onkeydown chat-input) #(when (= "Enter" (.-key %)) (send-chat)))
+    (set! (.-onclick new-msgs)
+          #(do (set! (.-scrollTop chat-log) (.-scrollHeight chat-log))
+               (set! (.-display (.-style new-msgs)) "none")))
+    (set! (.-onscroll chat-log)
+          #(when (near-bottom? chat-log) (set! (.-display (.-style new-msgs)) "none")))
     (set! (.-onclick play-btn)
           #(do (set! (.-started st) true)
-               (set! (.-display (.-style start-ovl)) "none")
                (wsx/send! (.-ws st) {:type "cmd" :op "play" :pos (.-currentTime video)})))
     (set! (.-onclick pause-btn)
           #(wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (.-currentTime video)}))
@@ -169,10 +215,8 @@
                (wsx/send! (.-ws st) {:type "cmd" :op "seek"
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
-    (ui/add! host-row
-      play-btn pause-btn seek res-slot
-      (h :span.badge.host "you drive")
-      (h :span.muted "everyone follows you"))
+    (ui/add! viewer-row res-slot (h :span.muted "picture quality"))
+    (ui/add! host-row play-btn pause-btn seek badge (h :span.muted "everyone follows you"))
     {:video video
      :layout (h :div.watch-layout
                 (h :div.row-gap
@@ -180,19 +224,22 @@
                       (h :div {:style "display:flex;align-items:center;gap:0.5rem"}
                          title-el admin-link)
                       stage-wrap
+                      viewer-row
                       host-row))
                 (h :div.row-gap
                    (h :div.card
                       (h :h3 "watching with")
                       peers-el)
-                   (h :div.card.chat
-                      (h :h3 "chat")
-                      chat-log
-                      (h :div.row {}
-                         chat-input
-                         (h :button.btn.aqua {:onclick send-chat} "💬")))))
+                    (h :div.card.chat
+                       (h :h3 "chat")
+                       chat-log
+                       new-msgs
+                       (h :div.row {}
+                          chat-input
+                          (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot
-     :chat-log chat-log :peers-el peers-el :host-row host-row}))
+     :chat-log chat-log :peers-el peers-el :host-row host-row
+     :badge badge :new-msgs new-msgs}))
 
 (defn- loops! [st refs]
   (let [{:keys [video seek]} refs]
@@ -201,6 +248,7 @@
                                             :pos (.-currentTime video)
                                             :buffering (boolean (.-buffering st))})
                     5000)
+    (js/setInterval #(apply-policy! st video) 500) ; smooth catch-up between beats
     (js/setInterval
       #(when (.-room st)
          (set! (.-max seek) (str (or (.-duration video) 0)))
@@ -210,7 +258,7 @@
 
 (defn page [token]
   (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
-                  "started" false)
+                  "cancontrol" false "started" false)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
@@ -239,8 +287,10 @@
               (fn []
                 (when (and (not (.-done started)) (.-room st))
                   (set! (.-done started) true)
-                  (when (.-ishost st)
-                    (set! (.-display (.-style (:host-row refs))) "flex"))
+                  (when (.-cancontrol st)
+                    (set! (.-display (.-style (:host-row refs))) "flex")
+                    (when-not (.-ishost st)
+                      (set! (.-textContent (:badge refs)) "co-hosting")))
                   (loops! st refs)))
               800))
           (:layout refs))))))

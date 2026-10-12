@@ -33,11 +33,18 @@
 
 (defn list-all []
   (->> (jdbc/execute! (db/db)
-          (sql/format {:select [[:r/id] [:r/token] [:r/video-id] [:v/title] [:v/status]]
+          (sql/format {:select [[:r/id] [:r/token] [:r/video-id] [:r/allow-control]
+                                [:v/title] [:v/status]]
                        :from [[:rooms :r]]
                        :join [[:videos :v] [:= :v.id :r.video-id]]
                        :order-by [[:r/created-at :desc]]})
           {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
+
+(defn set-control! [id allow?]
+  (jdbc/execute! (db/db)
+    (sql/format {:update :rooms
+                 :set {:allow-control (if allow? 1 0)}
+                 :where [:= :id id]})))
 
 (defn delete! [id]
   (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :id id]})))

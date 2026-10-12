@@ -81,6 +81,10 @@
   (rooms/delete! (:id params))
   (response {:ok true}))
 
+(defn update-room [{:keys [params]}]
+  (rooms/set-control! (:id params) (boolean (:allow-control params)))
+  (response {:ok true}))
+
 (defn delete-video [{:keys [params]}]
   (let [id (:id params)]
     (when-let [v (videos/get-by-id id)]
@@ -201,7 +205,7 @@
                        :middleware [wrap-multipart-params wrap-keyword-params]}]
            ["/info" {:get storage-info}]
            ["/rooms" {:get admin-rooms :post create-room}]
-           ["/rooms/:id" {:delete delete-room}]]]
+           ["/rooms/:id" {:delete delete-room :patch update-room}]]]
          ["/dash/:video-id/*path" {:get dash-file}]
          ["/ws/room/:token" {:get ws/endpoint}]
          ["/" {:get spa}]

@@ -16,10 +16,16 @@
 
 (defn- clamp-text [s n] (when (string? s) (apply str (take n s))))
 
+(defn- control-allowed?
+  ;; re-read per cmd so an admin flipping the room checkbox applies live
+  [room-id]
+  (= 1 (:allow-control (rooms/get-by-id room-id))))
+
 (defn- handle-msg [{:keys [room-id cid admin? send!]} m]
   (case (:type m)
     "ping"   (send! {:type "pong" :t (:t m) :st (sync/mono-ms)})
-    "cmd"    (when admin? (sync/host-cmd! room-id (:op m) (:pos m)))
+    "cmd"    (when (or admin? (control-allowed? room-id))
+               (sync/host-cmd! room-id (:op m) (:pos m)))
     "chat"   (let [text (clamp-text (:text m) 500)]
                (when-not (str/blank? text)
                  (sync/broadcast room-id {:type "chat" :from (:nick m) :text text
@@ -45,6 +51,7 @@
             (sync/join! room-id cid nick)
             (let [room (sync/room-for room-id)]
               (send! {:type "welcome" :you cid :is-host admin?
+                      :can-control (or admin? (= 1 (:allow-control room-row)))
                       :video {:id (:id video) :title (:title video)
                               :duration (:duration video)
                               :dash (str "/dash/" (:id video) "/manifest.mpd")}
