@@ -3,6 +3,8 @@
 #+DATE: 2026-10-12
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
 
+# Status: approved 2026-10-12; shipped on master 2026-10-12 (see Implementation notes).
+
 * Goal
 Swap every hand-written SQL string in the persistence layer for
 [[https://github.com/seancorfield/honeysql][HoneySQL]] data structures (=com.github.seancorfield/honeysql=
@@ -39,8 +41,8 @@ shapes. =test/clj/goob_toob/repos_test.clj= is the gate — it must pass
 * Plan
 1. *deps.edn*: add =com.github.seancorfield/honeysql {:mvn/version
    "2.7.1479"}= to =:deps=.
-2. *repos/video.clj*: require =[honey.sql :as sql]= and =[honey.sql.raw :as
-   raw]=. Rewrite all 8 statements as HoneySQL maps, e.g.:
+2. *repos/video.clj*: require =[honey.sql :as sql]=. Rewrite all 8
+   statements as HoneySQL maps, e.g.:
    #+begin_src clojure
    ;; insert!
    (jdbc/execute! (db/db)
@@ -48,24 +50,24 @@ shapes. =test/clj/goob_toob/repos_test.clj= is the gate — it must pass
                   :values [{:id id :title title :original-path original-path
                             :dash-dir (str "dash/" id) :status "uploaded"}]}))
 
-   ;; set-status! — COALESCE as a HoneySQL fn vector, datetime via honey.sql.raw
+   ;; set-status! — COALESCE as a HoneySQL fn vector, datetime via [:raw ...]
    (jdbc/execute! (db/db)
      (sql/format {:update :videos
-                  :set [[:status status]
-                        [:progress [:coalesce ? :progress]]
-                        [:error error]
-                        [:duration [:coalesce ? :duration]]
-                        [:updated-at (raw/sql "datetime('now')")]]
+                  :set {:status status
+                        :progress [:coalesce progress :progress]
+                        :error error
+                        :duration [:coalesce duration :duration]
+                        :updated-at [:raw "datetime('now')"]}
                   :where [:= :id id]}))
 
    ;; requeue-stuck
    (sql/format {:select [:id] :from [:videos]
-                :where [:status [:in "uploaded" "transcoding"]]})
+                :where [:in :status ["uploaded" "transcoding"]]})
    #+end_src
-   The =?= in =[:coalesce ? :progress]= is HoneySQL's parameter placeholder —
-   it renders =coalesce(?, progress)= and keeps param order correct without
-   any raw SQL. =datetime('now')= carries no params, so =honey.sql.raw= is
-   safe there.
+   A plain value in an expression position becomes a =?=? parameter
+   automatically, so =COALESCE(?, col)= is =[:coalesce progress :progress]=
+   — no raw SQL, param order guaranteed. =datetime('now')= carries no params,
+   so =[:raw ...]= is safe there.
 3. *repos/room.clj*: same treatment; the JOIN becomes
    #+begin_src clojure
    (sql/format {:select [[:r/id] [:r/token] [:r/video_id] [:v/title] [:v/status]]
@@ -101,3 +103,16 @@ shapes. =test/clj/goob_toob/repos_test.clj= is the gate — it must pass
    the migration bootstrap + runner remain.
 3. Live smoke: rebuild image, recreate container, =make tunnel= optional —
    upload → transcode → room → play still works end to end.
+
+* Implementation notes
+Shipped 2026-10-12. Three deviations from the plan found by actually running
+HoneySQL 2.7.1479 (the plan's first-draft snippets were wrong):
+- =honey.sql.raw= does not exist in 2.x — raw SQL is the =[:raw "..."]=
+  vector form inside expressions.
+- =:set= as a vector of pairs renders garbage (=SET 0 = STATUS(?)=) in
+  2.7.1479; the map form =:set {:col val ...}= is the one that works.
+- =IN= is prefix form with a collection: =[:in :status ["a" "b"]]=;
+  =[:status [:in "a" "b"]]= parses =:status= as a function call.
+All caught by =make test= and a live container smoke (upload → transcode →
+ready, room create/JOIN/WS/delete, video delete). 8 tests / 31 assertions
+green with =repos_test.clj= unchanged.

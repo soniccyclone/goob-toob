@@ -1,6 +1,7 @@
 (ns goob-toob.repos.video
   (:require [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
+            [honey.sql :as sql]
             [clojure.data.json :as json]
             [goob-toob.db :as db]))
 
@@ -10,49 +11,61 @@
 (defn insert! [video]
   (let [{:keys [id title original-path]} video]
     (jdbc/execute! (db/db)
-      ["INSERT INTO videos (id, title, original_path, dash_dir, status) VALUES (?, ?, ?, ?, 'uploaded')"
-       id title original-path (str "dash/" id)])
+      (sql/format {:insert-into :videos
+                   :values [{:id id :title title :original-path original-path
+                             :dash-dir (str "dash/" id) :status "uploaded"}]}))
     video))
 
 (defn get-by-id [id]
   (some-> (jdbc/execute-one! (db/db)
-              ["SELECT * FROM videos WHERE id = ?" id]
+              (sql/format {:select :* :from [:videos] :where [:= :id id]})
               {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})
           row->video))
 
 (defn list-all []
   (->> (jdbc/execute! (db/db)
-          ["SELECT * FROM videos ORDER BY created_at DESC"]
+          (sql/format {:select :* :from [:videos] :order-by [[:created-at :desc]]})
           {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})
        (map row->video)))
 
 (defn list-ready []
   (->> (jdbc/execute! (db/db)
-          ["SELECT * FROM videos WHERE status = 'ready' ORDER BY created_at DESC"]
+          (sql/format {:select :* :from [:videos]
+                       :where [:= :status "ready"]
+                       :order-by [[:created-at :desc]]})
           {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})
        (map row->video)))
 
 (defn set-status! [id status & {:keys [progress error duration]}]
   (jdbc/execute! (db/db)
-    ["UPDATE videos SET status = ?, progress = COALESCE(?, progress), error = ?, duration = COALESCE(?, duration), updated_at = datetime('now') WHERE id = ?"
-     status progress error duration id])
+    (sql/format {:update :videos
+                 :set {:status status
+                       :progress [:coalesce progress :progress]
+                       :error error
+                       :duration [:coalesce duration :duration]
+                       :updated-at [:raw "datetime('now')"]}
+                 :where [:= :id id]}))
   status)
 
 (defn set-progress! [id progress]
   (jdbc/execute! (db/db)
-    ["UPDATE videos SET progress = ?, updated_at = datetime('now') WHERE id = ?" progress id]))
+    (sql/format {:update :videos
+                 :set {:progress progress
+                       :updated-at [:raw "datetime('now')"]}
+                 :where [:= :id id]})))
 
 (defn set-duration! [id duration]
   (jdbc/execute! (db/db)
-    ["UPDATE videos SET duration = ? WHERE id = ?" duration id]))
+    (sql/format {:update :videos :set {:duration duration} :where [:= :id id]})))
 
 (defn delete! [id]
-  (jdbc/execute! (db/db) ["DELETE FROM rooms WHERE video_id = ?" id])
-  (jdbc/execute! (db/db) ["DELETE FROM videos WHERE id = ?" id]))
+  (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :video-id id]}))
+  (jdbc/execute! (db/db) (sql/format {:delete-from :videos :where [:= :id id]})))
 
 (defn requeue-stuck []
   ;; anything left mid-flight by a crash goes back on the queue
   (->> (jdbc/execute! (db/db)
-          ["SELECT id FROM videos WHERE status IN ('uploaded', 'transcoding')"]
+          (sql/format {:select [:id] :from [:videos]
+                       :where [:in :status ["uploaded" "transcoding"]]})
           {:return-keys true :builder-fn rs/as-unqualified-lower-maps})
        (map :id)))

@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-12 Mon 14:04 -->
+<!-- 2026-10-12 Mon 14:24 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Replace raw SQL with HoneySQL in the repo layer</title>
@@ -30,17 +30,18 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgdf6327d">Goal</a></li>
-<li><a href="#org93ae2c7">Findings</a></li>
-<li><a href="#org54d0741">Plan</a></li>
-<li><a href="#org396cbdb">Risks and open questions</a></li>
-<li><a href="#orgca7bae6">Verification</a></li>
+<li><a href="#org63dffb7">Goal</a></li>
+<li><a href="#orgf6fe140">Findings</a></li>
+<li><a href="#orgff9d33e">Plan</a></li>
+<li><a href="#org7c0608c">Risks and open questions</a></li>
+<li><a href="#org004e486">Verification</a></li>
+<li><a href="#org522e446">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgdf6327d" class="outline-2">
-<h2 id="orgdf6327d">Goal</h2>
-<div class="outline-text-2" id="text-orgdf6327d">
+<div id="outline-container-org63dffb7" class="outline-2">
+<h2 id="org63dffb7">Goal</h2>
+<div class="outline-text-2" id="text-org63dffb7">
 <p>
 Swap every hand-written SQL string in the persistence layer for
 <a href="https://github.com/seancorfield/honeysql">HoneySQL</a> data structures (<code>com.github.seancorfield/honeysql</code>
@@ -51,9 +52,9 @@ shapes. <code>test/clj/goob_toob/repos_test.clj</code> is the gate — it must p
 </p>
 </div>
 </div>
-<div id="outline-container-org93ae2c7" class="outline-2">
-<h2 id="org93ae2c7">Findings</h2>
-<div class="outline-text-2" id="text-org93ae2c7">
+<div id="outline-container-orgf6fe140" class="outline-2">
+<h2 id="orgf6fe140">Findings</h2>
+<div class="outline-text-2" id="text-orgf6fe140">
 <ul class="org-ul">
 <li>13 raw statements across three files; nothing else touches SQL
 (<code>routes.clj</code>, <code>services/*</code> go through the repos).</li>
@@ -83,15 +84,15 @@ keys regardless of how the SQL is generated.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org54d0741" class="outline-2">
-<h2 id="org54d0741">Plan</h2>
-<div class="outline-text-2" id="text-org54d0741">
+<div id="outline-container-orgff9d33e" class="outline-2">
+<h2 id="orgff9d33e">Plan</h2>
+<div class="outline-text-2" id="text-orgff9d33e">
 <ol class="org-ol">
 <li><b>deps.edn</b>: add <code>com.github.seancorfield/honeysql {:mvn/version
    "2.7.1479"}</code> to <code>:deps</code>.</li>
 <li><p>
-<b>repos/video.clj</b>: require <code>[honey.sql :as sql]</code> and <code>[honey.sql.raw :as
-   raw]</code>. Rewrite all 8 statements as HoneySQL maps, e.g.:
+<b>repos/video.clj</b>: require <code>[honey.sql :as sql]</code>. Rewrite all 8
+statements as HoneySQL maps, e.g.:
 </p>
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-comment-delimiter">;; </span><span class="org-comment">insert!
@@ -100,26 +101,26 @@ keys regardless of how the SQL is generated.</li>
                <span class="org-clojure-keyword">:values</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:id</span> id <span class="org-clojure-keyword">:title</span> title <span class="org-clojure-keyword">:original-path</span> original-path
                          <span class="org-clojure-keyword">:dash-dir</span> <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"dash/"</span> id<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:status</span> <span class="org-string">"uploaded"</span><span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
-<span class="org-comment-delimiter">;; </span><span class="org-comment">set-status! &#8212; COALESCE as a HoneySQL fn vector, datetime via honey.sql.raw
+<span class="org-comment-delimiter">;; </span><span class="org-comment">set-status! &#8212; COALESCE as a HoneySQL fn vector, datetime via [:raw ...]
 </span><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">jdbc</span>/execute! <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">db</span>/db<span class="org-rainbow-delimiters-depth-2">)</span>
   <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:update</span> <span class="org-clojure-keyword">:videos</span>
-               <span class="org-clojure-keyword">:set</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:status</span> status<span class="org-rainbow-delimiters-depth-5">]</span>
-                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:progress</span> <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-clojure-keyword">:coalesce</span> ? <span class="org-clojure-keyword">:progress</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">]</span>
-                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:error</span> error<span class="org-rainbow-delimiters-depth-5">]</span>
-                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:duration</span> <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-clojure-keyword">:coalesce</span> ? <span class="org-clojure-keyword">:duration</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">]</span>
-                     <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:updated-at</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">raw</span>/sql <span class="org-string">"datetime('now')"</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">]</span>
+               <span class="org-clojure-keyword">:set</span> <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:status</span> status
+                     <span class="org-clojure-keyword">:progress</span> <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:coalesce</span> progress <span class="org-clojure-keyword">:progress</span><span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-clojure-keyword">:error</span> error
+                     <span class="org-clojure-keyword">:duration</span> <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:coalesce</span> duration <span class="org-clojure-keyword">:duration</span><span class="org-rainbow-delimiters-depth-5">]</span>
+                     <span class="org-clojure-keyword">:updated-at</span> <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-clojure-keyword">:raw</span> <span class="org-string">"datetime('now')"</span><span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">}</span>
                <span class="org-clojure-keyword">:where</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:=</span> <span class="org-clojure-keyword">:id</span> id<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
 <span class="org-comment-delimiter">;; </span><span class="org-comment">requeue-stuck
 </span><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-type">sql</span>/format <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:select</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:id</span><span class="org-rainbow-delimiters-depth-3">]</span> <span class="org-clojure-keyword">:from</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:videos</span><span class="org-rainbow-delimiters-depth-3">]</span>
-             <span class="org-clojure-keyword">:where</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:status</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-clojure-keyword">:in</span> <span class="org-string">"uploaded"</span> <span class="org-string">"transcoding"</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
+             <span class="org-clojure-keyword">:where</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-clojure-keyword">:in</span> <span class="org-clojure-keyword">:status</span> <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-string">"uploaded"</span> <span class="org-string">"transcoding"</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div>
 <p>
-The <code>?</code> in <code>[:coalesce ? :progress]</code> is HoneySQL's parameter placeholder —
-it renders <code>coalesce(?, progress)</code> and keeps param order correct without
-any raw SQL. <code>datetime('now')</code> carries no params, so <code>honey.sql.raw</code> is
-safe there.
+A plain value in an expression position becomes a <code>?</code>? parameter
+automatically, so <code>COALESCE(?, col)</code> is <code>[:coalesce progress :progress]</code>
+— no raw SQL, param order guaranteed. <code>datetime('now')</code> carries no params,
+so <code>[:raw ...]</code> is safe there.
 </p></li>
 <li><p>
 <b>repos/room.clj</b>: same treatment; the JOIN becomes
@@ -145,9 +146,9 @@ files is the normal pattern and the runner already handles them.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org396cbdb" class="outline-2">
-<h2 id="org396cbdb">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org396cbdb">
+<div id="outline-container-org7c0608c" class="outline-2">
+<h2 id="org7c0608c">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org7c0608c">
 <ul class="org-ul">
 <li><b>Assumption</b>: migration <code>.sql</code> files and the bootstrap DDL stay raw.
 HoneySQL can emit <code>CREATE TABLE</code> but it buys nothing for versioned
@@ -161,9 +162,9 @@ it at build time).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgca7bae6" class="outline-2">
-<h2 id="orgca7bae6">Verification</h2>
-<div class="outline-text-2" id="text-orgca7bae6">
+<div id="outline-container-org004e486" class="outline-2">
+<h2 id="org004e486">Verification</h2>
+<div class="outline-text-2" id="text-org004e486">
 <ol class="org-ol">
 <li><code>make test</code> — all 8 tests / 31 assertions green, <code>repos_test.clj</code>
 <b>unchanged</b> (that's the proof of behavior preservation).</li>
@@ -174,11 +175,33 @@ upload → transcode → room → play still works end to end.</li>
 </ol>
 </div>
 </div>
+<div id="outline-container-org522e446" class="outline-2">
+<h2 id="org522e446">Implementation notes</h2>
+<div class="outline-text-2" id="text-org522e446">
+<p>
+Shipped 2026-10-12. Three deviations from the plan found by actually running
+HoneySQL 2.7.1479 (the plan's first-draft snippets were wrong):
+</p>
+<ul class="org-ul">
+<li><code>honey.sql.raw</code> does not exist in 2.x — raw SQL is the <code>[:raw "..."]</code>
+vector form inside expressions.</li>
+<li><code>:set</code> as a vector of pairs renders garbage (<code>SET 0 = STATUS(?)</code>) in
+2.7.1479; the map form <code>:set {:col val ...}</code> is the one that works.</li>
+<li><code>IN</code> is prefix form with a collection: <code>[:in :status ["a" "b"]]</code>;
+<code>[:status [:in "a" "b"]]</code> parses <code>:status</code> as a function call.</li>
+</ul>
+<p>
+All caught by <code>make test</code> and a live container smoke (upload → transcode →
+ready, room create/JOIN/WS/delete, video delete). 8 tests / 31 assertions
+green with <code>repos_test.clj</code> unchanged.
+</p>
+</div>
+</div>
 </div>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-12 Mon 14:04</p>
+<p class="date">Created: 2026-10-12 Mon 14:24</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

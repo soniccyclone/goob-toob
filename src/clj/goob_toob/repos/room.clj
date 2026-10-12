@@ -1,6 +1,7 @@
 (ns goob-toob.repos.room
   (:require [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
+            [honey.sql :as sql]
             [goob-toob.db :as db]
             [goob-toob.repos.video :as videos]))
 
@@ -17,25 +18,26 @@
   (let [id    (random-id)
         token (random-token)]
     (jdbc/execute! (db/db)
-      ["INSERT INTO rooms (id, token, video_id) VALUES (?, ?, ?)" id token video-id])
+      (sql/format {:insert-into :rooms :values [{:id id :token token :video-id video-id}]}))
     {:id id :token token :video-id video-id}))
 
 (defn get-by-token [token]
   (some-> (jdbc/execute-one! (db/db)
-              ["SELECT * FROM rooms WHERE token = ?" token]
+              (sql/format {:select :* :from [:rooms] :where [:= :token token]})
               {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn get-by-id [id]
   (some-> (jdbc/execute-one! (db/db)
-              ["SELECT * FROM rooms WHERE id = ?" id]
+              (sql/format {:select :* :from [:rooms] :where [:= :id id]})
               {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn list-all []
   (->> (jdbc/execute! (db/db)
-          ["SELECT r.id, r.token, r.video_id, v.title, v.status
-             FROM rooms r JOIN videos v ON v.id = r.video_id
-            ORDER BY r.created_at DESC"]
+          (sql/format {:select [[:r/id] [:r/token] [:r/video-id] [:v/title] [:v/status]]
+                       :from [[:rooms :r]]
+                       :join [[:videos :v] [:= :v.id :r.video-id]]
+                       :order-by [[:r/created-at :desc]]})
           {:return-keys true :builder-fn rs/as-unqualified-kebab-maps})))
 
 (defn delete! [id]
-  (jdbc/execute! (db/db) ["DELETE FROM rooms WHERE id = ?" id]))
+  (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :id id]})))

@@ -1,6 +1,7 @@
 (ns goob-toob.db
   "SQLite datasource + a tiny SQL-file migration runner."
   (:require [next.jdbc :as jdbc]
+            [honey.sql :as sql]
             [clojure.java.io :as io]
             [clojure.string :as str]))
 
@@ -15,18 +16,19 @@
 (defn- migrate! [db]
   (jdbc/execute! db
     ["CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))"])
-  (let [applied (->> (jdbc/execute! db ["SELECT name FROM schema_migrations"])
+  (let [applied (->> (jdbc/execute! db (sql/format {:select [:name] :from [:schema_migrations]}))
                      (map :schema_migrations/name) set)]
     (doseq [f (migration-files)
             :let [name (.getName ^java.io.File f)]
             :when (not (applied name))]
-      (let [sql (slurp f)]
+      (let [ddl (slurp f)]
         (jdbc/with-transaction [tx db]
-          (doseq [stmt (->> (str/split sql #";\s*\n")
+          (doseq [stmt (->> (str/split ddl #";\s*\n")
                             (map str/trimr)
                             (remove str/blank?))]
             (jdbc/execute! tx [stmt]))
-          (jdbc/execute! tx ["INSERT INTO schema_migrations (name) VALUES (?)" name])
+          (jdbc/execute! tx (sql/format {:insert-into :schema_migrations
+                                         :values [{:name name}]}))
           (println "migrated" name))))))
 
 (defn init! [db-path]
