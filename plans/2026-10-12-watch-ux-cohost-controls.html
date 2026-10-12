@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-12 Mon 14:45 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Watch-page UX, co-host control, gradual sync catch-up</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Watch-page UX, co-host control, gradual sync catch-up</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgaa68953">Goal</a></li>
+<li><a href="#orged2c6d5">Findings</a></li>
+<li><a href="#org8b324c4">Plan</a>
+<ul>
+<li><a href="#org721baeb">1. Gradual catch-up (sync_core + watch)</a></li>
+<li><a href="#orge061c7a">2. Viewer controls row (volume, mute, res lock)</a></li>
+<li><a href="#org3537fa3">3. Per-room co-host control</a></li>
+<li><a href="#orgf6c18de">4. Chat that scrolls properly</a></li>
+<li><a href="#orgb24589d">5. Big obvious play button</a></li>
+<li><a href="#orgf51dfe0">6. Admin upload + room UI</a></li>
+</ul>
+</li>
+<li><a href="#org8e57464">Risks and open questions</a></li>
+<li><a href="#orgfffe3c1">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgaa68953" class="outline-2">
+<h2 id="orgaa68953">Goal</h2>
+<div class="outline-text-2" id="text-orgaa68953">
+<p>
+Six fixes that take the app from "works" to "party-ready": a friendlier admin
+upload/room UI, a per-room <b>co-host</b> setting so non-admins can drive playback,
+a chat box that scrolls sanely, <b>gradual</b> catch-up (speed-ramp instead of hard
+seek) to kill the post-stall stutter, real viewer controls (volume, mute,
+resolution lock), and an unmistakable big play button so the idle video
+visibly waits for you.
+</p>
+</div>
+</div>
+<div id="outline-container-orged2c6d5" class="outline-2">
+<h2 id="orged2c6d5">Findings</h2>
+<div class="outline-text-2" id="text-orged2c6d5">
+<ul class="org-ul">
+<li><b>Controls are host-gated</b>: the resolution picker lives inside <code>host-row</code>
+(<code>src/cljs/goob_toob/watch.cljs:172-175</code>) which is <code>display:none</code> for
+non-hosts (<code>src/cljs/goob_toob/watch.cljs:242-243</code>) — viewers today can
+touch <b>nothing</b>: no volume, no res lock. <code>res-menu</code> itself works and
+persists to localStorage already.</li>
+<li><b>Playback commands</b> are <code>admin?</code> only: ws handler <code>src/clj/goob_toob/ws.clj:22</code>
+(<code>cmd → when admin?</code>); <code>welcome</code> sends <code>:is-host</code> (<code>src/clj/goob_toob/ws.clj:47</code>).
+The <code>rooms</code> table (<code>resources/migrations/001-init.sql</code>) has no control flag.</li>
+<li><b>Catch-up stutters by design</b>: drift policy (<code>src/cljc/goob_toob/sync_core.cljc:29-44</code>)
+hard-seeks anything over 1.5 s — exactly the drift a buffer stall leaves,
+so every stall ends in a jump. Nudge band (±5 %) exists but only covers
+0.3–1.5 s. <code>apply-policy!</code> runs even while buffering
+(<code>src/cljs/goob_toob/watch.cljs:15-29</code>).</li>
+<li><b>Chat scroll</b>: <code>.chat</code> is a fixed <code>height: 480px</code> card
+(<code>resources/public/css/theme.css:137</code>) — taller than short/mobile
+viewports, and <code>append-chat!</code> force-scrolls to bottom on every message
+(<code>src/cljs/goob_toob/watch.cljs:67-72</code>), yanking anyone who scrolled up.</li>
+<li><b>Start overlay</b> exists (<code>src/cljs/goob_toob/watch.cljs:135</code>, CSS
+<code>resources/public/css/theme.css:116-124</code>) but is a small text pill — easy
+to miss, doesn't read as "press me".</li>
+<li><b>Admin UI</b>: bare <code>&lt;input type=file multiple&gt;</code> + label/bar rows
+(<code>src/cljs/goob_toob/admin.cljs:85-101</code>); room creation answers with
+<code>js/alert</code> (<code>src/cljs/goob_toob/admin.cljs:76-78</code>); rooms table has no
+per-room controls and no delete button (the DELETE endpoint exists).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org8b324c4" class="outline-2">
+<h2 id="org8b324c4">Plan</h2>
+<div class="outline-text-2" id="text-org8b324c4">
+</div>
+<div id="outline-container-org721baeb" class="outline-3">
+<h3 id="org721baeb">1. Gradual catch-up (sync_core + watch)</h3>
+<div class="outline-text-3" id="text-org721baeb">
+<ul class="org-ul">
+<li><p>
+<code>sync_core.cljc</code>: replace <code>policy</code> bands —
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">drift</th>
+<th scope="col" class="org-left">action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">=$</td>
+<td class="org-left">d</td>
+<td class="org-left">&lt; 0.3$=</td>
+<td class="org-left"><code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left">behind, <code>$d \le -30$</code></td>
+<td class="org-left"><code>:seek</code> (lost the plot entirely)</td>
+</tr>
+
+<tr>
+<td class="org-left">behind, else</td>
+<td class="org-left"><code>:catch-up</code> — rate <code>catch-rate(d)</code></td>
+</tr>
+
+<tr>
+<td class="org-left">ahead <code>$\le 1.5$</code></td>
+<td class="org-left"><code>:nudge-slow</code> (0.95)</td>
+</tr>
+
+<tr>
+<td class="org-left">ahead, else</td>
+<td class="org-left"><code>:seek</code> (rare; honest)</td>
+</tr>
+</tbody>
+</table>
+<p>
+with <code>(defn catch-rate [d] (min 1.5 (+ 1.0 (* 0.1 (abs d)))))</code> — 0.5 s
+behind → 1.05×, ≥5 s behind → 1.5×, continuous, no jump.
+</p></li>
+<li>~watch.cljs= <code>apply-policy!</code>: handle <code>:catch-up</code> by setting
+<code>playbackRate = (sc/catch-rate d)</code>; reset to 1.0 on <code>:none</code>; <b>skip the
+whole policy while <code>.-buffering st</code></b> (seeking into an empty buffer is what
+makes stalls worse). Set <code>preservesPitch=true</code> (+ <code>webkitPreservesPitch</code>)
+once at player create so 1.5× doesn't sound like a chipmunk.</li>
+<li>Update ~sync_core_test.clj= thresholds + add <code>catch-rate</code> bounds tests.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orge061c7a" class="outline-3">
+<h3 id="orge061c7a">2. Viewer controls row (volume, mute, res lock)</h3>
+<div class="outline-text-3" id="text-orge061c7a">
+<ul class="org-ul">
+<li>~watch.cljs=: split <code>host-row</code> into two rows:
+<ul class="org-ul">
+<li><b>viewer row</b> (always visible once joined): volume slider + mute toggle +
+the existing <code>res-menu</code> (moved out of <code>host-row</code>). Volume/mute persist to
+localStorage (<code>goob-vol</code>, <code>goob-mute</code>) and set <code>.-volume</code> / <code>.-muted</code> on
+the video element.</li>
+<li><b>host row</b> (now <code>can-control</code>, see §3): play/pause/seek + "you drive" badge.</li>
+</ul></li>
+<li>CSS: <code>.controls</code> already flex-wraps; add <code>.vol { width: 90px; accent-color: slime }</code>.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org3537fa3" class="outline-3">
+<h3 id="org3537fa3">3. Per-room co-host control</h3>
+<div class="outline-text-3" id="text-org3537fa3">
+<ul class="org-ul">
+<li>Migration <code>002-room-control.sql</code>: <code>ALTER TABLE rooms ADD COLUMN
+  allow_control INTEGER NOT NULL DEFAULT 0;</code></li>
+<li><code>repos/room.clj</code>: <code>set-control! [id allow?]</code> (HoneySQL <code>:update</code>), and add
+<code>:r/allow-control</code> to the <code>list-all</code> select.</li>
+<li><code>routes.clj</code>: <code>PATCH /api/admin/rooms/:id</code> <code>{:allow-control bool}</code> →
+<code>set-control!</code>; <code>admin-rooms</code> GET now includes the flag.</li>
+<li>~ws.clj=: <code>welcome</code> gains <code>:can-control</code> (<code>admin? or flag</code>); the <code>cmd</code>
+branch checks <code>admin? or (flag from (rooms/get-by-id room-id))</code> <b>per
+message</b> — so toggling the checkbox applies live, no reconnect.</li>
+<li>~watch.cljs=: show host-row on <code>:can-control</code> instead of <code>:is-host</code>; badge
+text "you drive" for admin, "co-hosting" for flag-granted.</li>
+<li><code>admin.cljs</code> rooms table: "co-hosts can drive" checkbox per row (PATCH on
+change) + "delete" button (endpoint already exists).</li>
+<li><b>Semantics</b>: the flag means <b>anyone holding the room link can drive</b> — the
+token is the capability. Per-person grants would need viewer auth; out of
+scope (see Risks).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgf6c18de" class="outline-3">
+<h3 id="orgf6c18de">4. Chat that scrolls properly</h3>
+<div class="outline-text-3" id="text-orgf6c18de">
+<ul class="org-ul">
+<li>CSS: <code>.chat { height: min(480px, 55vh); }</code> so the card always fits the
+viewport with its input reachable.</li>
+<li><code>append-chat!</code>: stick-to-bottom only when the user was already near the
+bottom (<code>scrollHeight - scrollTop - clientHeight &lt; 40</code>); otherwise leave
+their position and show a small "↓ new messages" pill that jumps on click.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb24589d" class="outline-3">
+<h3 id="orgb24589d">5. Big obvious play button</h3>
+<div class="outline-text-3" id="text-orgb24589d">
+<ul class="org-ul">
+<li>Restyle <code>.start-ovl</code>: dim stage + centered 84 px slime circle with a ▶
+glyph, gentle pulse animation, "tap to start" caption under it. Click
+anywhere on the overlay still starts (existing <code>start!</code> wiring unchanged).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgf51dfe0" class="outline-3">
+<h3 id="orgf51dfe0">6. Admin upload + room UI</h3>
+<div class="outline-text-3" id="text-orgf51dfe0">
+<ul class="org-ul">
+<li><b>Drop zone</b>: styled dashed-border card ("drop videos here, or click")
+wrapping the file input; <code>dragover=/=drop</code> handlers feed the same upload
+fn. Per-file <b>upload cards</b>: name, size, progress bar, ✓/✗ state (replaces
+the bare label+bar rows).</li>
+<li><b>Toast</b> helper (bottom-right, auto-dismiss ~3 s) replacing both <code>js/alert</code>
+calls (link copied, room created).</li>
+<li>Room creation: copy link + toast + immediate <code>refresh-r</code> so the new row
+appears highlighted.</li>
+<li>Rooms table gains the §3 checkbox + delete button (with confirm).</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-org8e57464" class="outline-2">
+<h2 id="org8e57464">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org8e57464">
+<ul class="org-ul">
+<li><b>Co-host semantics assumption</b>: per-room "anyone with the link can drive",
+not per-person grants (no viewer auth exists). Multiple controllers can
+fight — last command wins; acceptable for friends-on-a-couch use. If you
+actually want named co-hosts, that's a viewer-login feature — say so.</li>
+<li><b>Catch-up tuning</b>: 0.1×/s ramp and the 30 s seek ceiling are guesses; they
+live in <code>sync_core</code> as pure functions so they're cheap to tune after real
+parties. <code>preservesPitch</code> is unsupported in some old Safari — degrades to
+pitch-shifted audio, no breakage.</li>
+<li><p>
+<b>Chat complaint ambiguity</b>: fixed both suspected causes (viewport overflow
+</p>
+<ul class="org-ul">
+<li>forced autoscroll); if the actual annoyance was something else, the</li>
+</ul>
+<p>
+stick-to-bottom change still makes it better.
+</p></li>
+<li><code>ALTER TABLE ADD COLUMN</code> on existing sqlite DBs is safe; default 0 keeps
+every existing room admin-only.</li>
+<li><code>PATCH</code> is a new verb on the router — reitit handles it; no CORS concerns
+(same-origin).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgfffe3c1" class="outline-2">
+<h2 id="orgfffe3c1">Verification</h2>
+<div class="outline-text-2" id="text-orgfffe3c1">
+<ol class="org-ol">
+<li><code>make test</code> — updated <code>sync_core_test</code> (policy bands, <code>catch-rate</code>) plus
+existing repo tests (rooms insert/select with new column).</li>
+<li>Rebuild image, recreate container.</li>
+<li>Browser pane walkthrough: admin → drag-drop testclip → upload card fills →
+✓; make room → toast + row appears; tick co-host box.</li>
+<li>Two viewer tabs (no admin): big play button visible → click → plays in
+sync; volume slider + mute work; res select locks 480p and survives
+reload; flood chat, scroll up, new messages no longer yank.</li>
+<li>Catch-up: in a viewer tab run <code>video.currentTime -</code> 6= from the console —
+it should speed up (~1.5×) and glide back within a few seconds, no jump.
+Then <code>-</code> 40 → hard seek (over the 30 s ceiling).</li>
+<li>Toggle co-host off from admin → viewer's host row disappears without
+reconnect (next cmd message refused server-side regardless).</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-12</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-12 Mon 14:45</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

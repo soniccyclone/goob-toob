@@ -1,0 +1,139 @@
+#+TITLE: Watch-page UX, co-host control, gradual sync catch-up
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-12
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+Six fixes that take the app from "works" to "party-ready": a friendlier admin
+upload/room UI, a per-room *co-host* setting so non-admins can drive playback,
+a chat box that scrolls sanely, *gradual* catch-up (speed-ramp instead of hard
+seek) to kill the post-stall stutter, real viewer controls (volume, mute,
+resolution lock), and an unmistakable big play button so the idle video
+visibly waits for you.
+
+* Findings
+- *Controls are host-gated*: the resolution picker lives inside =host-row=
+  (~src/cljs/goob_toob/watch.cljs:172-175~) which is =display:none= for
+  non-hosts (~src/cljs/goob_toob/watch.cljs:242-243~) — viewers today can
+  touch *nothing*: no volume, no res lock. =res-menu= itself works and
+  persists to localStorage already.
+- *Playback commands* are =admin?= only: ws handler ~src/clj/goob_toob/ws.clj:22~
+  (=cmd → when admin?=); =welcome= sends =:is-host= (~src/clj/goob_toob/ws.clj:47~).
+  The =rooms= table (~resources/migrations/001-init.sql~) has no control flag.
+- *Catch-up stutters by design*: drift policy (~src/cljc/goob_toob/sync_core.cljc:29-44~)
+  hard-seeks anything over 1.5 s — exactly the drift a buffer stall leaves,
+  so every stall ends in a jump. Nudge band (±5 %) exists but only covers
+  0.3–1.5 s. =apply-policy!= runs even while buffering
+  (~src/cljs/goob_toob/watch.cljs:15-29~).
+- *Chat scroll*: =.chat= is a fixed =height: 480px= card
+  (~resources/public/css/theme.css:137~) — taller than short/mobile
+  viewports, and =append-chat!= force-scrolls to bottom on every message
+  (~src/cljs/goob_toob/watch.cljs:67-72~), yanking anyone who scrolled up.
+- *Start overlay* exists (~src/cljs/goob_toob/watch.cljs:135~, CSS
+  ~resources/public/css/theme.css:116-124~) but is a small text pill — easy
+  to miss, doesn't read as "press me".
+- *Admin UI*: bare =<input type=file multiple>= + label/bar rows
+  (~src/cljs/goob_toob/admin.cljs:85-101~); room creation answers with
+  =js/alert= (~src/cljs/goob_toob/admin.cljs:76-78~); rooms table has no
+  per-room controls and no delete button (the DELETE endpoint exists).
+
+* Plan
+** 1. Gradual catch-up (sync_core + watch)
+- ~sync_core.cljc~: replace =policy= bands —
+  | drift                 | action                                        |
+  |-----------------------+-----------------------------------------------|
+  | =$|d| < 0.3$=         | =:none=                                       |
+  | behind, =$d \le -30$= | =:seek= (lost the plot entirely)              |
+  | behind, else          | =:catch-up= — rate =catch-rate(d)=            |
+  | ahead =$\le 1.5$=     | =:nudge-slow= (0.95)                          |
+  | ahead, else           | =:seek= (rare; honest)                        |
+  with =(defn catch-rate [d] (min 1.5 (+ 1.0 (* 0.1 (abs d)))))= — 0.5 s
+  behind → 1.05×, ≥5 s behind → 1.5×, continuous, no jump.
+- ~watch.cljs= =apply-policy!=: handle =:catch-up= by setting
+  =playbackRate = (sc/catch-rate d)=; reset to 1.0 on =:none=; *skip the
+  whole policy while =.-buffering st=* (seeking into an empty buffer is what
+  makes stalls worse). Set =preservesPitch=true= (+ =webkitPreservesPitch=)
+  once at player create so 1.5× doesn't sound like a chipmunk.
+- Update ~sync_core_test.clj= thresholds + add =catch-rate= bounds tests.
+
+** 2. Viewer controls row (volume, mute, res lock)
+- ~watch.cljs=: split =host-row= into two rows:
+  - *viewer row* (always visible once joined): volume slider + mute toggle +
+    the existing =res-menu= (moved out of =host-row=). Volume/mute persist to
+    localStorage (=goob-vol=, =goob-mute=) and set =.-volume= / =.-muted= on
+    the video element.
+  - *host row* (now =can-control=, see §3): play/pause/seek + "you drive" badge.
+- CSS: =.controls= already flex-wraps; add =.vol { width: 90px; accent-color: slime }=.
+
+** 3. Per-room co-host control
+- Migration ~002-room-control.sql~: =ALTER TABLE rooms ADD COLUMN
+  allow_control INTEGER NOT NULL DEFAULT 0;=
+- ~repos/room.clj~: =set-control! [id allow?]= (HoneySQL =:update=), and add
+  =:r/allow-control= to the =list-all= select.
+- ~routes.clj~: =PATCH /api/admin/rooms/:id= ={:allow-control bool}= →
+  =set-control!=; =admin-rooms= GET now includes the flag.
+- ~ws.clj=: =welcome= gains =:can-control= (=admin? or flag=); the =cmd=
+  branch checks =admin? or (flag from (rooms/get-by-id room-id))= *per
+  message* — so toggling the checkbox applies live, no reconnect.
+- ~watch.cljs=: show host-row on =:can-control= instead of =:is-host=; badge
+  text "you drive" for admin, "co-hosting" for flag-granted.
+- ~admin.cljs~ rooms table: "co-hosts can drive" checkbox per row (PATCH on
+  change) + "delete" button (endpoint already exists).
+- *Semantics*: the flag means *anyone holding the room link can drive* — the
+  token is the capability. Per-person grants would need viewer auth; out of
+  scope (see Risks).
+
+** 4. Chat that scrolls properly
+- CSS: =.chat { height: min(480px, 55vh); }= so the card always fits the
+  viewport with its input reachable.
+- =append-chat!=: stick-to-bottom only when the user was already near the
+  bottom (=scrollHeight - scrollTop - clientHeight < 40=); otherwise leave
+  their position and show a small "↓ new messages" pill that jumps on click.
+
+** 5. Big obvious play button
+- Restyle =.start-ovl=: dim stage + centered 84 px slime circle with a ▶
+  glyph, gentle pulse animation, "tap to start" caption under it. Click
+  anywhere on the overlay still starts (existing =start!= wiring unchanged).
+
+** 6. Admin upload + room UI
+- *Drop zone*: styled dashed-border card ("drop videos here, or click")
+  wrapping the file input; =dragover=/=drop= handlers feed the same upload
+  fn. Per-file *upload cards*: name, size, progress bar, ✓/✗ state (replaces
+  the bare label+bar rows).
+- *Toast* helper (bottom-right, auto-dismiss ~3 s) replacing both =js/alert=
+  calls (link copied, room created).
+- Room creation: copy link + toast + immediate =refresh-r= so the new row
+  appears highlighted.
+- Rooms table gains the §3 checkbox + delete button (with confirm).
+
+* Risks and open questions
+- *Co-host semantics assumption*: per-room "anyone with the link can drive",
+  not per-person grants (no viewer auth exists). Multiple controllers can
+  fight — last command wins; acceptable for friends-on-a-couch use. If you
+  actually want named co-hosts, that's a viewer-login feature — say so.
+- *Catch-up tuning*: 0.1×/s ramp and the 30 s seek ceiling are guesses; they
+  live in =sync_core= as pure functions so they're cheap to tune after real
+  parties. =preservesPitch= is unsupported in some old Safari — degrades to
+  pitch-shifted audio, no breakage.
+- *Chat complaint ambiguity*: fixed both suspected causes (viewport overflow
+  + forced autoscroll); if the actual annoyance was something else, the
+  stick-to-bottom change still makes it better.
+- =ALTER TABLE ADD COLUMN= on existing sqlite DBs is safe; default 0 keeps
+  every existing room admin-only.
+- =PATCH= is a new verb on the router — reitit handles it; no CORS concerns
+  (same-origin).
+
+* Verification
+1. =make test= — updated =sync_core_test= (policy bands, =catch-rate=) plus
+   existing repo tests (rooms insert/select with new column).
+2. Rebuild image, recreate container.
+3. Browser pane walkthrough: admin → drag-drop testclip → upload card fills →
+   ✓; make room → toast + row appears; tick co-host box.
+4. Two viewer tabs (no admin): big play button visible → click → plays in
+   sync; volume slider + mute work; res select locks 480p and survives
+   reload; flood chat, scroll up, new messages no longer yank.
+5. Catch-up: in a viewer tab run =video.currentTime -= 6= from the console —
+   it should speed up (~1.5×) and glide back within a few seconds, no jump.
+   Then =-= 40 → hard seek (over the 30 s ceiling).
+6. Toggle co-host off from admin → viewer's host row disappears without
+   reconnect (next cmd message refused server-side regardless).
