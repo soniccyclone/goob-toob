@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-12 Mon 14:24 -->
+<!-- 2026-10-12 Mon 14:35 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Replace raw SQL with HoneySQL in the repo layer</title>
@@ -30,18 +30,18 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org63dffb7">Goal</a></li>
-<li><a href="#orgf6fe140">Findings</a></li>
-<li><a href="#orgff9d33e">Plan</a></li>
-<li><a href="#org7c0608c">Risks and open questions</a></li>
-<li><a href="#org004e486">Verification</a></li>
-<li><a href="#org522e446">Implementation notes</a></li>
+<li><a href="#org28ed307">Goal</a></li>
+<li><a href="#orgf36418f">Findings</a></li>
+<li><a href="#orgabae776">Plan</a></li>
+<li><a href="#orgdd2aed8">Risks and open questions</a></li>
+<li><a href="#orgdbd3626">Verification</a></li>
+<li><a href="#org8b864bf">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org63dffb7" class="outline-2">
-<h2 id="org63dffb7">Goal</h2>
-<div class="outline-text-2" id="text-org63dffb7">
+<div id="outline-container-org28ed307" class="outline-2">
+<h2 id="org28ed307">Goal</h2>
+<div class="outline-text-2" id="text-org28ed307">
 <p>
 Swap every hand-written SQL string in the persistence layer for
 <a href="https://github.com/seancorfield/honeysql">HoneySQL</a> data structures (<code>com.github.seancorfield/honeysql</code>
@@ -52,9 +52,9 @@ shapes. <code>test/clj/goob_toob/repos_test.clj</code> is the gate — it must p
 </p>
 </div>
 </div>
-<div id="outline-container-orgf6fe140" class="outline-2">
-<h2 id="orgf6fe140">Findings</h2>
-<div class="outline-text-2" id="text-orgf6fe140">
+<div id="outline-container-orgf36418f" class="outline-2">
+<h2 id="orgf36418f">Findings</h2>
+<div class="outline-text-2" id="text-orgf36418f">
 <ul class="org-ul">
 <li>13 raw statements across three files; nothing else touches SQL
 (<code>routes.clj</code>, <code>services/*</code> go through the repos).</li>
@@ -84,9 +84,9 @@ keys regardless of how the SQL is generated.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgff9d33e" class="outline-2">
-<h2 id="orgff9d33e">Plan</h2>
-<div class="outline-text-2" id="text-orgff9d33e">
+<div id="outline-container-orgabae776" class="outline-2">
+<h2 id="orgabae776">Plan</h2>
+<div class="outline-text-2" id="text-orgabae776">
 <ol class="org-ol">
 <li><b>deps.edn</b>: add <code>com.github.seancorfield/honeysql {:mvn/version
    "2.7.1479"}</code> to <code>:deps</code>.</li>
@@ -146,9 +146,9 @@ files is the normal pattern and the runner already handles them.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org7c0608c" class="outline-2">
-<h2 id="org7c0608c">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org7c0608c">
+<div id="outline-container-orgdd2aed8" class="outline-2">
+<h2 id="orgdd2aed8">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orgdd2aed8">
 <ul class="org-ul">
 <li><b>Assumption</b>: migration <code>.sql</code> files and the bootstrap DDL stay raw.
 HoneySQL can emit <code>CREATE TABLE</code> but it buys nothing for versioned
@@ -162,9 +162,9 @@ it at build time).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org004e486" class="outline-2">
-<h2 id="org004e486">Verification</h2>
-<div class="outline-text-2" id="text-org004e486">
+<div id="outline-container-orgdbd3626" class="outline-2">
+<h2 id="orgdbd3626">Verification</h2>
+<div class="outline-text-2" id="text-orgdbd3626">
 <ol class="org-ol">
 <li><code>make test</code> — all 8 tests / 31 assertions green, <code>repos_test.clj</code>
 <b>unchanged</b> (that's the proof of behavior preservation).</li>
@@ -175,9 +175,9 @@ upload → transcode → room → play still works end to end.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org522e446" class="outline-2">
-<h2 id="org522e446">Implementation notes</h2>
-<div class="outline-text-2" id="text-org522e446">
+<div id="outline-container-org8b864bf" class="outline-2">
+<h2 id="org8b864bf">Implementation notes</h2>
+<div class="outline-text-2" id="text-org8b864bf">
 <p>
 Shipped 2026-10-12. Three deviations from the plan found by actually running
 HoneySQL 2.7.1479 (the plan's first-draft snippets were wrong):
@@ -195,13 +195,21 @@ All caught by <code>make test</code> and a live container smoke (upload → tran
 ready, room create/JOIN/WS/delete, video delete). 8 tests / 31 assertions
 green with <code>repos_test.clj</code> unchanged.
 </p>
+
+<p>
+Follow-up same day: the two <code>[:raw "datetime('now')"]</code> uses were replaced
+with a registered DSL extension — <code>sql/register-fn! :now</code> in <code>db.clj</code>, so
+queries say <code>:updated-at [:now]</code>. House rule (in <code>CLAUDE.md</code>): no raw SQL
+strings <b>and</b> no <code>[:raw ...]</code> in query code; if the DSL lacks a form,
+register one in <code>db.clj</code> instead of escaping it.
+</p>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-12 Mon 14:24</p>
+<p class="date">Created: 2026-10-12 Mon 14:35</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

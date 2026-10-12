@@ -7,6 +7,11 @@
 
 (defonce ds (atom nil))
 
+;; Project DSL extension: [:now] is SQLite's current timestamp. Registered
+;; here (the ns that owns the dialect) so query code never needs raw SQL —
+;; if the DSL lacks a form, extend it here, don't escape it.
+(sql/register-fn! :now (fn [_ _] ["datetime('now')"]))
+
 (defn- migration-files []
   (->> (io/file "resources/migrations")
        (.listFiles)

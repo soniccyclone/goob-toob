@@ -43,7 +43,7 @@
                        :progress [:coalesce progress :progress]
                        :error error
                        :duration [:coalesce duration :duration]
-                       :updated-at [:raw "datetime('now')"]}
+                       :updated-at [:now]}
                  :where [:= :id id]}))
   status)
 
@@ -51,7 +51,7 @@
   (jdbc/execute! (db/db)
     (sql/format {:update :videos
                  :set {:progress progress
-                       :updated-at [:raw "datetime('now')"]}
+                       :updated-at [:now]}
                  :where [:= :id id]})))
 
 (defn set-duration! [id duration]

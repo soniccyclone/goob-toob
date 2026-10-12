@@ -26,4 +26,6 @@ needed to make a new plan viewable.
 - Anything not installed on the host runs in podman (`make help` lists targets).
 - CLJS: never use `cljs.core/format` (DCE'd out of release builds).
 - DB access: HoneySQL data structures, not raw SQL strings (see
-  `plans/` for the migration plan).
+  `plans/` for the migration plan). No `[:raw ...]` in query code either —
+  if the DSL lacks a form, register one with `sql/register-fn!` in `db.clj`
+  (see `[:now]`) and use that.

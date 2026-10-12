@@ -116,3 +116,9 @@ HoneySQL 2.7.1479 (the plan's first-draft snippets were wrong):
 All caught by =make test= and a live container smoke (upload → transcode →
 ready, room create/JOIN/WS/delete, video delete). 8 tests / 31 assertions
 green with =repos_test.clj= unchanged.
+
+Follow-up same day: the two =[:raw "datetime('now')"]= uses were replaced
+with a registered DSL extension — =sql/register-fn! :now= in =db.clj=, so
+queries say =:updated-at [:now]=. House rule (in =CLAUDE.md=): no raw SQL
+strings *and* no =[:raw ...]= in query code; if the DSL lacks a form,
+register one in =db.clj= instead of escaping it.
