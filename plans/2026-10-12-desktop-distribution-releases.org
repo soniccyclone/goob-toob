@@ -269,3 +269,15 @@ Shipped same day. Deviations and found issues:
   migration throws instead of going silent. Half-migrated v0.1.0 DBs
   self-heal on next launch. Regression tests: classpath resolution +
   fresh-DB schema creation (15 tests / 56 assertions).
+- *v0.1.2 hotfix* (second Windows report: page, chat, and MPD all fine but
+  the video spun forever): BluRay-rip sources carry multi-channel audio
+  (AC-3/E-AC-3/DTS 5.1), and ffmpeg's AAC encoder writes a PCE for layouts
+  that don't match the standard AAC channel configs — Chrome's decoder
+  rejects PCE streams, so MSE append failed (CHUNK_DEMUXER_ERROR_APPEND_FAILED)
+  and dash.js never got past the spinner. Audio now transcodes
+  =-c:a aac -b:a 128k -ac 2=: stereo is universal, and a watch party over a
+  quick tunnel doesn't need 5.1. Reproduced locally with a synthetic
+  x265-10bit + E-AC-3 5.1 mkv (spinner, matching the report) and verified
+  the fix yields AAC-LC stereo with standard channel configuration.
+  Videos transcoded before the fix keep their bad audio track — delete and
+  re-upload to re-transcode.

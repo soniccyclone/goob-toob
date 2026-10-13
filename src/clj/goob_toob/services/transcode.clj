@@ -70,7 +70,10 @@
      ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p"
       "-sc_threshold" "0" "-force_key_frames" "expr:gte(t,n_forced*4)"]
      bitrates
-     (when audio? ["-c:a" "aac" "-b:a" "128k"])
+     ;; stereo only: multi-channel ffmpeg-AAC carries a PCE that Chrome's
+     ;; decoder rejects (CHUNK_DEMUXER_ERROR_APPEND_FAILED → spinner forever),
+     ;; and a watch party through a quick tunnel doesn't need 5.1
+     (when audio? ["-c:a" "aac" "-b:a" "128k" "-ac" "2"])
      ["-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
       "-adaptation_sets" (if audio? "id=0,streams=v id=1,streams=a" "id=0,streams=v")
       "-progress" "pipe:1" "-nostats"
