@@ -1,0 +1,51 @@
+{
+  "name": "goob-toob-desktop",
+  "version": "0.1.0",
+  "description": "goob-toob watch parties on your own box",
+  "main": "main.js",
+  "author": "Nathan Bishop",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "org.goobtoob.app",
+    "productName": "goob-toob",
+    "directories": { "output": "dist", "buildResources": "." },
+    "extraResources": [
+      { "from": "../target/goob-toob.jar", "to": "app/goob-toob.jar" },
+      { "from": "THIRD-PARTY.org", "to": "THIRD-PARTY.org" }
+    ],
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "goob-toob.AppImage",
+      "category": "Video",
+      "extraResources": [
+        { "from": "../vendor/linux/jre", "to": "jre" },
+        { "from": "../vendor/linux/ffmpeg", "to": "ffmpeg/ffmpeg" },
+        { "from": "../vendor/linux/ffprobe", "to": "ffmpeg/ffprobe" },
+        { "from": "../vendor/linux/cloudflared", "to": "cloudflared/cloudflared" }
+      ]
+    },
+    "win": {
+      "target": ["nsis", "zip"],
+      "icon": "icon.png",
+      "extraResources": [
+        { "from": "../vendor/windows/jre", "to": "jre" },
+        { "from": "../vendor/windows/ffmpeg.exe", "to": "ffmpeg/ffmpeg.exe" },
+        { "from": "../vendor/windows/ffprobe.exe", "to": "ffmpeg/ffprobe.exe" },
+        { "from": "../vendor/windows/cloudflared.exe", "to": "cloudflared/cloudflared.exe" }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "artifactName": "goob-toob-setup.exe"
+    }
+  }
+}

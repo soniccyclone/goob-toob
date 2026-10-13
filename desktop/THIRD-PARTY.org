@@ -1,0 +1,22 @@
+#+TITLE: goob-toob desktop — third-party components
+goob-toob itself is AGPL-3.0-or-later; source: https://git.sr.ht/~nathanb/goob-toob
+
+This bundle redistributes:
+
+- Electron — MIT — https://electronjs.org
+- Node.js (inside Electron) — MIT — https://nodejs.org
+- Clojure / core.async / tools.build — EPL-1.0 — https://clojure.org
+- Eclipse Temurin JRE — GPLv2+CE — https://adoptium.net
+  (source: https://github.com/adoptium/temurin25-binaries/releases)
+- ffmpeg (static builds: johnvansickle linux / BtbN win64-gpl) — GPLv3+
+  (source: https://ffmpeg.org/download.html) — run as a separate process;
+  FFMPEG_PATH is configurable and replaceable.
+- cloudflared — Apache-2.0 — https://github.com/cloudflare/cloudflared
+  (source: https://github.com/cloudflare/cloudflared)
+- dash.js — Apache-2.0 — https://dashif.org/dash.js/
+- Ring, Reitit, next.jdbc, HoneySQL, Cheshire, sqlite-jdbc —
+  Apache-2.0 / EPL — see each project page.
+
+Full license texts are available from the upstream projects at the URLs
+above; the goob-toob source (including build scripts that fetch every
+component above) is in the repository.

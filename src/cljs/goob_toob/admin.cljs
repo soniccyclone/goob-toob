@@ -25,6 +25,43 @@
     (.appendChild (.-body js/document) t)
     (js/setTimeout #(.remove t) 3200)))
 
+(defonce public-base
+  ;; set from the Electron shell when a tunnel URL exists; room links use it
+  (atom nil))
+
+(defn- base-url [] (or @public-base (.-origin js/location)))
+
+(defn- sharing-card []
+  ;; only rendered inside the Electron shell (window.goob bridge): the public
+  ;; tunnel URL + the storage folder picker
+  (when-let [goob (.-goob js/window)]
+    (let [url-el (h :code {:style "word-break:break-all;flex:1"} "opening the tunnel…")
+          copy   (h :button.btn "copy link")
+          dir-el (h :span.muted "…")
+          change (h :button.btn.aqua "change")
+          card   (h :div.card.row-gap
+                    (h :h3 "sharing")
+                    (h :div.row url-el copy)
+                    (h :div.row (h :span "storage: ") dir-el change))]
+      (set! (.-onclick copy)
+            #(do (ui/copy! (.-textContent url-el))
+                 (toast "tunnel link copied — toss it to your friends")))
+      (set! (.-onclick change)
+            #(.then (.pickStorage goob)
+                    (fn [dir] (when dir (set! (.-textContent dir-el) dir)))))
+      (.then (.getState goob)
+             (fn [st]
+               (when-let [u (.-tunnelUrl st)]
+                 (reset! public-base u)
+                 (set! (.-textContent url-el) u))
+               (set! (.-textContent dir-el) (or (.-storageDir st) "?"))))
+      (.onTunnelUrl goob
+                    (fn [u]
+                      (reset! public-base u)
+                      (set! (.-textContent url-el) (or u "re-dialing the tunnel…"))
+                      (.dispatchEvent js/document (js/CustomEvent. "goob:tunnel"))))
+      card)))
+
 (defn- fmt-space [mb]
   (if (> mb 1024) (str (.toFixed (/ mb 1024.0) 1) " GB") (str mb " MB")))
 
@@ -51,7 +88,7 @@
 (defn- render-rooms [tbody rooms acts]
   (ui/clear! tbody)
   (doseq [r rooms]
-    (let [url (str (.-origin js/location) "/watch/" (:token r))]
+    (let [url (str (base-url) "/watch/" (:token r))]
       (ui/add! tbody
         (h :tr
           (h :td (:title r))
@@ -91,12 +128,15 @@
         refresh-r   #(-> (api/get-json "/api/admin/rooms")
                          (.then (fn [{:keys [data]}] (render-rooms rtbody data acts))))
         _ (set! (.-refresh acts) refresh-r)
+        _ (when (.-goob js/window)
+            ;; tunnel URL arrived (or re-dialed): room links carry it now
+            (.addEventListener js/document "goob:tunnel" #(refresh-r)))
         _ (set! (.-room acts)
                 (fn [v]
                   (-> (api/post! "/api/admin/rooms" {:video-id (:id v)})
                       (.then (fn [{:keys [status data]}]
                                (when (= 201 status)
-                                 (let [url (str (.-origin js/location) (:url data))]
+                                 (let [url (str (base-url) (:url data))]
                                    (ui/copy! url)
                                    (toast (str "room open! link copied: " url)))
                                  (refresh-r)))))))
@@ -136,6 +176,7 @@
                                        (upload-one f)))
                    :onclick     #(.click file-input)}
                   "drop videos here — or click to pick")]
+      (when-let [sc (sharing-card)] (ui/add! body sc))
       (ui/add! body
         (h :div.card.row-gap
            (h :h3 "your storage")
@@ -156,10 +197,11 @@
            (h :table.lib
               (h :thead (h :tr (h :th "video") (h :th "link") (h :th "co-hosts") (h :th "")))
               rtbody))
-        (h :div.goo
-           (h :button.btn.ghost {:onclick #(-> (api/post! "/api/logout" {})
-                                               (.then (fn [_] (set! (.-href js/location) "/"))))}
-              "log out"))))
+        (when-not (.-goob js/window)
+          (h :div.goo
+             (h :button.btn.ghost {:onclick #(-> (api/post! "/api/logout" {})
+                                                 (.then (fn [_] (set! (.-href js/location) "/"))))}
+                "log out")))))
     (-> (api/get-json "/api/admin/info")
         (.then (fn [{:keys [data]}]
                  (set! (.-textContent info-slot)
