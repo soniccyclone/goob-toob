@@ -11,6 +11,7 @@ packages:
 - wine
 - unzip
 - which
+- tar
 branches: master
 tags: true
 environment:
