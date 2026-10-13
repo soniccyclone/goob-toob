@@ -17,7 +17,7 @@ environment:
   subdir: /goob-toob-releases
 tasks:
 - setup: |
-    curl -fsSL https://clojure.org/api/get/linux-install | sudo bash -
+    curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | sudo bash -
 - build-client: |
     cd goob-toob
     npm ci --no-audit --no-fund
