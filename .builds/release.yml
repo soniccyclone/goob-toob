@@ -12,6 +12,7 @@ packages:
 - unzip
 - which
 branches: master
+tags: true
 environment:
   site: nathanb.srht.site
   subdir: /goob-toob-releases
