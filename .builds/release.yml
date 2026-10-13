@@ -12,6 +12,7 @@ packages:
 - unzip
 - which
 - tar
+- hut
 branches: master
 tags: true
 environment:
