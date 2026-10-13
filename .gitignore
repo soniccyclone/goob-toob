@@ -12,3 +12,6 @@ test_data/
 tunnel.log
 .cloudflared.pid
 gen/
+vendor/
+desktop/dist/
+desktop/node_modules/

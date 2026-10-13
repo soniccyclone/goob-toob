@@ -6,7 +6,22 @@ PORT    ?= 8080
 MOUNTS := -v $(STORAGE):/data:z -v $(CURDIR):/app:z -w /app
 ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
-.PHONY: help image dev run test compile repl clip tunnel tunnel-stop
+uberjar: ## build server uberjar (CLJS included) -> target/goob-toob.jar
+	mkdir -p $(STORAGE)
+	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) sh -c "npx shadow-cljs release client && clojure -T:build uberjar"
+
+vendor: ## download cloudflared + ffmpeg + JRE into vendor/ (desktop bundle)
+	sh scripts/fetch-vendor.sh all
+
+vendor-linux: ## vendor just the linux binaries
+	sh scripts/fetch-vendor.sh linux
+
+desktop: ## package the Electron desktop app (dir build) -> desktop/dist/
+	$(MAKE) uberjar
+	$(MAKE) vendor
+	cd desktop && npm install --no-audit --no-fund && npx electron-builder --dir
+
+.PHONY: help image dev run test compile repl clip tunnel tunnel-stop uberjar vendor vendor-linux desktop
 
 help:
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-12s\033[0m %s\n", $$1, $$2}'
