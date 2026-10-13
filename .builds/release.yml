@@ -2,7 +2,7 @@
 # to sr.ht pages. Run manually on a tag:
 #   git tag v0.1.0 && git push --follow-tags
 #   hut builds submit .builds/release.yml
-image: fedora/common
+image: fedora/latest
 oauth: pages.sr.ht/PAGES:RW
 packages:
 - java-25-openjdk-headless
