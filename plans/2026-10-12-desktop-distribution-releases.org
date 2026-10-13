@@ -260,3 +260,12 @@ Shipped same day. Deviations and found issues:
   JRE+jar+ffmpeg+cloudflared end-to-end incl. tunnel URL in the sharing
   card; container mode login regression green. Windows NSIS path is
   wine-dependent and gets its first real run in CI.
+- *v0.1.1 hotfix* (first real Windows first-run found it): the migration
+  runner listed =resources/migrations= from the *filesystem*, which is
+  empty from the packaged app's CWD — a fresh install silently migrated
+  zero tables and died at boot with /no such table: videos/. Migrations
+  are now enumerated as a constant and loaded via =io/resource= (the
+  classpath works from repo, container, and uberjar alike) and a missing
+  migration throws instead of going silent. Half-migrated v0.1.0 DBs
+  self-heal on next launch. Regression tests: classpath resolution +
+  fresh-DB schema creation (15 tests / 56 assertions).
