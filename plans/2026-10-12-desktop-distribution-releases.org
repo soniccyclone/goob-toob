@@ -2,6 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-12
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: approved 2026-10-12; shipped on master 2026-10-12 (see Implementation notes).
 
 * Goal
 Turn goob-toob into a double-click desktop app for Windows (primary audience)
@@ -233,3 +234,29 @@ orgPlanSequence('journey', {
 5. Releases page =nathanb.srht.site/goob-toob-releases/= lists installers +
    sha256; README.md links download the right binaries; =make run= (container
    mode) still logs in with =ADMIN_PASSWORD= as before.
+
+* Implementation notes
+Shipped same day. Deviations and found issues:
+
+- =app= takes ={:keys [admin? login?]}=: =login?= is container-mode only.
+  First cut left =/api/login= on the desktop admin port, where it 500'd
+  against the nil password — now the desktop admin port has no login surface
+  at all (covered by =routes-test/desktop-admin-port-is-always-admin=).
+- =ring-mock= is Clojars-only and the build container resolves from central,
+  so =routes_test.clj= hand-rolls request maps instead.
+- =transcode.clj= derives =ffprobe= from =FFMPEG_PATH= (sibling file,
+  =ffmpeg(.exe)? → ffprobe$1=) and skips =nice= on Windows.
+- =watch.cljs= keeps the =admin?= link hidden unless =welcome= says
+  =:is-host=; =admin.cljs= hides the logout button inside the desktop shell
+  (no logout on the admin port) and shows the sharing card instead.
+- Room links inside the desktop shell use the tunnel URL (=public-base=
+  atom, refreshed via a =goob:tunnel= DOM event) so "copy link" hands out
+  something friends can actually open.
+- electron-builder 25 rejects a per-target =zip= artifactName sub-config;
+  the CI zip fallback globs =*-win-x64.zip= instead.
+- Verified locally: 13 tests / 53 assertions; two-port invariants live
+  (public 404s =/api/admin/*=, admin port always-admin); live quick tunnel
+  404s the admin API; packaged AppImage (280 MB) boots the bundled
+  JRE+jar+ffmpeg+cloudflared end-to-end incl. tunnel URL in the sharing
+  card; container mode login regression green. Windows NSIS path is
+  wine-dependent and gets its first real run in CI.

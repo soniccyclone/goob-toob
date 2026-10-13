@@ -13,11 +13,28 @@ resolution and catch themselves up when their internet wobbles.
 | [[https://git.sr.ht/~nathanb/goob-toob][repo]]        | sourcehut home: summary, tree, log, refs |
 | [[https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans][plans]]       | dated plan files (+ rendered html snapshots) |
 | [[https://nathanb.srht.site/goob-toob-plans/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
+| [[https://nathanb.srht.site/goob-toob-releases/][releases]]    | desktop installers (Windows + Linux)                                   |
 | [[https://builds.sr.ht/~nathanb/goob-toob][builds]]      | CI: runs on every master push, republishes the plans site |
 
 Note: git.sr.ht only renders *markdown* readmes on its summary page (see
 =README.md= — it's a stub pointing here). The tree view shows =.org= files as
 plain text, so for pretty org reading use the plans site above.
+
+* Desktop app
+Double-click installers for Windows and Linux:
+[[https://nathanb.srht.site/goob-toob-releases/][releases page]]. The app bundles its own JRE, ffmpeg, and cloudflared —
+first run asks where your videos live, then the admin console opens with a
+*sharing* card: copy the public tunnel link and toss it to friends. No
+password, no terminal. The admin console listens on loopback only; the public
+tunnel has no admin surface at all (see
+[[file:plans/2026-10-12-desktop-distribution-releases.org][the distribution plan]]).
+
+Windows SmartScreen will warn (no code signing): "More info → Run anyway".
+
+Building installers from source: =make uberjar && make vendor=, then
+=cd desktop && npm install && npx electron-builder --linux AppImage=
+(Windows targets need wine for the NSIS installer; CI does it for you via
+=.builds/release.yml= on a tag).
 
 * Quickstart (podman)
 #+begin_src sh
@@ -36,8 +53,10 @@ unless you set =ADMIN_PASSWORD=), upload videos, make a room, share the link.
 | var               | meaning                                        | default          |
 |-------------------+------------------------------------------------+------------------|
 | STORAGE_DIR       | required: where videos/uploads/db live         | -                |
-| ADMIN_PASSWORD    | required: the one and only admin password      | -                |
+| ADMIN_PASSWORD    | container mode's admin password; *unset = desktop mode* (two ports, loopback admin) | - |
 | PORT              | HTTP port                                      | 8080             |
+| GOOB_ADMIN_PORT   | desktop mode: loopback-only admin port         | 8081             |
+| FFMPEG_PATH       | ffmpeg binary (ffprobe must sit next to it)    | ffmpeg (on PATH) |
 | TRANSCODE_WORKERS | parallel ffmpeg jobs (keep it 1 while hosting) | 1                |
 | KEEP_ORIGINAL     | keep uploaded source after transcode           | true             |
 | DB_PATH           | sqlite file                                    | $STORAGE_DIR/... |

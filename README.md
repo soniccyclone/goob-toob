@@ -8,6 +8,20 @@ upload your library, open a room, toss friends a link, everyone watches in
 sync. You drive playback; viewers pick auto (best sync) or a locked resolution
 and catch themselves up when their internet wobbles.
 
+## Download
+
+**[goob-toob-win-x64-setup.exe](https://nathanb.srht.site/goob-toob-releases/goob-toob-win-x64-setup.exe)** — Windows installer
+&nbsp;&nbsp;·&nbsp;&nbsp;
+**[goob-toob-linux-x86_64.AppImage](https://nathanb.srht.site/goob-toob-releases/goob-toob-linux-x86_64.AppImage)** — Linux
+
+The desktop app bundles everything (JRE, ffmpeg, cloudflared): install it, pick
+a video folder, and it hands you a public link to toss at your friends. No
+terminal, no password — the admin console lives on loopback and the public
+tunnel has no admin surface at all. Windows SmartScreen will squint because
+there's no code signing: "More info → Run anyway".
+
+Prefer a container? `make image && make run` below.
+
 ## Links
 
 - **[Full docs: `README.org`](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/README.org)** —

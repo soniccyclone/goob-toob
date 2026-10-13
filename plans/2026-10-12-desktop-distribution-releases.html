@@ -3,23 +3,23 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-12 Mon 18:52 -->
+<!-- 2026-10-12 Mon 19:21 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</title>
 <meta name="author" content="Nathan Barlow" />
 <meta name="generator" content="Org Mode" />
-<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
-<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
-<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
-<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<link rel="stylesheet" type="text/css" href="vendor/fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="vendor/fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="vendor/fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="vendor/fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
 <style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
 <style>#content,#postamble{max-width:1400px}</style>
 </head>
@@ -30,26 +30,28 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgd8dbda7">Goal</a></li>
-<li><a href="#org532bc06">Findings</a></li>
-<li><a href="#org2eed929">Plan</a>
+<li><a href="#org759f3e7">Goal</a></li>
+<li><a href="#orgf9ef37f">Findings</a></li>
+<li><a href="#orgd2375cd">Plan</a>
 <ul>
-<li><a href="#org43ba6c2">1 · Server: desktop mode with two ports</a></li>
-<li><a href="#orged5d4b5">2 · Build chain: uberjar + vendored binaries</a></li>
-<li><a href="#org799c7a7">3 · Electron shell (<code>desktop/</code>)</a></li>
-<li><a href="#orgd7dc35f">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
-<li><a href="#org1e69484">5 · Front page</a></li>
+<li><a href="#orgb5d1706">1 · Server: desktop mode with two ports</a></li>
+<li><a href="#orga0e65cb">2 · Build chain: uberjar + vendored binaries</a></li>
+<li><a href="#org64b5ff1">3 · Electron shell (<code>desktop/</code>)</a></li>
+<li><a href="#org648d584">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
+<li><a href="#orgc397f32">5 · Front page</a></li>
 </ul>
 </li>
-<li><a href="#org032b83f">Sequence diagram</a></li>
-<li><a href="#orgf9e4cac">Risks and open questions</a></li>
-<li><a href="#orge0be638">Verification</a></li>
+<li><a href="#org51f20be">Sequence diagram</a></li>
+<li><a href="#orgc4d1853">Risks and open questions</a></li>
+<li><a href="#org353aaa7">Verification</a></li>
+<li><a href="#org850b3cf">Implementation notes</a></li>
+<li><a href="#orged32ff9">Links</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgd8dbda7" class="outline-2">
-<h2 id="orgd8dbda7">Goal</h2>
-<div class="outline-text-2" id="text-orgd8dbda7">
+<div id="outline-container-org759f3e7" class="outline-2">
+<h2 id="org759f3e7">Goal</h2>
+<div class="outline-text-2" id="text-org759f3e7">
 <p>
 Turn goob-toob into a double-click desktop app for Windows (primary audience)
 and Linux. An Electron shell owns the Clojure server, a <b>vendored cloudflared</b>
@@ -60,9 +62,9 @@ published to srht.site and linked from the repo front page.
 </p>
 </div>
 </div>
-<div id="outline-container-org532bc06" class="outline-2">
-<h2 id="org532bc06">Findings</h2>
-<div class="outline-text-2" id="text-org532bc06">
+<div id="outline-container-orgf9ef37f" class="outline-2">
+<h2 id="orgf9ef37f">Findings</h2>
+<div class="outline-text-2" id="text-orgf9ef37f">
 <ul class="org-ul">
 <li>Boot today: <code>clojure -M:dev -m goob-toob.core</code> (<code>container/Containerfile:26</code>);
 <code>config/load!</code> <b>requires</b> <code>STORAGE_DIR</code> and <code>ADMIN_PASSWORD</code>
@@ -103,13 +105,13 @@ pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org2eed929" class="outline-2">
-<h2 id="org2eed929">Plan</h2>
-<div class="outline-text-2" id="text-org2eed929">
+<div id="outline-container-orgd2375cd" class="outline-2">
+<h2 id="orgd2375cd">Plan</h2>
+<div class="outline-text-2" id="text-orgd2375cd">
 </div>
-<div id="outline-container-org43ba6c2" class="outline-3">
-<h3 id="org43ba6c2">1 · Server: desktop mode with two ports</h3>
-<div class="outline-text-3" id="text-org43ba6c2">
+<div id="outline-container-orgb5d1706" class="outline-3">
+<h3 id="orgb5d1706">1 · Server: desktop mode with two ports</h3>
+<div class="outline-text-3" id="text-orgb5d1706">
 <ol class="org-ol">
 <li><code>src/clj/goob_toob/config.clj</code>: <code>ADMIN_PASSWORD</code> becomes optional.
 Mode = <code>:desktop</code> when unset, <code>:container</code> when set (current behavior).
@@ -134,9 +136,9 @@ welcome said <code>:is-host</code> (it would 404 on the public port).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orged5d4b5" class="outline-3">
-<h3 id="orged5d4b5">2 · Build chain: uberjar + vendored binaries</h3>
-<div class="outline-text-3" id="text-orged5d4b5">
+<div id="outline-container-orga0e65cb" class="outline-3">
+<h3 id="orga0e65cb">2 · Build chain: uberjar + vendored binaries</h3>
+<div class="outline-text-3" id="text-orga0e65cb">
 <ol class="org-ol">
 <li><code>deps.edn</code>: add <code>:build</code> alias (<code>io.github.clojure/tools.build</code>) +
 <code>build.clj</code> → <code>target/goob-toob.jar</code> uberjar.</li>
@@ -149,9 +151,9 @@ local dev loop).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org799c7a7" class="outline-3">
-<h3 id="org799c7a7">3 · Electron shell (<code>desktop/</code>)</h3>
-<div class="outline-text-3" id="text-org799c7a7">
+<div id="outline-container-org64b5ff1" class="outline-3">
+<h3 id="org64b5ff1">3 · Electron shell (<code>desktop/</code>)</h3>
+<div class="outline-text-3" id="text-org64b5ff1">
 <ol class="org-ol">
 <li><code>desktop/package.json</code> (electron, electron-builder, electron-store),
 <code>main.js</code>, <code>preload.js</code>, icon. Boot sequence:
@@ -180,9 +182,9 @@ ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orgd7dc35f" class="outline-3">
-<h3 id="orgd7dc35f">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
-<div class="outline-text-3" id="text-orgd7dc35f">
+<div id="outline-container-org648d584" class="outline-3">
+<h3 id="org648d584">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
+<div class="outline-text-3" id="text-org648d584">
 <ol class="org-ol">
 <li>fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
 Tasks: uberjar + <code>shadow-cljs release client</code> → vendor downloads (both
@@ -199,9 +201,9 @@ Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</co
 </ol>
 </div>
 </div>
-<div id="outline-container-org1e69484" class="outline-3">
-<h3 id="org1e69484">5 · Front page</h3>
-<div class="outline-text-3" id="text-org1e69484">
+<div id="outline-container-orgc397f32" class="outline-3">
+<h3 id="orgc397f32">5 · Front page</h3>
+<div class="outline-text-3" id="text-orgc397f32">
 <ol class="org-ol">
 <li><code>README.md</code>: a <b>Download</b> section at the very top — <b>Windows</b> →
 <code>goob-toob-setup.exe</code>, <b>Linux</b> → <code>goob-toob.AppImage</code>, each a direct
@@ -213,9 +215,9 @@ folks. <code>README.org</code>: desktop quickstart section.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-org032b83f" class="outline-2">
-<h2 id="org032b83f">Sequence diagram</h2>
-<div class="outline-text-2" id="text-org032b83f">
+<div id="outline-container-org51f20be" class="outline-2">
+<h2 id="org51f20be">Sequence diagram</h2>
+<div class="outline-text-2" id="text-org51f20be">
 <style>
 .opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
 .opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -419,9 +421,9 @@ orgPlanSequence('journey', {
 </script>
 </div>
 </div>
-<div id="outline-container-orgf9e4cac" class="outline-2">
-<h2 id="orgf9e4cac">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgf9e4cac">
+<div id="outline-container-orgc4d1853" class="outline-2">
+<h2 id="orgc4d1853">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orgc4d1853">
 <ul class="org-ul">
 <li><b>srht.site budget</b>: 1 GiB per site shared with the plans site. Publishing
 only the AppImage + NSIS installer (the zip would duplicate the installer's
@@ -452,9 +454,9 @@ behavior, byte-for-byte.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orge0be638" class="outline-2">
-<h2 id="orge0be638">Verification</h2>
-<div class="outline-text-2" id="text-orge0be638">
+<div id="outline-container-org353aaa7" class="outline-2">
+<h2 id="org353aaa7">Verification</h2>
+<div class="outline-text-2" id="text-org353aaa7">
 <ol class="org-ol">
 <li><code>make test</code> — new route tests: <code>app {:admin? false}</code> → <code>/api/admin/videos</code>
 404, <code>/login</code> 404; <code>app {:admin? true}</code> + <code>wrap-desktop-admin</code> → <code>/me</code>
@@ -476,12 +478,53 @@ mode) still logs in with <code>ADMIN_PASSWORD</code> as before.</li>
 </ol>
 </div>
 </div>
+<div id="outline-container-org850b3cf" class="outline-2">
+<h2 id="org850b3cf">Implementation notes</h2>
+<div class="outline-text-2" id="text-org850b3cf">
+<p>
+Shipped same day. Deviations and found issues:
+</p>
+
+<ul class="org-ul">
+<li><code>app</code> takes <code>{:keys [admin? login?]}</code>: <code>login?</code> is container-mode only.
+First cut left <code>/api/login</code> on the desktop admin port, where it 500'd
+against the nil password — now the desktop admin port has no login surface
+at all (covered by <code>routes-test/desktop-admin-port-is-always-admin</code>).</li>
+<li><code>ring-mock</code> is Clojars-only and the build container resolves from central,
+so <code>routes_test.clj</code> hand-rolls request maps instead.</li>
+<li><code>transcode.clj</code> derives <code>ffprobe</code> from <code>FFMPEG_PATH</code> (sibling file,
+<code>ffmpeg(.exe)? → ffprobe$1</code>) and skips <code>nice</code> on Windows.</li>
+<li><code>watch.cljs</code> keeps the <code>admin?</code> link hidden unless <code>welcome</code> says
+<code>:is-host</code>; <code>admin.cljs</code> hides the logout button inside the desktop shell
+(no logout on the admin port) and shows the sharing card instead.</li>
+<li>Room links inside the desktop shell use the tunnel URL (<code>public-base</code>
+atom, refreshed via a <code>goob:tunnel</code> DOM event) so "copy link" hands out
+something friends can actually open.</li>
+<li>electron-builder 25 rejects a per-target <code>zip</code> artifactName sub-config;
+the CI zip fallback globs <code>*-win-x64.zip</code> instead.</li>
+<li>Verified locally: 13 tests / 53 assertions; two-port invariants live
+(public 404s <code>/api/admin/*</code>, admin port always-admin); live quick tunnel
+404s the admin API; packaged AppImage (280 MB) boots the bundled
+JRE+jar+ffmpeg+cloudflared end-to-end incl. tunnel URL in the sharing
+card; container mode login regression green. Windows NSIS path is
+wine-dependent and gets its first real run in CI.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orged32ff9" class="outline-2">
+<h2 id="orged32ff9">Links</h2>
+<div class="outline-text-2" id="text-orged32ff9">
+<ul class="org-ul">
+<li><a href="index.html">All plans</a></li>
+<li><a href="https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans">Plans directory</a></li>
+</ul>
+</div>
+</div>
 </div>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-12 Mon 18:52</p>
-<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+<p class="date">Created: 2026-10-12 Mon 19:21</p>
 </div>
 </body>
 </html>
