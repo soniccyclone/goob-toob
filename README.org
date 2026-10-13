@@ -29,7 +29,38 @@ password, no terminal. The admin console listens on loopback only; the public
 tunnel has no admin surface at all (see
 [[file:plans/2026-10-12-desktop-distribution-releases.org][the distribution plan]]).
 
-Windows SmartScreen will warn (no code signing): "More info → Run anyway".
+** Windows: install & first party
+1. Download =goob-toob-win-x64-setup.exe= (~250 MB; carries its own JRE,
+   ffmpeg, and cloudflared — nothing else to install).
+2. Run it. SmartScreen says "Windows protected your PC" because the
+   installer isn't code-signed: *More info → Run anyway*. Installs per-user
+   (no admin prompt), adds a Start-menu shortcut.
+3. First launch asks /where should goob-toob keep your videos?/ — pick or
+   create your library folder. Uploads, the database, and the generated
+   streams all live under that one folder.
+4. The admin console opens; the *sharing* card shows the public link once
+   the tunnel dials (seconds). *copy link* → that's the party entrance;
+   friends open it in any browser and install nothing.
+5. Upload by dragging files onto the drop zone. Wait for each status to hit
+   *ready* (ffmpeg builds a multi-bitrate stream per file, one at a time —
+   transcode before the party).
+6. *make room* on a ready video: the room link (already your public link)
+   lands on the clipboard. Toss it to friends.
+7. Open the room link yourself to host: play/pause/seek drive everyone; the
+   video's native play button starts playback. Tick /co-hosts can drive/ if
+   friends should steer too.
+
+Good to know: the public link is a Cloudflare /quick/ tunnel — ephemeral, so
+every launch gets a new URL (re-copy from the sharing card after a restart).
+Nothing is exposed on your network: the tunnel dials out and the admin
+console is loopback-only, which is why there's no password. The log lives at
+=%APPDATA%\goob-toob-desktop\server.log=; the storage folder can be changed
+anytime with the *change* button (the server restarts against the new
+folder). Uninstall from Settings → Apps.
+
+** Linux
+Download the AppImage, =chmod +x=, run it — same folder picker and sharing
+card; steps 3–7 above apply.
 
 Building installers from source: =make uberjar && make vendor=, then
 =cd desktop && npm install && npx electron-builder --linux AppImage=
