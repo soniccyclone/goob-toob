@@ -46,14 +46,20 @@
 (defn logout [{:keys [session]}]
   (-> (response {:ok true}) (assoc :session (dissoc session :admin))))
 
-(defn whoami [{:keys [session]}]
-  (response {:admin (boolean (:admin session))}))
+(defn whoami [req]
+  (response {:admin (boolean (or (:goob/admin req) (get-in req [:session :admin])))}))
 
 (defn require-admin [handler]
   (fn [req]
-    (if (get-in req [:session :admin])
+    (if (or (:goob/admin req) (get-in req [:session :admin]))
       (handler req)
       (-> (response {:error "admin only"}) (status 401)))))
+
+(defn wrap-desktop-admin
+  "Wraps the admin-port handler (desktop mode). The port binds 127.0.0.1 and
+  is never tunneled, so every request on it is the machine's owner."
+  [handler]
+  (fn [req] (handler (assoc req :goob/admin true))))
 
 ;; ---- videos / rooms --------------------------------------------------------
 
@@ -187,30 +193,35 @@
              #(wrap-session % {:store session-store})])
 (def json-body #(wrap-json-params % {:key-fn keyword}))
 
-(defn app []
-  (let [router
+(defn app [{:keys [admin? login?]}]
+  "admin? false = the public port: no login, no admin API, no admin SPA —
+  whatever the tunnel can reach. admin? true = full app (container port or
+  desktop loopback admin port). login? true = container mode only; the
+  desktop admin port has no password to log in with."
+  (let [api (cond-> ["/api" {:middleware [json-body wrap-json-response]}]
+              true   (into [["/me" {:get whoami}]
+                            ["/videos" {:get public-videos}]
+                            ["/rooms" {:get public-rooms}]])
+              login? (into [["/login" {:post login}]
+                            ["/logout" {:post logout}]])
+              admin? (into [["/admin" {:middleware [require-admin]}
+                             ["/me" {:get whoami}]
+                             ["/videos" {:get admin-videos}]
+                             ["/videos/:id" {:delete delete-video}]
+                             ["/upload" {:post upload
+                                         :middleware [wrap-multipart-params wrap-keyword-params]}]
+                             ["/info" {:get storage-info}]
+                             ["/rooms" {:get admin-rooms :post create-room}]
+                             ["/rooms/:id" {:delete delete-room :patch update-room}]]]))
+        router
         (ring/router
-         ["" {:middleware common}
-         ["/api" {:middleware [json-body wrap-json-response]}
-          ["/login" {:post login}]
-          ["/logout" {:post logout}]
-          ["/me" {:get whoami}]
-          ["/videos" {:get public-videos}]
-          ["/rooms" {:get public-rooms}]
-          ["/admin" {:middleware [require-admin]}
-           ["/me" {:get whoami}]
-           ["/videos" {:get admin-videos}]
-           ["/videos/:id" {:delete delete-video}]
-           ["/upload" {:post upload
-                       :middleware [wrap-multipart-params wrap-keyword-params]}]
-           ["/info" {:get storage-info}]
-           ["/rooms" {:get admin-rooms :post create-room}]
-           ["/rooms/:id" {:delete delete-room :patch update-room}]]]
-         ["/dash/:video-id/*path" {:get dash-file}]
-         ["/ws/room/:token" {:get ws/endpoint}]
-         ["/" {:get spa}]
-         ["/watch/*" {:get spa}]
-         ["/admin" {:get spa}]])
+         (cond-> ["" {:middleware common}
+                  api
+                  ["/dash/:video-id/*path" {:get dash-file}]
+                  ["/ws/room/:token" {:get ws/endpoint}]
+                  ["/" {:get spa}]
+                  ["/watch/*" {:get spa}]]
+           admin? (conj ["/admin" {:get spa}])))
         not-found (ring/routes
                    (wrap-resource (constantly nil) "public")
                    (constantly (-> (response "not found") (status 404))))]

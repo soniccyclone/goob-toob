@@ -1,6 +1,8 @@
 (ns goob-toob.config
-  "Env-driven config. STORAGE_DIR and ADMIN_PASSWORD are required; the app
-  refuses to start without them so nobody runs it naked by accident."
+  "Env-driven config. STORAGE_DIR is always required. ADMIN_PASSWORD selects
+  the mode: set = container mode (single port, login-gated admin); unset =
+  desktop mode (public port without admin routes + loopback admin port that
+  is always admin). The app refuses to start without STORAGE_DIR either way."
   (:require [clojure.string :as str]
             [clojure.java.io :as io]))
 
@@ -25,13 +27,15 @@
         pass    (System/getenv "ADMIN_PASSWORD")]
     (when (str/blank? storage)
       (throw (ex-info "STORAGE_DIR is required: point it at your video storage location" {})))
-    (when (str/blank? pass)
-      (throw (ex-info "ADMIN_PASSWORD is required" {})))
-    (let [cfg {:storage-dir  storage
+    (let [desktop? (str/blank? pass)
+          cfg {:storage-dir  storage
                :db-path      (or (System/getenv "DB_PATH")
                                  (str storage "/goob-toob.db"))
+               :mode         (if desktop? :desktop :container)
                :admin-pass   pass
                :port         (env-int "PORT" 8080)
+               :admin-port   (env-int "GOOB_ADMIN_PORT" 8081)
+               :ffmpeg-path  (or (System/getenv "FFMPEG_PATH") "ffmpeg")
                :workers      (env-int "TRANSCODE_WORKERS" 1)
                :keep-original (env-bool "KEEP_ORIGINAL" true)
                :ladder       default-ladder}]

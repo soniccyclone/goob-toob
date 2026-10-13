@@ -41,7 +41,7 @@
             nick    (or (some-> (get-in req [:params :nick])
                                 str/trim not-empty (#(apply str (take 32 %))))
                         "guest")
-            admin?  (boolean (get-in req [:session :admin]))
+            admin?  (boolean (or (:goob/admin req) (get-in req [:session :admin])))
             room-id (:id room-row)
             video   (videos/get-by-id (:video-id room-row))]
         (wa/go-websocket [in out]

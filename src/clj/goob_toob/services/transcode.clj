@@ -13,11 +13,22 @@
 
 (defonce control (atom nil)) ; {:jobs chan}
 
+(def windows?
+  (.contains (str/lower-case (System/getProperty "os.name")) "windows"))
+
+;; ffmpeg lives on PATH by default; the desktop bundle points FFMPEG_PATH at
+;; its vendored copy. ffprobe is assumed to sit next to it.
+(defn- ffmpeg-bin [] (:ffmpeg-path (config/cfg)))
+(defn- ffprobe-bin []
+  (let [p (ffmpeg-bin)]
+    (if (= p "ffmpeg") "ffprobe"
+        (str/replace p #"ffmpeg(\.exe)?$" "ffprobe$1"))))
+
 (defn- read-all [^java.io.InputStream is]
   (String. (.readAllBytes is)))
 
 (defn ffprobe [^java.io.File f]
-  (let [p (-> (ProcessBuilder. ["ffprobe" "-v" "error" "-print_format" "json"
+  (let [p (-> (ProcessBuilder. [(ffprobe-bin) "-v" "error" "-print_format" "json"
                                 "-show_format" "-show_streams" (.getPath f)])
               .start)
         out (read-all (.getInputStream p))
@@ -51,7 +62,9 @@
         bitrates (mapcat (fn [i rung] [(str "-b:v:" i) (str (:v rung) "k")])
                          (range n) ladder)]
     (concat
-     ["nice" "-n" "10" "ffmpeg" "-hide_banner" "-nostdin" "-y" "-i" (.getPath in)]
+     ;; nice is Unix-only; on Windows just run ffmpeg directly
+     (when-not windows? ["nice" "-n" "10"])
+     [(ffmpeg-bin) "-hide_banner" "-nostdin" "-y" "-i" (.getPath in)]
      ["-filter_complex" (str split scales)]
      maps-v maps-a
      ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p"

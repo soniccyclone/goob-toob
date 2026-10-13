@@ -19,4 +19,6 @@
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
          :main-opts   ["-m" "cognitect.test-runner" "-d" "test/clj"]}
-  :run  {:main-opts ["-m" "goob-toob.core"]}}}
+  :run  {:main-opts ["-m" "goob-toob.core"]}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.7"}}
+          :ns-default build}}}

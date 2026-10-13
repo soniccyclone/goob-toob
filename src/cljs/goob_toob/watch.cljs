@@ -106,7 +106,7 @@
     sel))
 
 (defn- connect! [st token refs]
-  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs]} refs
+  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs admin-link]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
                  "?nick=" (js/encodeURIComponent (.-nick st)))]
@@ -116,6 +116,8 @@
         (case (:type msg)
           "welcome"
           (do (set! (.-ishost st) (:is-host msg))
+              (when (:is-host msg)
+                (set! (.-display (.-style admin-link)) ""))
               (set! (.-cancontrol st) (boolean (:can-control msg)))
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
@@ -158,7 +160,7 @@
         stage-wrap (h :div.stage-wrap video)
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
         admin-link (h :a {:href "/admin" :title "admin console"
-                          :style "margin-left:auto;font-size:0.8rem;opacity:0.7"}
+                          :style "margin-left:auto;font-size:0.8rem;opacity:0.7;display:none"}
                       "admin?")
         play-btn (h :button.btn "▶ play")
         pause-btn (h :button.btn.aqua "⏸ pause")
@@ -237,7 +239,7 @@
                        (h :div.row {}
                           chat-input
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
-     :title-el title-el :seek seek :res-slot res-slot
+     :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
      :chat-log chat-log :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs}))
 
