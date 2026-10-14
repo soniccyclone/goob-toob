@@ -98,6 +98,7 @@ jobs:
           mv dist/goob-toob.AppImage dist/goob-toob-linux-x86_64.AppImage
           mv dist/goob-toob-setup.exe dist/goob-toob-win-x64-setup.exe
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "goob-toob $GITHUB_REF_NAME" \
             --notes "Desktop installers for goob-toob $GITHUB_REF_NAME. Windows: SmartScreen will squint (no code signing) — 'More info' → 'Run anyway'." \
             dist/goob-toob-linux-x86_64.AppImage \
