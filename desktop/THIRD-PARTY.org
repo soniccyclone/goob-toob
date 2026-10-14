@@ -1,5 +1,5 @@
 #+TITLE: goob-toob desktop — third-party components
-goob-toob itself is AGPL-3.0-or-later; source: https://git.sr.ht/~nathanb/goob-toob
+goob-toob itself is AGPL-3.0-or-later; source: https://github.com/soniccyclone/goob-toob
 
 This bundle redistributes:
 

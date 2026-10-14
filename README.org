@@ -1,7 +1,7 @@
 #+TITLE: goob-toob
 #+AUTHOR: Nathan Barlow
 
-[[https://builds.sr.ht/~nathanb/goob-toob][https://builds.sr.ht/~nathanb/goob-toob.svg]]
+[[https://github.com/soniccyclone/goob-toob/actions/workflows/ci.yml][https://github.com/soniccyclone/goob-toob/actions/workflows/ci.yml/badge.svg]]
 
 Self-hosted watch-together video app. Clojure server, ClojureScript browser,
 ffmpeg -> MPEG-DASH, one slime-green waterpark theme. You run it on your box,
@@ -10,19 +10,19 @@ sync. You drive playback; viewers pick auto (best sync) or a locked
 resolution and catch themselves up when their internet wobbles.
 
 * Links
-| [[https://git.sr.ht/~nathanb/goob-toob][repo]]        | sourcehut home: summary, tree, log, refs |
-| [[https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans][plans]]       | dated plan files (+ rendered html snapshots) |
+| [[https://github.com/soniccyclone/goob-toob][repo]]        | GitHub home: summary, tree, log, refs |
+| [[https://github.com/soniccyclone/goob-toob/tree/main/plans][plans]]       | dated plan files (+ rendered html snapshots) |
 | [[https://nathanb.srht.site/goob-toob-plans/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
-| [[https://nathanb.srht.site/goob-toob-releases/][releases]]    | desktop installers (Windows + Linux)                                   |
-| [[https://builds.sr.ht/~nathanb/goob-toob][builds]]      | CI: runs on every master push, republishes the plans site |
+| [[https://github.com/soniccyclone/goob-toob/releases][releases]]    | desktop installers (Windows + Linux)                                   |
+| [[https://github.com/soniccyclone/goob-toob/actions][builds]]      | CI: runs on every push; a v* tag cuts a release |
 
-Note: git.sr.ht only renders *markdown* readmes on its summary page (see
-=README.md= — it's a stub pointing here). The tree view shows =.org= files as
+Note: the markdown front page (=README.md=) is the short pitch + Windows
+walkthrough; this org file is the full manual. GitHub renders =.org= as
 plain text, so for pretty org reading use the plans site above.
 
 * Desktop app
 Double-click installers for Windows and Linux:
-[[https://nathanb.srht.site/goob-toob-releases/][releases page]]. The app bundles its own JRE, ffmpeg, and cloudflared —
+[[https://github.com/soniccyclone/goob-toob/releases][releases page]]. The app bundles its own JRE, ffmpeg, and cloudflared —
 first run asks where your videos live, then the admin console opens with a
 *sharing* card: copy the public tunnel link and toss it to friends. No
 password, no terminal. The admin console listens on loopback only; the public
@@ -65,7 +65,7 @@ card; steps 3–7 above apply.
 Building installers from source: =make uberjar && make vendor=, then
 =cd desktop && npm install && npx electron-builder --linux AppImage=
 (Windows targets need wine for the NSIS installer; CI does it for you via
-=.builds/release.yml= on a tag).
+=.github/workflows/release.yml= on a tag).
 
 * Quickstart (podman)
 #+begin_src sh
@@ -173,8 +173,8 @@ keeps that option open.
 
 * Plans site
 Plans live in =plans/= (date-prefixed =.org= + rendered =.html= snapshot; see
-the index in =plans/README.org=). Pushing master runs =.build.yml= on
-builds.sr.ht, which re-renders every =plans/*.org= with the org-plan skill's
+the index in =plans/README.org=). Pushing main runs the =plans= job in
+=.github/workflows/ci.yml=, which re-renders every =plans/*.org= with the org-plan skill's
 bigblow theme (vendored into =site/themes/=), builds an index page, vendors
 the theme's CDN assets (srht.site's CSP is 'self'-only), and publishes to
 [[https://nathanb.srht.site/goob-toob-plans/]]. Build it locally with

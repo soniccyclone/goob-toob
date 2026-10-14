@@ -1,0 +1,106 @@
+name: release
+
+# Push a v* tag to cut a release: builds the Linux AppImage + Windows NSIS
+# installer and attaches both to a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  jar:
+    # Platform-independent jar + CLJS, built once and shared with both packagers.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | sudo bash -
+      - run: npm ci --no-audit --no-fund
+      - run: |
+          npx shadow-cljs release client
+          VERSION=$(git describe --tags) clojure -T:build uberjar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: target/goob-toob.jar
+
+  linux:
+    needs: jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target
+      - run: sh scripts/fetch-vendor.sh linux
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package AppImage
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --linux AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: desktop/dist/goob-toob.AppImage
+
+  windows:
+    needs: jar
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target
+      - shell: bash
+        run: sh scripts/fetch-vendor.sh windows
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package NSIS installer
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: desktop/dist/goob-toob-setup.exe
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist
+      - name: Publish GitHub Release
+        run: |
+          mv dist/goob-toob.AppImage dist/goob-toob-linux-x86_64.AppImage
+          mv dist/goob-toob-setup.exe dist/goob-toob-win-x64-setup.exe
+          gh release create "$GITHUB_REF_NAME" \
+            --title "goob-toob $GITHUB_REF_NAME" \
+            --notes "Desktop installers for goob-toob $GITHUB_REF_NAME. Windows: SmartScreen will squint (no code signing) — 'More info' → 'Run anyway'." \
+            dist/goob-toob-linux-x86_64.AppImage \
+            dist/goob-toob-win-x64-setup.exe
+        env:
+          GH_TOKEN: ${{ github.token }}

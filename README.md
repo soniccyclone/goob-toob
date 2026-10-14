@@ -1,6 +1,6 @@
 # goob-toob
 
-[![builds.sr.ht status](https://builds.sr.ht/~nathanb/goob-toob.svg)](https://builds.sr.ht/~nathanb/goob-toob)
+[![ci](https://github.com/soniccyclone/goob-toob/actions/workflows/ci.yml/badge.svg)](https://github.com/soniccyclone/goob-toob/actions/workflows/ci.yml)
 
 Self-hosted watch-together video app. Clojure server, ClojureScript browser,
 ffmpeg → MPEG-DASH, one slime-green waterpark theme. You run it on your box,
@@ -10,9 +10,9 @@ and catch themselves up when their internet wobbles.
 
 ## Download
 
-**[goob-toob-win-x64-setup.exe](https://nathanb.srht.site/goob-toob-releases/goob-toob-win-x64-setup.exe)** — Windows installer
+**[goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)** — Windows installer
 &nbsp;&nbsp;·&nbsp;&nbsp;
-**[goob-toob-linux-x86_64.AppImage](https://nathanb.srht.site/goob-toob-releases/goob-toob-linux-x86_64.AppImage)** — Linux
+**[goob-toob-linux-x86_64.AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage)** — Linux
 
 The desktop app bundles everything (JRE, ffmpeg, cloudflared): install it, pick
 a video folder, and it hands you a public link to toss at your friends. No
@@ -24,7 +24,7 @@ Prefer a container? `make image && make run` below.
 ## Windows: install & first party
 
 1. **Download**
-   [goob-toob-win-x64-setup.exe](https://nathanb.srht.site/goob-toob-releases/goob-toob-win-x64-setup.exe)
+   [goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)
    (~250 MB — it carries its own JRE, ffmpeg, and cloudflared, so there is
    nothing else to install).
 2. **Run it.** SmartScreen will say *"Windows protected your PC"* because the
@@ -62,21 +62,23 @@ Good to know:
 ## Linux
 
 Download the
-[AppImage](https://nathanb.srht.site/goob-toob-releases/goob-toob-linux-x86_64.AppImage),
+[AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage),
 `chmod +x` it, and run it — same first-run folder picker and sharing card as
 Windows, steps 3–7 above apply.
 
 ## Links
 
-- **[Full docs: `README.org`](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/README.org)** —
-  quickstart, env vars, sharing, sync design, layout. sr.ht only renders
-  markdown readmes, so the real docs live in org.
+- **[Full docs: `README.org`](https://github.com/soniccyclone/goob-toob/blob/main/README.org)** —
+  quickstart, env vars, sharing, sync design, layout. The markdown you're
+  reading is the short version; the org file is the real manual.
 - **[Plans site](https://nathanb.srht.site/goob-toob-plans/)** — every plan
   rendered, newest first, with status stamps.
-- **[Plans directory](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans)** —
+- **[Plans directory](https://github.com/soniccyclone/goob-toob/tree/main/plans)** —
   the dated `.org` sources + plan-day html snapshots.
-- **[Builds](https://builds.sr.ht/~nathanb/goob-toob)** — pushing master
-  republishes the plans site.
+- **[Releases](https://github.com/soniccyclone/goob-toob/releases)** —
+  desktop installers, newest first.
+- **[Actions](https://github.com/soniccyclone/goob-toob/actions)** — CI on
+  every push; pushing a `v*` tag cuts a release.
 
 ## Quickstart
 
@@ -91,8 +93,8 @@ tunnel, no account needed) — details in README.org.
 
 ## License
 
-Copyright (C) 2026 Nathan Barlow — **AGPL-3.0-or-later** ([LICENSE](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/LICENSE)).
+Copyright (C) 2026 Nathan Barlow — **AGPL-3.0-or-later** ([LICENSE](https://github.com/soniccyclone/goob-toob/blob/main/LICENSE)).
 Free to use, modify, and host; modified versions served over a network must
 publish their source. Closed-source / commercial use = dual-license, [talk to
 me](mailto:nathanjbarlow@gmail.com). Contributions are subject to the CLA in
-[CONTRIBUTING.org](https://git.sr.ht/~nathanb/goob-toob/tree/master/item/CONTRIBUTING.org).
+[CONTRIBUTING.org](https://github.com/soniccyclone/goob-toob/blob/main/CONTRIBUTING.org).

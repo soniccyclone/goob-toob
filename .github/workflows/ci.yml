@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe stamps the version into the jar
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Clojure
+        run: |
+          curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | sudo bash -
+      - run: npm ci --no-audit --no-fund
+      - name: Tests
+        run: clojure -M:test
+      - name: Build client + uberjar (smoke)
+        run: |
+          npx shadow-cljs release client
+          VERSION=$(git describe --tags) clojure -T:build uberjar
+
+  plans:
+    # Re-render the plans site and publish to srht.site. Needs an SRHT_TOKEN
+    # secret (sourcehut OAuth token with pages scope); skipped without it.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox-noarch
+      - name: Install htmlize
+        run: emacs --batch --eval "(progn (require 'package) (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) (package-initialize) (package-refresh-contents) (package-install 'htmlize))"
+      - name: Build site
+        run: sh scripts/build-plans-site.sh
+      - name: Publish to srht.site
+        if: ${{ secrets.SRHT_TOKEN != '' }}
+        env:
+          SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
+        run: |
+          (cd gen/www && tar -cvz . > "$GITHUB_WORKSPACE/site.tar.gz")
+          curl --fail -X PUT \
+            -H "Authorization: OAuth $SRHT_TOKEN" \
+            -H "Content-Directory: /goob-toob-plans" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @site.tar.gz \
+            https://pages.sr.ht/sites/nathanb.srht.site
