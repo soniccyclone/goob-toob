@@ -34,7 +34,7 @@
       ]
     },
     "win": {
-      "target": ["nsis", "zip"],
+      "target": ["nsis", "zip", "portable"],
       "icon": "icon.png",
       "extraResources": [
         { "from": "../vendor/windows/jre", "to": "jre" },
@@ -46,6 +46,9 @@
     "nsis": {
       "oneClick": true,
       "artifactName": "goob-toob-setup.exe"
+    },
+    "portable": {
+      "artifactName": "goob-toob-win-x64-portable.exe"
     }
   }
 }

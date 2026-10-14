@@ -21,7 +21,8 @@ walkthrough; this org file is the full manual. GitHub renders =.org= as
 plain text, so for pretty org reading use the plans site above.
 
 * Desktop app
-Double-click installers for Windows and Linux:
+Double-click installers for Windows and Linux — plus a Windows portable exe
+(run it, no install) — on the
 [[https://github.com/soniccyclone/goob-toob/releases][releases page]]. The app bundles its own JRE, ffmpeg, and cloudflared —
 first run asks where your videos live, then the admin console opens with a
 *sharing* card: copy the public tunnel link and toss it to friends. No

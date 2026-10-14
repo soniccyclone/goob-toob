@@ -71,15 +71,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Package NSIS installer
+      - name: Package NSIS installer + portable exe
         working-directory: desktop
         run: |
           npm install --no-audit --no-fund
-          npx electron-builder --win nsis
+          npx electron-builder --win nsis portable
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: desktop/dist/goob-toob-setup.exe
+          path: |
+            desktop/dist/goob-toob-setup.exe
+            desktop/dist/goob-toob-win-x64-portable.exe
 
   release:
     needs: [linux, windows]
@@ -100,8 +102,9 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "goob-toob $GITHUB_REF_NAME" \
-            --notes "Desktop installers for goob-toob $GITHUB_REF_NAME. Windows: SmartScreen will squint (no code signing) — 'More info' → 'Run anyway'." \
+            --notes "Desktop builds for goob-toob $GITHUB_REF_NAME. Windows: pick the setup installer or the portable exe (just run it). SmartScreen will squint at both (no code signing) — 'More info' → 'Run anyway'." \
             dist/goob-toob-linux-x86_64.AppImage \
-            dist/goob-toob-win-x64-setup.exe
+            dist/goob-toob-win-x64-setup.exe \
+            dist/goob-toob-win-x64-portable.exe
         env:
           GH_TOKEN: ${{ github.token }}

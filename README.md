@@ -12,6 +12,8 @@ and catch themselves up when their internet wobbles.
 
 **[goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)** — Windows installer
 &nbsp;&nbsp;·&nbsp;&nbsp;
+**[goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)** — Windows, no install: just run it
+&nbsp;&nbsp;·&nbsp;&nbsp;
 **[goob-toob-linux-x86_64.AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage)** — Linux
 
 The desktop app bundles everything (JRE, ffmpeg, cloudflared): install it, pick
@@ -26,7 +28,10 @@ Prefer a container? `make image && make run` below.
 1. **Download**
    [goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)
    (~250 MB — it carries its own JRE, ffmpeg, and cloudflared, so there is
-   nothing else to install).
+   nothing else to install). Prefer no install at all? Grab
+   [goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)
+   and just run it — same app, nothing written outside its own folder
+   except your videos and a small config in `%APPDATA%`.
 2. **Run it.** SmartScreen will say *"Windows protected your PC"* because the
    installer isn't code-signed: click **"More info" → "Run anyway"**. It
    installs per-user (no admin prompt) and adds a Start-menu shortcut.
