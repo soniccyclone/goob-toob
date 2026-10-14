@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-13 Tue 18:55 -->
+<!-- 2026-10-13 Tue 21:28 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</title>
@@ -30,27 +30,27 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org4968b75">Goal</a></li>
-<li><a href="#org5eec2f3">Findings</a></li>
-<li><a href="#org27e1ed4">Plan</a>
+<li><a href="#org9960b46">Goal</a></li>
+<li><a href="#org3f13e2e">Findings</a></li>
+<li><a href="#orge14c1da">Plan</a>
 <ul>
-<li><a href="#org447ee1c">1 · Server: desktop mode with two ports</a></li>
-<li><a href="#orgced2837">2 · Build chain: uberjar + vendored binaries</a></li>
-<li><a href="#org556331a">3 · Electron shell (<code>desktop/</code>)</a></li>
-<li><a href="#org2910b48">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
-<li><a href="#orge45c69f">5 · Front page</a></li>
+<li><a href="#org03b3b9f">1 · Server: desktop mode with two ports</a></li>
+<li><a href="#org1b0f05e">2 · Build chain: uberjar + vendored binaries</a></li>
+<li><a href="#orgad0ac3d">3 · Electron shell (<code>desktop/</code>)</a></li>
+<li><a href="#orgc389c22">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
+<li><a href="#org05276b1">5 · Front page</a></li>
 </ul>
 </li>
-<li><a href="#org3cdc2f6">Sequence diagram</a></li>
-<li><a href="#orgee7bf9d">Risks and open questions</a></li>
-<li><a href="#orgae49fb2">Verification</a></li>
-<li><a href="#org46fe2c8">Implementation notes</a></li>
+<li><a href="#orgcd588cd">Sequence diagram</a></li>
+<li><a href="#orga50fcbf">Risks and open questions</a></li>
+<li><a href="#org2091bbb">Verification</a></li>
+<li><a href="#orgd2b7df4">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org4968b75" class="outline-2">
-<h2 id="org4968b75">Goal</h2>
-<div class="outline-text-2" id="text-org4968b75">
+<div id="outline-container-org9960b46" class="outline-2">
+<h2 id="org9960b46">Goal</h2>
+<div class="outline-text-2" id="text-org9960b46">
 <p>
 Turn goob-toob into a double-click desktop app for Windows (primary audience)
 and Linux. An Electron shell owns the Clojure server, a <b>vendored cloudflared</b>
@@ -61,9 +61,9 @@ published to srht.site and linked from the repo front page.
 </p>
 </div>
 </div>
-<div id="outline-container-org5eec2f3" class="outline-2">
-<h2 id="org5eec2f3">Findings</h2>
-<div class="outline-text-2" id="text-org5eec2f3">
+<div id="outline-container-org3f13e2e" class="outline-2">
+<h2 id="org3f13e2e">Findings</h2>
+<div class="outline-text-2" id="text-org3f13e2e">
 <ul class="org-ul">
 <li>Boot today: <code>clojure -M:dev -m goob-toob.core</code> (<code>container/Containerfile:26</code>);
 <code>config/load!</code> <b>requires</b> <code>STORAGE_DIR</code> and <code>ADMIN_PASSWORD</code>
@@ -104,13 +104,13 @@ pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org27e1ed4" class="outline-2">
-<h2 id="org27e1ed4">Plan</h2>
-<div class="outline-text-2" id="text-org27e1ed4">
+<div id="outline-container-orge14c1da" class="outline-2">
+<h2 id="orge14c1da">Plan</h2>
+<div class="outline-text-2" id="text-orge14c1da">
 </div>
-<div id="outline-container-org447ee1c" class="outline-3">
-<h3 id="org447ee1c">1 · Server: desktop mode with two ports</h3>
-<div class="outline-text-3" id="text-org447ee1c">
+<div id="outline-container-org03b3b9f" class="outline-3">
+<h3 id="org03b3b9f">1 · Server: desktop mode with two ports</h3>
+<div class="outline-text-3" id="text-org03b3b9f">
 <ol class="org-ol">
 <li><code>src/clj/goob_toob/config.clj</code>: <code>ADMIN_PASSWORD</code> becomes optional.
 Mode = <code>:desktop</code> when unset, <code>:container</code> when set (current behavior).
@@ -135,9 +135,9 @@ welcome said <code>:is-host</code> (it would 404 on the public port).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orgced2837" class="outline-3">
-<h3 id="orgced2837">2 · Build chain: uberjar + vendored binaries</h3>
-<div class="outline-text-3" id="text-orgced2837">
+<div id="outline-container-org1b0f05e" class="outline-3">
+<h3 id="org1b0f05e">2 · Build chain: uberjar + vendored binaries</h3>
+<div class="outline-text-3" id="text-org1b0f05e">
 <ol class="org-ol">
 <li><code>deps.edn</code>: add <code>:build</code> alias (<code>io.github.clojure/tools.build</code>) +
 <code>build.clj</code> → <code>target/goob-toob.jar</code> uberjar.</li>
@@ -150,9 +150,9 @@ local dev loop).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org556331a" class="outline-3">
-<h3 id="org556331a">3 · Electron shell (<code>desktop/</code>)</h3>
-<div class="outline-text-3" id="text-org556331a">
+<div id="outline-container-orgad0ac3d" class="outline-3">
+<h3 id="orgad0ac3d">3 · Electron shell (<code>desktop/</code>)</h3>
+<div class="outline-text-3" id="text-orgad0ac3d">
 <ol class="org-ol">
 <li><code>desktop/package.json</code> (electron, electron-builder, electron-store),
 <code>main.js</code>, <code>preload.js</code>, icon. Boot sequence:
@@ -181,9 +181,9 @@ ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org2910b48" class="outline-3">
-<h3 id="org2910b48">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
-<div class="outline-text-3" id="text-org2910b48">
+<div id="outline-container-orgc389c22" class="outline-3">
+<h3 id="orgc389c22">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
+<div class="outline-text-3" id="text-orgc389c22">
 <ol class="org-ol">
 <li>fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
 Tasks: uberjar + <code>shadow-cljs release client</code> → vendor downloads (both
@@ -200,9 +200,9 @@ Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</co
 </ol>
 </div>
 </div>
-<div id="outline-container-orge45c69f" class="outline-3">
-<h3 id="orge45c69f">5 · Front page</h3>
-<div class="outline-text-3" id="text-orge45c69f">
+<div id="outline-container-org05276b1" class="outline-3">
+<h3 id="org05276b1">5 · Front page</h3>
+<div class="outline-text-3" id="text-org05276b1">
 <ol class="org-ol">
 <li><code>README.md</code>: a <b>Download</b> section at the very top — <b>Windows</b> →
 <code>goob-toob-setup.exe</code>, <b>Linux</b> → <code>goob-toob.AppImage</code>, each a direct
@@ -214,9 +214,9 @@ folks. <code>README.org</code>: desktop quickstart section.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-org3cdc2f6" class="outline-2">
-<h2 id="org3cdc2f6">Sequence diagram</h2>
-<div class="outline-text-2" id="text-org3cdc2f6">
+<div id="outline-container-orgcd588cd" class="outline-2">
+<h2 id="orgcd588cd">Sequence diagram</h2>
+<div class="outline-text-2" id="text-orgcd588cd">
 <style>
 .opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
 .opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -420,9 +420,9 @@ orgPlanSequence('journey', {
 </script>
 </div>
 </div>
-<div id="outline-container-orgee7bf9d" class="outline-2">
-<h2 id="orgee7bf9d">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgee7bf9d">
+<div id="outline-container-orga50fcbf" class="outline-2">
+<h2 id="orga50fcbf">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orga50fcbf">
 <ul class="org-ul">
 <li><b>srht.site budget</b>: 1 GiB per site shared with the plans site. Publishing
 only the AppImage + NSIS installer (the zip would duplicate the installer's
@@ -453,9 +453,9 @@ behavior, byte-for-byte.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgae49fb2" class="outline-2">
-<h2 id="orgae49fb2">Verification</h2>
-<div class="outline-text-2" id="text-orgae49fb2">
+<div id="outline-container-org2091bbb" class="outline-2">
+<h2 id="org2091bbb">Verification</h2>
+<div class="outline-text-2" id="text-org2091bbb">
 <ol class="org-ol">
 <li><code>make test</code> — new route tests: <code>app {:admin? false}</code> → <code>/api/admin/videos</code>
 404, <code>/login</code> 404; <code>app {:admin? true}</code> + <code>wrap-desktop-admin</code> → <code>/me</code>
@@ -477,9 +477,9 @@ mode) still logs in with <code>ADMIN_PASSWORD</code> as before.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org46fe2c8" class="outline-2">
-<h2 id="org46fe2c8">Implementation notes</h2>
-<div class="outline-text-2" id="text-org46fe2c8">
+<div id="outline-container-orgd2b7df4" class="outline-2">
+<h2 id="orgd2b7df4">Implementation notes</h2>
+<div class="outline-text-2" id="text-orgd2b7df4">
 <p>
 Shipped same day. Deviations and found issues:
 </p>
@@ -528,6 +528,13 @@ x265-10bit + E-AC-3 5.1 mkv (spinner, matching the report) and verified
 the fix yields AAC-LC stereo with standard channel configuration.
 Videos transcoded before the fix keep their bad audio track — delete and
 re-upload to re-transcode.</li>
+<li><b>v0.1.3</b>: the server now logs its version at boot (first line of
+<code>server.log</code>). The Windows logs proved the migration fix landed but could
+not distinguish v0.1.1 from v0.1.2 — no more guessing whether a user
+actually updated. <code>GOOB_VERSION</code> env (Electron passes <code>app.getVersion()</code>)
+wins, else the <code>goob-toob.version</code> resource stamped into the jar by
+<code>build.clj</code> (<code>VERSION</code> env or <code>git describe</code>), else <code>dev</code>. Gotcha:
+<code>b/write-file</code> pr-prints strings (writes them quoted) — use <code>spit</code>.</li>
 </ul>
 </div>
 </div>
@@ -535,7 +542,7 @@ re-upload to re-transcode.</li>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-13 Tue 18:55</p>
+<p class="date">Created: 2026-10-13 Tue 21:28</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
