@@ -2,8 +2,7 @@
 // cloudflared quick tunnel, then shows the admin console from the loopback
 // admin port. The public port is what the tunnel exposes; it has no admin
 // surface, so there is nothing to password-protect.
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
-const { spawn } = require('child_process');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
 const path = require('path');
@@ -164,6 +163,18 @@ ipcMain.handle('goob:pick-storage', async () => {
 });
 
 // ---- lifecycle -----------------------------------------------------------------
+// Devtools escape hatch for remote debugging (e.g. "the video just spins"):
+// F12 or Ctrl/Cmd+Shift+I toggles devtools on any window; GOOB_DEVTOOLS=1
+// auto-opens them on load.
+app.on('web-contents-created', (e, wc) => {
+  if (process.env.GOOB_DEVTOOLS) wc.once('did-finish-load', () => wc.openDevTools({ mode: 'detach' }));
+  wc.on('before-input-event', (ev, input) => {
+    if (input.type === 'keyDown' &&
+        (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')))
+      wc.toggleDevTools();
+  });
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
