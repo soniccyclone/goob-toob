@@ -118,6 +118,31 @@
                :free-mb (storage/free-space-mb)
                :workers (:workers cfg)})))
 
+;; ---- client playback diagnostics ---------------------------------------------
+;; The watch page POSTs dash.js/video faults and stall reports here so that
+;; server.log holds what the browser actually saw — the user sends the log
+;; file, no devtools required. Rate-limited per room token (public endpoint).
+
+(def clientlog-hits (atom {})) ;; token -> [count window-start-ms]
+
+(defn- clip [s n] (subs s 0 (min n (count s))))
+
+(defn- clientlog-allow? [tok now]
+  (let [[n _] (get (swap! clientlog-hits
+                          (fn [m]
+                            (let [[n t] (get m tok [0 now])
+                                  fresh (>= (- now t) 60000)]
+                              (assoc m tok [(if fresh 1 (inc n)) (if fresh now t)]))))
+                   tok)]
+    (<= n 120)))
+
+(defn clientlog [{:keys [params]}]
+  (let [{:keys [token msg]} params
+        tok (clip (str token) 64)]
+    (when (and msg (clientlog-allow? tok (System/currentTimeMillis)))
+      (println "client" (clip tok 8) ":" (clip (str msg) 400)))
+    (response {:ok true})))
+
 ;; ---- DASH serving (with Range support) -------------------------------------
 
 (defn- content-type-for [^String name]
@@ -201,7 +226,8 @@
   (let [api (cond-> ["/api" {:middleware [json-body wrap-json-response]}]
               true   (into [["/me" {:get whoami}]
                             ["/videos" {:get public-videos}]
-                            ["/rooms" {:get public-rooms}]])
+                            ["/rooms" {:get public-rooms}]
+                             ["/clientlog" {:post clientlog}]])
               login? (into [["/login" {:post login}]
                             ["/logout" {:post logout}]])
               admin? (into [["/admin" {:middleware [require-admin]}

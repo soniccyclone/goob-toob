@@ -13,6 +13,28 @@
   ;; button supplies one. Swallow the rejection anyway (e.g. autoplay-blocked).
   (try (.catch (.play video) (fn [_] nil)) (catch js/Error _ nil)))
 
+(defn- log! [token ev data]
+  ;; Fire-and-forget playback diagnostics -> server.log (see routes/clientlog):
+  ;; the user just sends the log file, no devtools required.
+  (try
+    (-> (js/fetch "/api/clientlog"
+                  #js {:method "post"
+                       :headers #js {"Content-Type" "application/json"}
+                       :body (js/JSON.stringify
+                               #js {:token token :msg (str ev " " (pr-str data))})})
+        (.catch (fn [_] nil)))
+    (catch js/Error _ nil)))
+
+(defn- buffered [v]
+  ;; buffered ranges as "0..32,32.5..60" — the stall snapshot's key signal
+  (let [b (.-buffered v)]
+    (loop [i 0 acc []]
+      (if (< i (.-length b))
+        (recur (inc i)
+               (conj acc (str (/ (Math/round (* 10 (.start b i))) 10) ".."
+                              (/ (Math/round (* 10 (.end b i))) 10))))
+        (str/join "," acc)))))
+
 (defn- expected-now [st room]
   (sc/expected-pos {:pos (:pos room) :t0 (:t0 room)
                     :now (+ (ui/perf-now) (.-offset st))
@@ -124,12 +146,19 @@
               (when-not (.-player st)
                 (set! (.-preservesPitch video) true)     ; 1.5x catch-up ≠ chipmunks
                 (set! (.-webkitPreservesPitch video) true)
+                (.addEventListener video "error"
+                  #(log! token :video-error {:code (some-> (.-error video) .-code)}))
                 (set! (.-player st)
                   (player/create video (get-in msg [:video :dash])
                     (fn [ctx]
+                      (log! token :stream-init {:dash (get-in msg [:video :dash])})
                       (ui/clear! res-slot)
                       (ui/add! res-slot (res-menu st))
-                      (park! st video))))))
+                      (park! st video))))
+                ;; faults must be wired NOW, not on streamInitialized —
+                ;; a broken manifest never initializes, that's the point
+                (player/on-faults (.-player st)
+                  (fn [d] (log! token (:ev d) (dissoc d :ev))))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st video)
@@ -256,11 +285,30 @@
          (set! (.-max seek) (str (or (.-duration video) 0)))
          (when-not (.-seeking st)
            (set! (.-value seek) (str (.-currentTime video)))))
-      1000)))
+      1000)
+    ;; stall watchdog: room says playing, but our clock hasn't moved in 10s
+    ;; → log one snapshot per episode (that's the "spinner at 0:00" case)
+    (let [wd (js-obj "t" -1 "at" 0 "reported" false)]
+      (js/setInterval
+        (fn []
+          (let [t (.-currentTime video)
+                now (ui/perf-now)]
+            (if (>= (sc/abs (- t (.-t wd))) 0.05)
+              (do (set! (.-t wd) t) (set! (.-at wd) now) (set! (.-reported wd) false))
+              (when (and (.-started st) (:playing (.-room st))
+                         (not (.-ended video))
+                         (> (- now (.-at wd)) 10000)
+                         (not (.-reported wd)))
+                (set! (.-reported wd) true)
+                (log! (unchecked-get st "token") :stalled
+                      {:t (Math/round (* 10 t)) :ready (.-readyState video)
+                       :paused (.-paused video) :net (.-networkState video)
+                       :buf (buffered video)})))))
+        4000))))
 
 (defn page [token]
   (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
-                  "cancontrol" false "started" false)
+                  "cancontrol" false "started" false "token" token)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})

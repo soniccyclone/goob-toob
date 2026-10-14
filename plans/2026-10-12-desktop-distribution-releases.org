@@ -291,6 +291,25 @@ Shipped same day. Deviations and found issues:
   =render-process-gone=. Wine repro note: JDK 25's WEPoll NPEs under wine
   (both selector workarounds fail), so wine cannot run the server — wine
   is only good for launching the shell, not for end-to-end checks.
+- *v0.1.5*: devtools escape hatch — F12 / Ctrl+Shift+I toggles devtools on
+  any window, =GOOB_DEVTOOLS=1= auto-opens them. Added after the wine verdict
+  (the real Windows exe under wine plays the watch page perfectly: 786
+  frames, zero console/network errors — so the spinner is environment-
+  specific and needs the actual renderer console to diagnose).
+- *v0.1.6*: playback diagnostics logged server-side instead of asking users
+  to open devtools. The watch page POSTs dash.js faults (error /
+  manifestLoadingError / fragLoadingError wired immediately, not on
+  streamInitialized — a broken manifest never initializes), video-element
+  errors, and a 10s stall watchdog snapshot (t, readyState, paused,
+  networkState, buffered ranges) to =POST /api/clientlog= (public, rate-
+  limited 120/min per token), which println's into server.log. Verified
+  end-to-end: happy path logs stream-init + playback-started; deleting a
+  video's dash dir produced dash-error + repeated :stalled lines with the
+  room token. Gotchas: ring's =wrap-json-params= lands in =:params= not
+  =:body=; Closure renames =.-token= property reads but not =js-obj= string
+  keys — read back with =unchecked-get=; dash.js =e.error= is a DashJSError
+  VO whose =.data= holds circular request objects (JSON.stringify throws —
+  stringify code/message/data separately).
 - *CI moved to GitHub Actions*: srht.site serves the installers at ~2 MB/s
   (measured), so releases moved to GitHub Releases
   (=.github/workflows/release.yml=: jar built once, AppImage on ubuntu +
