@@ -281,6 +281,16 @@ Shipped same day. Deviations and found issues:
   the fix yields AAC-LC stereo with standard channel configuration.
   Videos transcoded before the fix keep their bad audio track — delete and
   re-upload to re-transcode.
+- *v0.1.4*: blank gray desktop window on some Windows machines. The shell
+  gates window creation on the server health check (a dead server shows an
+  error dialog, never a window), so a gray window means the renderer never
+  painted — classic GPU-compositing failure on flaky drivers/VMs/RDP. The
+  admin console is a static page (video plays in the system browser via
+  the tunnel), so =app.disableHardwareAcceleration()= is free; window also
+  shows only on =ready-to-show=, retries =did-fail-load=, reloads on
+  =render-process-gone=. Wine repro note: JDK 25's WEPoll NPEs under wine
+  (both selector workarounds fail), so wine cannot run the server — wine
+  is only good for launching the shell, not for end-to-end checks.
 - *CI moved to GitHub Actions*: srht.site serves the installers at ~2 MB/s
   (measured), so releases moved to GitHub Releases
   (=.github/workflows/release.yml=: jar built once, AppImage on ubuntu +
