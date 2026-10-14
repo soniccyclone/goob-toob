@@ -32,34 +32,48 @@
 (defn on [ctx event cb]
   (.on ctx event cb))
 
+(defn- jstr
+  ;; stringify any JS value for the log; objects may hold circular refs
+  ;; (dash.js request VOs do), so fall back to a shallow key dump
+  [x]
+  (when (some? x)
+    (cond
+      (string? x) x
+      (number? x) (str x)
+      (boolean? x) (str x)
+      :else
+      (try
+        (js/JSON.stringify x)
+        (catch js/Error _
+          (try
+            (let [out (js-obj)]
+              (doseq [k (js/Object.keys x)]
+                (let [v (unchecked-get x k)]
+                  (unchecked-set out k (if (or (string? v) (number? v) (boolean? v)) v (str v)))))
+              (js/JSON.stringify out))
+            (catch js/Error _ (str x))))))))
+
 (defn on-faults
   "Forward dash.js failure + lifecycle events to cb as a compact map.
   The watch page relays these to the server log (see routes/clientlog), so
   server.log shows what the browser actually saw without any devtools."
   [ctx cb]
-  (let [jstr (fn [x] (when (some? x)
-                       (if (object? x)
-                         (try (js/JSON.stringify x) (catch js/Error _ (str x)))
-                         (str x))))
-        ;; dash.js wraps errors in a DashJSError VO {code, message, data};
-        ;; data can hold circular request objects, so stringify it defensively
+  (let [fire (fn [ev data] (cb (into {:ev ev} (remove (fn [[_ v]] (nil? v)) data))))
+        ;; dash.js ERROR payload is exactly {error: DashJSError{code,message,data}}
+        ;; — a constructor VO, so cljs object? is false on it; read fields directly
         err-fields (fn [e]
                      (let [err (.-error e)]
-                       (if (object? err)
+                       (if (some? err)
                          {:code (jstr (.-code err)) :msg (jstr (.-message err))
                           :data (jstr (.-data err))}
-                         {:code (jstr err) :msg (jstr (.-message e))})))
-        fire (fn [ev data] (cb (into {:ev ev} (remove (fn [[_ v]] (nil? v)) data))))]
+                         {:msg (jstr (.-message e))})))]
     (.on ctx "error"
-         (fn [e] (fire "dash-error"
-                       (into {:id (jstr (.-id e)) :url (jstr (.-url e))
-                              :http (jstr (some-> (.-response e) .-status))}
-                             (err-fields e)))))
+         (fn [e] (fire "dash-error" (err-fields e))))
     (.on ctx "manifestLoadingError"
          (fn [e] (fire "manifest-failed" {:url (jstr (.-url e)) :http (jstr (.-code e))
                                           :msg (jstr (.-message e))})))
     (.on ctx "fragLoadingError"
-         (fn [e] (fire "frag-failed" {:id (jstr (.-id e)) :url (jstr (some-> (.-request e) .-url))
+         (fn [e] (fire "frag-failed" {:url (jstr (some-> (.-request e) (.-url)))
                                       :http (jstr (.-code e))})))
     (.on ctx "playbackStalled" (fn [_] (fire "dash-stalled" {})))
     (.on ctx "playbackStarted" (fn [_] (fire "playback-started" {})))))

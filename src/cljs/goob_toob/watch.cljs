@@ -147,11 +147,13 @@
                 (set! (.-preservesPitch video) true)     ; 1.5x catch-up ≠ chipmunks
                 (set! (.-webkitPreservesPitch video) true)
                 (.addEventListener video "error"
-                  #(log! token :video-error {:code (some-> (.-error video) .-code)}))
+                  #(log! token :video-error {:code (some-> (.-error video) .-code)
+                                             :msg (some-> (.-error video) .-message)}))
                 (set! (.-player st)
                   (player/create video (get-in msg [:video :dash])
                     (fn [ctx]
-                      (log! token :stream-init {:dash (get-in msg [:video :dash])})
+                      (log! token :stream-init {:dash (get-in msg [:video :dash])
+                                                :ua (.-userAgent js/navigator)})
                       (ui/clear! res-slot)
                       (ui/add! res-slot (res-menu st))
                       (park! st video))))
@@ -303,6 +305,8 @@
                 (log! (unchecked-get st "token") :stalled
                       {:t (Math/round (* 10 t)) :ready (.-readyState video)
                        :paused (.-paused video) :net (.-networkState video)
+                       :dur (Math/round (* 10 (or (.-duration video) 0)))
+                       :src (some-> (.-currentSrc video) (.slice -30))
                        :buf (buffered video)})))))
         4000))))
 
