@@ -27,7 +27,7 @@ tasks:
     npx shadow-cljs release client
 - build-server: |
     cd goob-toob
-    clojure -T:build uberjar
+    VERSION=$(git describe --tags) clojure -T:build uberjar
 - vendor: |
     cd goob-toob
     sh scripts/fetch-vendor.sh all

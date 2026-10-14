@@ -8,7 +8,7 @@ ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
 uberjar: ## build server uberjar (CLJS included) -> target/goob-toob.jar
 	mkdir -p $(STORAGE)
-	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) sh -c "npx shadow-cljs release client && clojure -T:build uberjar"
+	podman run --rm $(MOUNTS) $(ENV) -e VERSION=$(shell git describe --tags 2>/dev/null || echo dev) $(IMAGE) sh -c "npx shadow-cljs release client && clojure -T:build uberjar"
 
 vendor: ## download cloudflared + ffmpeg + JRE into vendor/ (desktop bundle)
 	sh scripts/fetch-vendor.sh all

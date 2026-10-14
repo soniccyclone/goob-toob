@@ -69,7 +69,7 @@ async function startServer() {
   server = spawn(bin.java, ['-jar', bin.jar], {
     env: { ...process.env, STORAGE_DIR: cfg.storageDir,
            PORT: String(ports.public), GOOB_ADMIN_PORT: String(ports.admin),
-           FFMPEG_PATH: bin.ffmpeg },
+           FFMPEG_PATH: bin.ffmpeg, GOOB_VERSION: app.getVersion() },
     stdio: ['ignore', log, log],
   });
   server.on('exit', (code) => {

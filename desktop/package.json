@@ -1,6 +1,6 @@
 {
   "name": "goob-toob-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "goob-toob watch parties on your own box",
   "main": "main.js",
   "author": "Nathan Bishop",

@@ -1,5 +1,7 @@
 (ns goob-toob.core
   (:require [ring.adapter.jetty :refer [run-jetty]]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [goob-toob.config :as config]
             [goob-toob.db :as db]
             [goob-toob.routes :as routes]
@@ -10,9 +12,17 @@
 (defonce server (atom nil))
 (defonce admin-server (atom nil))
 
+;; stamped into the jar by build.clj; GOOB_VERSION lets the Electron shell
+;; (which knows its own package.json version) override; dev runs say "dev".
+(defn- version []
+  (or (some-> (System/getenv "GOOB_VERSION") (not-empty))
+      (some-> (io/resource "goob-toob.version") slurp str/trim (not-empty))
+      "dev"))
+
 (defn -main []
   (let [cfg (config/load!)
         desktop? (= :desktop (:mode cfg))]
+    (println "goob-toob" (version))
     (db/init! (:db-path cfg))
     (transcode/start!)
     (sync/start-beat-loop!)
