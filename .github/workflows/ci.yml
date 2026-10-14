@@ -37,13 +37,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox-noarch
+      - name: Token present?   # secrets context is not allowed in if: expressions
+        id: tok
+        env:
+          SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
+        run: echo "present=$([ -n "$SRHT_TOKEN" ] && echo yes)" >> "$GITHUB_OUTPUT"
+      - if: steps.tok.outputs.present == 'yes'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox-noarch
       - name: Install htmlize
+        if: steps.tok.outputs.present == 'yes'
         run: emacs --batch --eval "(progn (require 'package) (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) (package-initialize) (package-refresh-contents) (package-install 'htmlize))"
       - name: Build site
+        if: steps.tok.outputs.present == 'yes'
         run: sh scripts/build-plans-site.sh
       - name: Publish to srht.site
-        if: ${{ secrets.SRHT_TOKEN != '' }}
+        if: steps.tok.outputs.present == 'yes'
         env:
           SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
         run: |
