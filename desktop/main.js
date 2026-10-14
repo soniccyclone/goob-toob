@@ -10,6 +10,11 @@ const path = require('path');
 const fs = require('fs');
 
 const DEV = !!process.env.GOOB_DEV;
+// The admin console is a static page (video plays in the system browser via
+// the tunnel), so GPU compositing buys nothing here — and on flaky Windows
+// GPU drivers it is the classic "blank gray window" failure. Software paint
+// is always correct.
+app.disableHardwareAcceleration();
 const WIN = process.platform === 'win32';
 const EXE = WIN ? '.exe' : '';
 const ROOT = path.join(__dirname, '..'); // repo root in dev
@@ -112,7 +117,16 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280, height: 900,
     title: 'goob-toob',
+    show: false,   // avoid the gray/white flash: show only once painted
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
+  });
+  win.once('ready-to-show', () => win.show());
+  win.webContents.on('did-fail-load', (e, code, desc, url, mainFrame) => {
+    // transient loopback hiccup (or proxy weirdness): retry shortly
+    if (mainFrame && !app.isQuitting) setTimeout(() => win && win.loadURL(`http://127.0.0.1:${ports.admin}/admin`), 1000);
+  });
+  win.webContents.on('render-process-gone', () => {
+    if (win && !win.isDestroyed() && !app.isQuitting) win.reload();
   });
   win.setMenuBarVisibility(false);
   win.loadURL(`http://127.0.0.1:${ports.admin}/admin`);
