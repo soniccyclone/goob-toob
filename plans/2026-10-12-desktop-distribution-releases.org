@@ -281,6 +281,16 @@ Shipped same day. Deviations and found issues:
   the fix yields AAC-LC stereo with standard channel configuration.
   Videos transcoded before the fix keep their bad audio track — delete and
   re-upload to re-transcode.
+- *CI moved to GitHub Actions*: srht.site serves the installers at ~2 MB/s
+  (measured), so releases moved to GitHub Releases
+  (=.github/workflows/release.yml=: jar built once, AppImage on ubuntu +
+  NSIS on windows in parallel, attached via =gh release create --repo=).
+  =.builds/= retired; =README= links use =/releases/latest/download/= so
+  they never rot. Gotchas learned: =secrets= is NOT available in =if:=
+  expressions (gate on a step output instead), and =actionlint= catches
+  schema errors that plain YAML parsing does not. The plans-site publish
+  needs an =SRHT_TOKEN= repo secret (sourcehut OAuth, pages scope) and is
+  skipped without it.
 - *v0.1.3*: the server now logs its version at boot (first line of
   =server.log=). The Windows logs proved the migration fix landed but could
   not distinguish v0.1.1 from v0.1.2 — no more guessing whether a user
