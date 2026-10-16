@@ -351,3 +351,9 @@ Shipped same day. Deviations and found issues:
   the explicit dispatch. Also noticed: the =plans= job has been skipping
   its build/publish steps since the GitHub Actions move because the
   =SRHT_TOKEN= secret is not set on the repo.
+- *after v0.2.1 (#16)*: the plans site moved to GitHub Pages
+  (https://soniccyclone.github.io/goob-toob/, Actions source): the =plans=
+  job builds on every =main= push and deploys with
+  =upload-pages-artifact= + =deploy-pages=; the =SRHT_TOKEN= gate is gone.
+  Found on the way: =build-plans-site.sh= used =set -o pipefail= under
+  =sh=, which is dash on the runner, so it is a bash script now.
