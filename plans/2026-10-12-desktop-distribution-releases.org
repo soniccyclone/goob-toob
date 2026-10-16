@@ -337,3 +337,15 @@ Shipped same day. Deviations and found issues:
   docker.io/electronuserland/builder:wine sh -c "npm install && npx
   electron-builder --win portable"= after =make uberjar= and
   =sh scripts/fetch-vendor.sh windows=.
+- *after v0.2.0 (#12)*: CI cuts the tags. =ci.yml= has a =tag= job after a
+  green =test= on a =main= push: =scripts/next-version.sh= gives the next
+  patch tag, or minor/major when any commit since the last tag says
+  =[minor]= / =[major]=, or =skip= on =[skip release]=; the job pushes the
+  tag and =gh workflow run release.yml --ref <tag>=. =release.yml= sets
+  =desktop/package.json= from the tag with =npm version= at build time;
+  the file carries =0.0.0-dev= and the bump commit is gone. Gotcha: a tag
+  pushed with =GITHUB_TOKEN= never fires =on: push: tags= (GitHub blocks
+  token-triggered runs); =workflow_dispatch= via the API is exempt, hence
+  the explicit dispatch. Also noticed: the =plans= job has been skipping
+  its build/publish steps since the GitHub Actions move because the
+  =SRHT_TOKEN= secret is not set on the repo.
