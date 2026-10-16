@@ -111,3 +111,28 @@
         (is (< (Math/abs (+ 4.0 (get-in (room id) [:clients "lag" :drift]))) 1e-9))
         (is (neg? (:lag (first (filter #(= "laggard" (:nick %))
                                        (sync/peers-list (room id)))))))))))
+
+(deftest give-up-resets-once-the-viewer-is-back-in-band
+  (run
+    (fn []
+      (let [id (room-id!)]
+        (sync/host-cmd! id "play" 0.0)
+        (report-behind! id 4.0)
+        (at! 11000)
+        (report-behind! id 0.5)
+        (at! 201000)
+        (report-behind! id 4.0)
+        (sync/tick-room! id)
+        (is (= 0.97 (:rate (room id))))))))
+
+(deftest pause-without-a-position-uses-the-slowed-clock
+  (run
+    (fn []
+      (let [id (room-id!)]
+        (sync/host-cmd! id "play" 0.0)
+        (at! 11000)
+        (swap! sync/rooms* update id sc/reanchor 11000 0.97)
+        (at! 111000)
+        (sync/host-cmd! id "pause" nil)
+        (is (< (Math/abs (- 107.0 (:pos (room id)))) 1e-6))
+        (is (= 1.0 (:rate (room id))))))))
