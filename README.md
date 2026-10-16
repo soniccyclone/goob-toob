@@ -81,7 +81,10 @@ Windows, steps 3–7 above apply.
 - **[Releases](https://github.com/soniccyclone/goob-toob/releases)** —
   desktop builds, newest first.
 - **[Actions](https://github.com/soniccyclone/goob-toob/actions)** — CI on
-  every push; pushing a `v*` tag cuts a release.
+  every push. Every merge to `main` that passes CI is tagged and released:
+  a patch bump by default, a minor or major bump if any commit since the
+  last tag says `[minor]` or `[major]`, nothing if the last commit says
+  `[skip release]`.
 
 ## Quickstart
 
