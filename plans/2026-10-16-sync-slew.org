@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-16
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: draft 2026-10-16; awaiting approval (issue #8).
+# Status: approved 2026-10-16 (with the give-up rule); implementing on feat/sync-slew.
 
 * Goal
 Stop the catch-up spiral for viewers on slow or jittery connections. Today a
@@ -15,8 +15,10 @@ forward, and a viewer who wants to jump to the room reloads the page. All
 rates stay inside the band humans do not notice.
 
 Decisions already taken on #8: room slow-down on by default; laggards only
-slew; reload is the jump; #7 (sync-aware quality cap, ladder bitrates) comes
-after this and is out of scope here.
+slew; reload is the jump; the room gives up on a chronic laggard after a fixed
+window (catch-up assumes the link can improve; if it cannot, they stay a
+laggard and #7 is their remedy); #7 (sync-aware quality cap, ladder bitrates)
+comes after this and is out of scope here.
 
 * Findings
 - The server already carries a room rate and never uses it. =room-for= sets
@@ -79,7 +81,8 @@ with the following. Everything is data in, data out; no platform calls.
    :room-slow-enter 3.0    ; someone this far behind: room slows
    :room-slow-exit  1.0    ; everyone within this: room back to 1.0
    :status-fresh-ms 15000  ; older status reports do not count
-   :gone-after-s    60.0}) ; this far behind is "reload me", not "wait for me"
+   :gone-after-s    60.0   ; this far behind is "reload me", not "wait for me"
+   :give-up-ms      180000}) ; behind for this long continuously: stop slowing for them
 
 (defn policy
   "prev is the mode from the last tick, d is local - expected in seconds
@@ -103,14 +106,17 @@ with the following. Everything is data in, data out; no platform calls.
 
 (defn room-rate
   "prev is the room's current rate. clients is a seq of
-  {:nick s :drift d :age-ms n} where drift is pos - expected (negative =
-  behind) and age-ms is how old the report is. Returns {:rate r :for nick}
-  with :for the worst eligible laggard while slowed, else nil."
+  {:nick s :drift d :age-ms n :behind-ms m} where drift is pos - expected
+  (negative = behind), age-ms is how old the report is and behind-ms is how
+  long this client has continuously been at or past :room-slow-enter (0 when
+  not). Returns {:rate r :for nick} with :for the worst eligible laggard
+  while slowed, else nil. A client past :give-up-ms no longer counts."
   [prev clients]
   (let [{:keys [room-slow-rate room-slow-enter room-slow-exit
-                status-fresh-ms gone-after-s]} tuning
+                status-fresh-ms gone-after-s give-up-ms]} tuning
         eligible (filter #(and (<= (:age-ms %) status-fresh-ms)
-                               (<= (- (:drift %)) gone-after-s))
+                               (<= (- (:drift %)) gone-after-s)
+                               (<= (or (:behind-ms %) 0) give-up-ms))
                          clients)
         worst (apply max-key #(- (:drift %)) {:drift 0.0 :nick nil} eligible)
         behind (- (:drift worst))]
@@ -135,14 +141,20 @@ live in =tuning= now) and fix the two callers in =watch.cljs=. =drift= and
 - =status!=: store =:drift (- pos expected)= and =:at (mono-ms)= instead of
   =:lag=. Positive now means ahead, matching =sc/drift=. =peers-list= emits
   =:lag (:drift c)= so the wire name and =ui/fmt-lag= stay as they are and the
-  display sign comes out right.
+  display sign comes out right. Also maintain =:behind-since=: set to =now=
+  when it is nil and =(- drift)= is at or past =:room-slow-enter=; set to nil
+  when =(- drift)= is at or below =:room-slow-exit=; otherwise leave it.
+  =client-drifts= derives =:behind-ms (if behind-since (- now behind-since) 0)=.
+  Giving up is therefore per viewer and resets only when they get back
+  inside the exit band (a reload also resets it: new cid).
 - =host-cmd!=: every op (=play=, =pause=, =seek=) also sets =:rate 1.0=. The
   lag data is stale after a host action; the beat re-evaluates within 2 s.
 - New =tick-room!=:
   #+begin_src clojure
   (defn- client-drifts [room now]
     (for [[_ c] (:clients room)]
-      {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))}))
+      {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))
+       :behind-ms (if-let [t (:behind-since c)] (- now t) 0)}))
 
   (defn- tick-room! [room-id]
     (let [now (mono-ms)
@@ -221,32 +233,57 @@ as given. Each must fail alone when its branch is broken (see Verification).
 | =room-rate-holds-between-exit-and-enter=             | prev 0.97, worst drift =-2.0= → =:rate 0.97=; prev 1.0, same input → =:rate 1.0=            |
 | =room-rate-recovers-when-everyone-is-within-a-second= | prev 0.97, drifts =-0.8= and =0.2= → =:rate 1.0 :for nil=                                   |
 | =room-rate-ignores-stale-and-gone-clients=           | prev 1.0, drift =-20= age 20000 → 1.0; drift =-70= age 0 → 1.0                              |
+| =room-rate-gives-up-on-a-chronic-laggard=            | prev 0.97, drift =-4.0= age 0 behind-ms 200000 → =:rate 1.0 :for nil=; same with behind-ms 100000 → 0.97 |
 | =reanchor-does-not-move-the-position=                | room pos 10 t0 1000 playing rate 1.0, now 5000, new rate 0.97 → pos 14.0, t0 5000, rate 0.97 |
 Keep =expected-pos-moves-with-clock=, =ntp-offset-estimates-server-skew=,
 =best-offset-prefers-lowest-rtt= as they are.
+
+New =test/clj/goob_toob/sync_service_test.clj= exercising =sync.clj= on the
+JVM without sockets (=rooms*= is an atom; =join!=, =status!= and the new
+=tick-room!= are plain functions; =mono-ms= can be redefined with
+=with-redefs= to drive time). Use the =with-tmp= fixture pattern from
+=repos_test.clj= and a room row from =rooms/create!=:
+| test name                                            | asserts                                                                                   |
+|------------------------------------------------------+-------------------------------------------------------------------------------------------|
+| =tick-slows-a-playing-room-for-a-laggard-and-recovers= | host play; client status 4 s behind; tick → room =:rate 0.97=, =:pos= equals the expected position at that instant (re-anchored, not moved); client status 0.5 s behind; tick → =:rate 1.0= |
+| =tick-leaves-a-paused-room-alone=                    | same laggard, room paused → rate stays 1.0                                                |
+| =tick-gives-up-after-the-window=                     | laggard 4 s behind at t; ticks at t+10 s and t+200 s with the same drift → 0.97 then 1.0  |
+| =host-command-resets-the-rate=                       | room at 0.97; =host-cmd! "seek"= → =:rate 1.0=                                            |
+| =status-records-drift-with-behind-meaning-negative=  | client 4 s behind → stored =:drift= is about =-4.0= and =peers-list= =:lag= is negative   |
+=tick-room!= must therefore be public (drop the =defn-=). Capture
+=broadcast= with =with-redefs= to assert the ="rate"= op message is sent
+exactly once per change.
 
 ** 5 · Release
 Behaviour change visible to every viewer: the merge's last commit carries
 =Release: minor= so CI cuts v0.3.0.
 
 * Risks and open questions
-- *A single flaky viewer slows the room.* Bounded three ways: the 3 s enter
-  threshold, the 60 s "gone" cut-off, the 15 s staleness cut-off. If it still
-  annoys, the knob is =:room-slow-enter=. A host-side toggle is deliberately
-  not in this plan; add it only if a real party asks.
+- *A single flaky viewer slows the room.* Bounded four ways: the 3 s enter
+  threshold, the 15 s staleness cut-off, the 60 s "gone" cut-off, and the
+  3-minute give-up per viewer (decided). At 0.08 s/s closing (room 0.97,
+  laggard 1.05) three minutes heals 14 s; a viewer still 3 s or more behind
+  after that is not closing and the room stops paying for them. They keep
+  the reload hint. The remaining knob is =:room-slow-enter=.
+- *The host is a client too.* When the room slows, the host's element runs
+  0.97x like everyone else, and every host play/pause/seek snaps the rate to
+  1.0 with the beat re-evaluating within 2 s. Expect =server.log= to show
+  =rate 1.0= then =rate 0.97= around each host action while a laggard is
+  present; that flapping is by design, not a bug.
 - *Audio at 0.95-1.05x.* =preservesPitch= makes it inaudible in Chrome and
   Firefox; old Safari pitch-shifts slightly. Accepted.
 - *Catch-up needs runway, runway needs bandwidth.* A viewer who can never
-  buffer 8 s ahead never catches up on their own; the room's 0.97 and a
-  reload are their tools until #7 lowers their rung.
+  buffer 8 s ahead never catches up on their own; the room's 0.97 (for three
+  minutes) and a reload are their tools. By decision no further effort goes
+  here: #7 lowers their rung, which is the actual remedy.
 - *Two sources of truth for rate on the client.* The element's
   =playbackRate= is written only from =apply-policy!= and the pause handler;
   nothing else touches it. Keep it that way.
 - *Status at 2 s.* ~40 bytes per viewer per 2 s; irrelevant.
 
 * Verification
-1. =make test=: expected tail =Ran 25 tests containing N assertions. 0 failures=
-   (12 new sync-core tests replace 2). Assertion audit: for each new test,
+1. =make test=: expected tail =Ran 31 tests containing N assertions. 0 failures=
+   (13 new sync-core tests replace 2; 5 new service tests). Assertion audit: for each new test,
    break the branch it guards (flip the comparison in =policy= / =room-rate=,
    or drop the =reanchor= pos update), run the suite, confirm that test and
    only that test fails, restore. Report which were audited.
