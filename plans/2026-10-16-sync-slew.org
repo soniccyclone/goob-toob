@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-16
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-16 (with the give-up rule); implementing on feat/sync-slew.
+# Status: approved 2026-10-16 (with the give-up rule); shipped as v0.3.0 on 2026-10-16 (see Implementation notes).
 
 * Goal
 Stop the catch-up spiral for viewers on slow or jittery connections. Today a
@@ -307,4 +307,27 @@ Behaviour change visible to every viewer: the merge's last commit carries
    audible rate change at the host.
 
 * Implementation notes
-(filled in when it ships)
+Shipped 2026-10-16 (PR for #8, cut as v0.3.0 by CI). Implemented by an Opus
+subagent from this plan; reviewed, extended and verified by the planning
+session. Landed as specced, plus:
+
+- *Pause position vs rate reset*: the first cut of =host-cmd!= reset
+  =:rate= to 1.0 before "pause" derived its position from the clock, so a
+  pause without an explicit =pos= advanced the room as if it had run at 1.0
+  since the last anchor. Fixed (compute, then reset) with a test.
+- *Give-up reset was untested*: the assertion audit found no test covering
+  =:behind-since= clearing once a viewer is back inside the exit band; added
+  =give-up-resets-once-the-viewer-is-back-in-band=.
+- *=apply-policy!= takes =lag-hint=* as a third argument (the plan's body used
+  it without saying where it came from); =tick-room!= binds =:for= to
+  =laggard= to avoid shadowing =clojure.core/for=; the =st= and =video=
+  bindings in =watch.cljs= are tagged =^js=, which took the release build
+  from 46 inference warnings to 4 (all in =admin.cljs=, untouched).
+- *Verified*: =make test= 35 tests / 84 assertions, every new test audited
+  to fail alone; =make compile= clean for =watch.cljs=; and a two-client
+  run over the real websocket against the container (co-host plays, a
+  scripted laggard reports 4 s behind, then 0.3 s): room to 0.97 with
+  =slow-for= and peer lag =-4.00= within one beat, back to 1.0 within one
+  beat of recovery, both logged by the server. The browser steps in
+  Verification (rate following on the element, the hint, the slow note)
+  were not run in the implementing environment; they are the reviewer's.
