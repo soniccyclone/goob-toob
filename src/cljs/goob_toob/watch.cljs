@@ -51,22 +51,28 @@
       (.pause video)
       (try (set! (.-currentTime video) e) (catch js/Error _ nil)))))
 
-(defn- apply-policy! [st video]
-  (when (.-started st)
-    (when-let [room (.-room st)]
-      ;; while stalling, do nothing: seeking into an empty buffer is what
-      ;; turns a stall into a stutter spiral
-      (when-not (.-buffering st)
-        (let [expected (expected-now st room)
-              d (sc/drift (.-currentTime video) expected)]
-          (case (sc/policy d)
-            :none       (when-not (= 1.0 (.-playbackRate video))
-                          (set! (.-playbackRate video) 1.0))
-            :catch-up   (set! (.-playbackRate video) (sc/catch-rate d))
-            :nudge-slow (set! (.-playbackRate video) sc/nudge-slow-rate)
-            :seek       (do (set! (.-currentTime video) expected)
-                            (set! (.-playbackRate video) 1.0))
-            nil))))))
+(defn- buffer-ahead [video]
+  (let [b (.-buffered video) t (.-currentTime video)]
+    (loop [i 0]
+      (cond (>= i (.-length b)) 0.0
+            (and (<= (.start b i) t) (<= t (.end b i))) (- (.end b i) t)
+            :else (recur (inc i))))))
+
+(defn- apply-policy! [st video lag-hint]
+  (when (and (.-started st) (.-room st) (not (.-buffering st)))
+    (let [room (.-room st)
+          expected (expected-now st room)
+          d (sc/drift (.-currentTime video) expected)
+          mode (sc/policy (.-mode st) d (buffer-ahead video))
+          rate (sc/rate-for mode (:rate room))]
+      (set! (.-mode st) mode)
+      (when (= mode :seek-back) (set! (.-currentTime video) expected))
+      (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
+        (set! (.-playbackRate video) rate))
+      (set! (.-textContent lag-hint)
+            (if (< d -10.0)
+              (str "you're " (int (- d)) "s behind the room — reload to jump to it")
+              "")))))
 
 (defn- apply-state-msg! [st video msg]
   (set! (.-room st) msg)
@@ -128,7 +134,8 @@
     sel))
 
 (defn- connect! [st token refs]
-  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs admin-link]} refs
+  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs admin-link
+                lag-hint slow-note]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
                  "?nick=" (js/encodeURIComponent (.-nick st)))]
@@ -144,7 +151,7 @@
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
               (when-not (.-player st)
-                (set! (.-preservesPitch video) true)     ; 1.5x catch-up ≠ chipmunks
+                (set! (.-preservesPitch video) true)
                 (set! (.-webkitPreservesPitch video) true)
                 (.addEventListener video "error"
                   #(log! token :video-error {:code (some-> (.-error video) .-code)
@@ -163,7 +170,12 @@
                   (fn [d] (log! token (:ev d) (dissoc d :ev))))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
-                      (apply-policy! st video)
+                      (apply-policy! st video lag-hint)
+                      (render-peers! peers-el (:peers msg) (.-ishost st))
+                      (set! (.-textContent slow-note)
+                            (if-let [nick (:slow-for msg)]
+                              (str "room at " (:room-slow-rate sc/tuning) "x for " nick)
+                              ""))
                       (when-not (.-seeking st)
                         (set! (.-value seek) (str (.-currentTime video)))))
           "pong"  (let [t1 (ui/perf-now)
@@ -189,6 +201,8 @@
               (.setAttribute video "controls" "")
               (.setAttribute video "playsinline" ""))
         stage-wrap (h :div.stage-wrap video)
+        lag-hint (h :span.muted {})
+        slow-note (h :span.muted {})
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
         admin-link (h :a {:href "/admin" :title "admin console"
                           :style "margin-left:auto;font-size:0.8rem;opacity:0.7;display:none"}
@@ -249,7 +263,7 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (ui/add! viewer-row res-slot (h :span.muted "picture quality"))
-    (ui/add! host-row play-btn pause-btn seek badge (h :span.muted "everyone follows you"))
+    (ui/add! host-row play-btn pause-btn seek badge (h :span.muted "everyone follows you") slow-note)
     {:video video
      :layout (h :div.watch-layout
                 (h :div.row-gap
@@ -257,6 +271,7 @@
                       (h :div {:style "display:flex;align-items:center;gap:0.5rem"}
                          title-el admin-link)
                       stage-wrap
+                      lag-hint
                       viewer-row
                       host-row))
                 (h :div.row-gap
@@ -272,16 +287,16 @@
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
      :chat-log chat-log :peers-el peers-el :host-row host-row
-     :badge badge :new-msgs new-msgs}))
+     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
 (defn- loops! [st refs]
-  (let [{:keys [video seek]} refs]
+  (let [{:keys [video seek lag-hint]} refs]
     (js/setInterval #(wsx/send! (.-ws st) {:type "ping" :t (ui/perf-now)}) 5000)
     (js/setInterval #(wsx/send! (.-ws st) {:type "status"
                                             :pos (.-currentTime video)
                                             :buffering (boolean (.-buffering st))})
-                    5000)
-    (js/setInterval #(apply-policy! st video) 500) ; smooth catch-up between beats
+                    2000)
+    (js/setInterval #(apply-policy! st video lag-hint) 500) ; smooth catch-up between beats
     (js/setInterval
       #(when (.-room st)
          (set! (.-max seek) (str (or (.-duration video) 0)))
@@ -312,7 +327,7 @@
 
 (defn page [token]
   (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
-                  "cancontrol" false "started" false "token" token)
+                  "cancontrol" false "started" false "token" token "mode" :none)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
