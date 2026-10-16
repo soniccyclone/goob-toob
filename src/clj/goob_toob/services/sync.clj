@@ -29,7 +29,7 @@
 
 (defn peers-list [room]
   (mapv (fn [[cid c]]
-          {:nick (:nick c) :lag (double (or (:lag c) 0)) :buffering (boolean (:buffering c))})
+          {:nick (:nick c) :lag (double (or (:drift c) 0)) :buffering (boolean (:buffering c))})
         (:clients room)))
 
 (defn send-to [cid msg]
@@ -45,7 +45,7 @@
 
 (defn join! [room-id cid nick]
   (room-for room-id)
-  (swap! rooms* update-in [room-id :clients] assoc cid {:nick nick :lag 0 :buffering false}))
+  (swap! rooms* update-in [room-id :clients] assoc cid {:nick nick :drift 0.0 :buffering false}))
 
 (defn leave! [room-id cid]
   (swap! rooms* update-in [room-id :clients] dissoc cid))
@@ -54,7 +54,7 @@
   (let [now (mono-ms)]
     (swap! rooms*
       (fn [rs]
-        (let [r (get rs room-id)
+        (let [r (assoc (get rs room-id) :rate 1.0)
               r (case op
                   "play"  (assoc r :pos (or pos (:pos r)) :t0 now :playing? true)
                   "pause" (assoc r :pos (or pos (sc/expected-pos (assoc r :now now)))
@@ -64,11 +64,40 @@
           (assoc rs room-id r))))
     (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op op))))
 
+(defn- behind-since [since now drift]
+  (let [behind (- drift)]
+    (cond
+      (<= behind (:room-slow-exit sc/tuning))           nil
+      (and (nil? since)
+           (>= behind (:room-slow-enter sc/tuning)))    now
+      :else                                            since)))
+
 (defn status! [room-id cid pos buffering]
   (when-let [room (get @rooms* room-id)]
-    (let [lag (when (some? pos) (- (sc/expected-pos (assoc room :now (mono-ms))) pos))]
+    (let [now (mono-ms)
+          drift (double (if (some? pos) (- pos (sc/expected-pos (assoc room :now now))) 0))]
       (swap! rooms* update-in [room-id :clients cid]
-             assoc :lag (double (or lag 0)) :buffering (boolean buffering)))))
+             (fn [c]
+               (assoc c :drift drift :at now :buffering (boolean buffering)
+                        :behind-since (behind-since (:behind-since c) now drift)))))))
+
+(defn client-drifts [room now]
+  (for [[_ c] (:clients room)]
+    {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))
+     :behind-ms (if-let [t (:behind-since c)] (- now t) 0)}))
+
+(defn tick-room! [room-id]
+  (let [now (mono-ms)
+        room (get @rooms* room-id)
+        {:keys [rate] laggard :for} (sc/room-rate (:rate room) (client-drifts room now))]
+    (when (and (:playing? room) (not= rate (:rate room)))
+      (swap! rooms* update room-id sc/reanchor now rate)
+      (println "room" room-id "rate" rate (if laggard (str "for " laggard) ""))
+      (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "rate")))
+    (let [room (get @rooms* room-id)]
+      (broadcast room-id (assoc (beat-msg room)
+                                :slow-for (when (= (:rate room) (:room-slow-rate sc/tuning)) laggard)
+                                :peers (peers-list room))))))
 
 (defn start-beat-loop! []
   (future
@@ -76,5 +105,5 @@
       (Thread/sleep 2000)
       (doseq [[room-id room] @rooms*
               :when (seq (:clients room))]
-        (broadcast room-id (beat-msg room)))
+        (tick-room! room-id))
       (recur))))
