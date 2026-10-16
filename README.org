@@ -71,9 +71,12 @@ Building from source: =make uberjar && make vendor=, then
 =.github/workflows/release.yml=).
 
 Releases are cut by CI: every merge to =main= that passes tests gets the
-next tag and a GitHub Release. Patch bump by default; put =[minor]= or
-=[major]= anywhere in a commit message since the last tag to bump that part
-instead; =[skip release]= in the merge's last commit skips the release.
+next tag and a GitHub Release. Patch bump by default; a =Release: minor=
+or =Release: major= git trailer (a =Key: value= line in the final block of
+the commit message, next to =Co-Authored-By=) on any commit since the last
+tag bumps that part instead; =Release: skip= on the merge's last commit
+skips the release. Only the trailer block counts, so a commit *about* the
+markers cannot trigger one.
 =desktop/package.json= holds no real version — =release.yml= sets it from
 the tag at build time, so there is no bump commit to make.
 
