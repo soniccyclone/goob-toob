@@ -35,13 +35,13 @@
                               (/ (Math/round (* 10 (.end b i))) 10))))
         (str/join "," acc)))))
 
-(defn- expected-now [st room]
+(defn- expected-now [^js st room]
   (sc/expected-pos {:pos (:pos room) :t0 (:t0 room)
                     :now (+ (ui/perf-now) (.-offset st))
                     :playing? (:playing room)
                     :rate (:rate room)}))
 
-(defn- park! [st video]
+(defn- park! [^js st video]
   ;; Sit paused at the room's position: the native play button is the
   ;; "press me" affordance, and a *real* seek is what makes dash composite
   ;; the frame there (same-value seek is a no-op -> black frame at pos 0).
@@ -58,7 +58,7 @@
             (and (<= (.start b i) t) (<= t (.end b i))) (- (.end b i) t)
             :else (recur (inc i))))))
 
-(defn- apply-policy! [st video lag-hint]
+(defn- apply-policy! [^js st video lag-hint]
   (when (and (.-started st) (.-room st) (not (.-buffering st)))
     (let [room (.-room st)
           expected (expected-now st room)
@@ -74,7 +74,7 @@
               (str "you're " (int (- d)) "s behind the room — reload to jump to it")
               "")))))
 
-(defn- apply-state-msg! [st video msg]
+(defn- apply-state-msg! [^js st video msg]
   (set! (.-room st) msg)
   (if-not (.-started st)
     (park! st video) ;; unstarted: keep the parked frame fresh as the room moves
@@ -113,7 +113,7 @@
       (set! (.-scrollTop log-el) (.-scrollHeight log-el))
       (set! (.-display (.-style pill-el)) "block"))))
 
-(defn- res-menu [st]
+(defn- res-menu [^js st]
   (let [sel (h :select {:title "resolution"})
         saved (ui/store-get "goob-res")]
     (doseq [[v label] (concat [["auto" "auto (best sync)"]]
@@ -133,8 +133,8 @@
                 (player/set-height (.-player st) (js/parseInt v))))))
     sel))
 
-(defn- connect! [st token refs]
-  (let [{:keys [video title-el seek res-slot peers-el chat-log new-msgs admin-link
+(defn- connect! [^js st token refs]
+  (let [{:keys [^js video title-el seek res-slot peers-el chat-log new-msgs admin-link
                 lag-hint slow-note]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
@@ -195,7 +195,7 @@
         (set! (.-samples st) [])
         (wsx/send! ws {:type "ping" :t (ui/perf-now)})))))
 
-(defn- shell [st]
+(defn- shell [^js st]
   (let [video (.createElement js/document "video")
         _ (do (set! (.-className video) "stage")
               (.setAttribute video "controls" "")
@@ -289,7 +289,7 @@
      :chat-log chat-log :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
-(defn- loops! [st refs]
+(defn- loops! [^js st refs]
   (let [{:keys [video seek lag-hint]} refs]
     (js/setInterval #(wsx/send! (.-ws st) {:type "ping" :t (ui/perf-now)}) 5000)
     (js/setInterval #(wsx/send! (.-ws st) {:type "status"
@@ -326,7 +326,7 @@
         4000))))
 
 (defn page [token]
-  (let [st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
+  (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
