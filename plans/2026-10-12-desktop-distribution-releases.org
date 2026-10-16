@@ -327,3 +327,13 @@ Shipped same day. Deviations and found issues:
   wins, else the =goob-toob.version= resource stamped into the jar by
   =build.clj= (=VERSION= env or =git describe=), else =dev=. Gotcha:
   =b/write-file= pr-prints strings (writes them quoted) — use =spit=.
+- *after v0.2.0 (#9)*: Windows ships the portable exe only; the NSIS
+  one-click installer is gone from =package.json= targets and from
+  =release.yml= (build, rename, upload, release notes), READMEs point at
+  =goob-toob-win-x64-portable.exe=. The portable target is itself an NSIS
+  self-extractor, so =makensis= still runs on the windows runner. The leg
+  reproduces locally without wine on the host:
+  =podman run --rm -v $PWD:/project:z -w /project/desktop
+  docker.io/electronuserland/builder:wine sh -c "npm install && npx
+  electron-builder --win portable"= after =make uberjar= and
+  =sh scripts/fetch-vendor.sh windows=.
