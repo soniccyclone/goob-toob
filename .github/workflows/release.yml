@@ -1,10 +1,14 @@
 name: release
 
-# Push a v* tag to cut a release: builds the Linux AppImage + Windows
-# portable exe and attaches both to a GitHub Release.
+# A v* tag cuts a release (ci.yml's tag job makes one on every merge to
+# main and dispatches this workflow at it; a hand-pushed tag works too):
+# builds the Linux AppImage + Windows portable exe and attaches both to a
+# GitHub Release. desktop/package.json carries no real version; it is set
+# from the tag at build time.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -51,6 +55,7 @@ jobs:
         working-directory: desktop
         run: |
           npm install --no-audit --no-fund
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
           npx electron-builder --linux AppImage
       - uses: actions/upload-artifact@v4
         with:
@@ -73,8 +78,10 @@ jobs:
           node-version: 22
       - name: Package portable exe
         working-directory: desktop
+        shell: bash
         run: |
           npm install --no-audit --no-fund
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
           npx electron-builder --win portable
       - uses: actions/upload-artifact@v4
         with:

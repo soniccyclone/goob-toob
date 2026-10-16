@@ -30,6 +30,33 @@ jobs:
           npx shadow-cljs release client
           VERSION=$(git describe --tags) clojure -T:build uberjar
 
+  tag:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: next
+        run: echo "tag=$(sh scripts/next-version.sh)" >> "$GITHUB_OUTPUT"
+      - if: steps.next.outputs.tag != 'skip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "goob-toob $TAG"
+          git push origin "$TAG"
+          gh workflow run release.yml --ref "$TAG"
+
   plans:
     # Re-render the plans site and publish to srht.site. Needs an SRHT_TOKEN
     # secret (sourcehut OAuth token with pages scope); skipped without it.

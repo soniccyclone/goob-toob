@@ -14,7 +14,7 @@ resolution and catch themselves up when their internet wobbles.
 | [[https://github.com/soniccyclone/goob-toob/tree/main/plans][plans]]       | dated plan files (+ rendered html snapshots) |
 | [[https://nathanb.srht.site/goob-toob-plans/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
 | [[https://github.com/soniccyclone/goob-toob/releases][releases]]    | desktop builds: Windows portable exe + Linux AppImage                  |
-| [[https://github.com/soniccyclone/goob-toob/actions][builds]]      | CI: runs on every push; a v* tag cuts a release |
+| [[https://github.com/soniccyclone/goob-toob/actions][builds]]      | CI: runs on every push; every green merge to main is tagged + released |
 
 Note: the markdown front page (=README.md=) is the short pitch + Windows
 walkthrough; this org file is the full manual. GitHub renders =.org= as
@@ -68,7 +68,14 @@ card; steps 3–7 above apply.
 Building from source: =make uberjar && make vendor=, then
 =cd desktop && npm install && npx electron-builder --linux AppImage= (or
 =--win portable= on Windows; CI does both via
-=.github/workflows/release.yml= on a tag).
+=.github/workflows/release.yml=).
+
+Releases are cut by CI: every merge to =main= that passes tests gets the
+next tag and a GitHub Release. Patch bump by default; put =[minor]= or
+=[major]= anywhere in a commit message since the last tag to bump that part
+instead; =[skip release]= in the merge's last commit skips the release.
+=desktop/package.json= holds no real version — =release.yml= sets it from
+the tag at build time, so there is no bump commit to make.
 
 * Quickstart (podman)
 #+begin_src sh
