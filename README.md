@@ -83,8 +83,9 @@ Windows, steps 3–7 above apply.
 - **[Actions](https://github.com/soniccyclone/goob-toob/actions)** — CI on
   every push. Every merge to `main` that passes CI is tagged and released:
   a patch bump by default, a minor or major bump if any commit since the
-  last tag says `[minor]` or `[major]`, nothing if the last commit says
-  `[skip release]`.
+  last tag carries a `Release: minor` or `Release: major` trailer (last
+  line of the commit message, like `Co-Authored-By`), nothing if the last
+  commit carries `Release: skip`.
 
 ## Quickstart
 
