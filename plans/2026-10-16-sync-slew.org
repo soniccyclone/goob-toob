@@ -1,0 +1,273 @@
+#+TITLE: Sync slew: room slow-down, gentle catch-up, no forward seeks
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-16
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: draft 2026-10-16; awaiting approval (issue #8).
+
+* Goal
+Stop the catch-up spiral for viewers on slow or jittery connections. Today a
+viewer 0.3 s behind is pushed to play faster, up to 1.5x, which pulls 1.5x
+the bitrate they already could not sustain, so the fix for a stall causes the
+next stall. After this plan: the room itself slows to 0.97x while anyone is
+meaningfully behind (on by default), a lagging viewer slews back at no more
+than 1.05x and only when it has buffer to spare, nobody is ever seeked
+forward, and a viewer who wants to jump to the room reloads the page. All
+rates stay inside the band humans do not notice.
+
+Decisions already taken on #8: room slow-down on by default; laggards only
+slew; reload is the jump; #7 (sync-aware quality cap, ladder bitrates) comes
+after this and is out of scope here.
+
+* Findings
+- The server already carries a room rate and never uses it. =room-for= sets
+  =:rate 1.0= (~src/clj/goob_toob/services/sync.clj:20~), =state-msg=
+  broadcasts it (~sync.clj:24-26~), =expected-pos= honours it
+  (~src/cljc/goob_toob/sync_core.cljc:8-14~). Nothing ever writes another
+  value.
+- The server knows every viewer's lag and stall flag from =status!=
+  (~sync.clj:67-71~, fed every 5 s by ~src/cljs/goob_toob/watch.cljs:280-283~)
+  and uses it only to paint the peer list.
+- The client policy is stateless and absolute: =policy d= (~sync_core.cljc:29-41~)
+  has no memory, so a viewer hovering at the 0.3 s edge flips in and out of
+  =:catch-up= every 500 ms tick (~watch.cljs:284~); and =:none= forces
+  =playbackRate 1.0= (~watch.cljs:63-64~), which would fight any room rate
+  other than 1.0 (expected advances at 0.97, the element plays 1.0, the
+  viewer drifts ahead 0.03 s/s, nudges to 0.95 after ten seconds, repeat).
+- =catch-rate= is =1 + 0.1|d|= capped at 1.5 (~sync_core.cljc:43-48~): 0.3 s
+  behind already plays 1.03x forever; 5 s behind plays 1.5x, plainly audible
+  and 50 % more bandwidth. =settle-threshold= (~sync_core.cljc:51~) is
+  defined and read nowhere.
+- Behind by 30 s or more hard-seeks (~sync_core.cljc:39~). For a viewer whose
+  problem is bandwidth, a forward seek lands in an empty buffer: a fresh
+  stall.
+- Peer lag never updates after join. =broadcast-peers= runs only from the
+  join and leave paths (~src/clj/goob_toob/ws.clj:60,72~); =beat-msg= carries
+  no peers (~sync.clj:28~). The host sees join-time lag until someone leaves.
+- Peer lag sign is inverted on display. =status!= stores
+  =expected − pos= (positive when behind, ~sync.clj:69~); =ui/fmt-lag=
+  prints =behind= for negative values (~src/cljs/goob_toob/ui.cljs:62-66~).
+  A viewer 8 s behind shows as "8s ahead".
+- Playback rate is the real mechanism, not timestamp jumps. The client sets
+  =video.playbackRate= directly (~watch.cljs:65-66~); dash.js's own
+  =setPlaybackRate= is the same assignment
+  (~node_modules/dashjs/dist/dash.all.debug.js:17506-17508~) and its live
+  catch-up feature is built on it. =preservesPitch= is already set at player
+  create (~watch.cljs:155-156~).
+- Prior art, from the #8 thread: NTP slews under 128 ms offset and steps
+  above it (our =:catch-up= / =:seek=); broadcast time compression runs 2-5 %
+  fast unnoticed and the tempo JND is about 5 %, so 1.05x is the invisible
+  ceiling; Syncplay slows the *ahead* clients to 0.95x once someone is
+  >1.5 s behind, which costs the laggard no bandwidth and adds to the closing
+  speed. With the room at 0.97 and the laggard at 1.05 the gap closes at
+  0.08 s/s: 10 s heals in about two minutes with nobody past 5 %.
+
+* Plan
+** 1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)
+Replace =policy=, =catch-rate=, =nudge-slow-rate= and =settle-threshold=
+with the following. Everything is data in, data out; no platform calls.
+
+#+begin_src clojure
+(def tuning
+  {:dead-band       1.0    ; behind by less than this: do nothing
+   :settle          0.15   ; hysteresis exit for catch-up and nudge
+   :nudge-enter     0.5    ; ahead by more than this: slow to :nudge-rate
+   :seek-ahead      1.5    ; ahead by more than this: seek back (buffer has it)
+   :catch-rate      1.05   ; absolute playbackRate while catching up
+   :nudge-rate      0.95   ; absolute playbackRate while ahead
+   :runway          8.0    ; seconds of buffered media required to catch up
+   :room-slow-rate  0.97
+   :room-slow-enter 3.0    ; someone this far behind: room slows
+   :room-slow-exit  1.0    ; everyone within this: room back to 1.0
+   :status-fresh-ms 15000  ; older status reports do not count
+   :gone-after-s    60.0}) ; this far behind is "reload me", not "wait for me"
+
+(defn policy
+  "prev is the mode from the last tick, d is local - expected in seconds
+  (negative = behind), runway is buffered seconds ahead of currentTime.
+  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."
+  [prev d runway]
+  (let [{:keys [dead-band settle nudge-enter seek-ahead] runway-min :runway} tuning]
+    (cond
+      (> d seek-ahead)                                        :seek-back
+      (or (> d nudge-enter) (and (= prev :nudge-slow) (> d settle))) :nudge-slow
+      (and (>= runway runway-min)
+           (or (< d (- dead-band))
+               (and (= prev :catch-up) (< d (- settle)))))    :catch-up
+      :else                                                   :none)))
+
+(defn rate-for [mode room-rate]
+  (case mode
+    :catch-up   (:catch-rate tuning)
+    :nudge-slow (:nudge-rate tuning)
+    room-rate))
+
+(defn room-rate
+  "prev is the room's current rate. clients is a seq of
+  {:nick s :drift d :age-ms n} where drift is pos - expected (negative =
+  behind) and age-ms is how old the report is. Returns {:rate r :for nick}
+  with :for the worst eligible laggard while slowed, else nil."
+  [prev clients]
+  (let [{:keys [room-slow-rate room-slow-enter room-slow-exit
+                status-fresh-ms gone-after-s]} tuning
+        eligible (filter #(and (<= (:age-ms %) status-fresh-ms)
+                               (<= (- (:drift %)) gone-after-s))
+                         clients)
+        worst (apply max-key #(- (:drift %)) {:drift 0.0 :nick nil} eligible)
+        behind (- (:drift worst))]
+    (cond
+      (>= behind room-slow-enter) {:rate room-slow-rate :for (:nick worst)}
+      (<= behind room-slow-exit)  {:rate 1.0 :for nil}
+      :else {:rate prev :for (when (= prev room-slow-rate) (:nick worst))})))
+
+(defn reanchor
+  "Change a playing room's rate without moving its position."
+  [room now rate]
+  (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
+#+end_src
+
+Notes for the implementer: =max-key= with the =(- drift)= key picks the
+most-behind client; the seed map makes the empty case return =behind = 0=.
+Delete =catch-rate=, =nudge-slow-rate= and =settle-threshold= (their values
+live in =tuning= now) and fix the two callers in =watch.cljs=. =drift= and
+=expected-pos= are unchanged. Keep the ns docstring; add no comments.
+
+** 2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat
+- =status!=: store =:drift (- pos expected)= and =:at (mono-ms)= instead of
+  =:lag=. Positive now means ahead, matching =sc/drift=. =peers-list= emits
+  =:lag (:drift c)= so the wire name and =ui/fmt-lag= stay as they are and the
+  display sign comes out right.
+- =host-cmd!=: every op (=play=, =pause=, =seek=) also sets =:rate 1.0=. The
+  lag data is stale after a host action; the beat re-evaluates within 2 s.
+- New =tick-room!=:
+  #+begin_src clojure
+  (defn- client-drifts [room now]
+    (for [[_ c] (:clients room)]
+      {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))}))
+
+  (defn- tick-room! [room-id]
+    (let [now (mono-ms)
+          room (get @rooms* room-id)
+          {:keys [rate for]} (sc/room-rate (:rate room) (client-drifts room now))]
+      (when (and (:playing? room) (not= rate (:rate room)))
+        (swap! rooms* update room-id sc/reanchor now rate)
+        (println "room" room-id "rate" rate (if for (str "for " for) ""))
+        (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "rate")))
+      (let [room (get @rooms* room-id)]
+        (broadcast room-id (assoc (beat-msg room)
+                                  :slow-for (when (= (:rate room) (:room-slow-rate sc/tuning)) for)
+                                  :peers (peers-list room))))))
+  #+end_src
+  =start-beat-loop!= calls =tick-room!= for each room with clients instead
+  of broadcasting =beat-msg= directly. A paused room never changes rate (the
+  =playing?= guard) but still beats.
+- =broadcast-peers= stays for join/leave (immediate list change).
+
+** 3 · watch.cljs: room-relative rate, policy memory, runway, status cadence
+- =st= gains ="mode"= (init =:none=).
+- New =buffer-ahead=:
+  #+begin_src clojure
+  (defn- buffer-ahead [video]
+    (let [b (.-buffered video) t (.-currentTime video)]
+      (loop [i 0]
+        (cond (>= i (.-length b)) 0.0
+              (and (<= (.start b i) t) (<= t (.end b i))) (- (.end b i) t)
+              :else (recur (inc i))))))
+  #+end_src
+- =apply-policy!= becomes:
+  #+begin_src clojure
+  (defn- apply-policy! [st video]
+    (when (and (.-started st) (.-room st) (not (.-buffering st)))
+      (let [room (.-room st)
+            expected (expected-now st room)
+            d (sc/drift (.-currentTime video) expected)
+            mode (sc/policy (.-mode st) d (buffer-ahead video))
+            rate (sc/rate-for mode (:rate room))]
+        (set! (.-mode st) mode)
+        (when (= mode :seek-back) (set! (.-currentTime video) expected))
+        (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
+          (set! (.-playbackRate video) rate))
+        (set! (.-textContent lag-hint)
+              (if (< d -10.0)
+                (str "you're " (int (- d)) "s behind the room — reload to jump to it")
+                "")))))
+  #+end_src
+  =lag-hint= is a new =:span.muted= under the video in =shell=, passed via
+  =refs=. The hint is the only UI for being far behind; there is no button,
+  by decision.
+- =apply-state-msg!=: ="pause"= keeps setting =playbackRate 1.0=; ="play"=
+  and ="seek"= unchanged; ="rate"= needs no branch (the room map is already
+  replaced at the top of the fn, the next tick applies it).
+- ="beat"= handler: additionally =render-peers!= from =(:peers msg)= and set
+  a =slow-note= span in the host row to ="room at 0.97x for <nick>"= when
+  =(:slow-for msg)= is non-nil, else empty.
+- =loops!=: status interval =5000= → =2000=. Ping stays 5000. The 500 ms
+  policy tick stays.
+- Remove the =:seek= branch and =sc/catch-rate= / =sc/nudge-slow-rate= uses.
+
+** 4 · Tests
+=test/clj/goob_toob/sync_core_test.clj=: replace =policy-thresholds= and
+=catch-rate-ramps-continuously= with the following, one =deftest= each, names
+as given. Each must fail alone when its branch is broken (see Verification).
+| test name                                            | asserts                                                                                   |
+|------------------------------------------------------+-------------------------------------------------------------------------------------------|
+| =policy-ignores-drift-inside-the-dead-band=          | =(policy :none -0.9 20)= and =(policy :none 0.4 20)= are =:none=                            |
+| =policy-catches-up-only-with-runway=                 | =(policy :none -2.0 20)= is =:catch-up=; =(policy :none -2.0 3)= is =:none=                 |
+| =policy-keeps-catching-up-until-settled=             | =(policy :catch-up -0.5 20)= is =:catch-up=; =(policy :catch-up -0.1 20)= is =:none=        |
+| =policy-never-seeks-forward=                         | =(policy :none -100.0 20)= is =:catch-up=; =(policy :none -100.0 0)= is =:none=             |
+| =policy-nudges-when-ahead-and-exits-at-settle=       | =(policy :none 0.6 20)= is =:nudge-slow=; =(policy :nudge-slow 0.2 20)= is =:nudge-slow=; =(policy :nudge-slow 0.1 20)= is =:none= |
+| =policy-seeks-back-only-when-far-ahead=              | =(policy :none 1.6 20)= is =:seek-back=; =(policy :none 1.4 20)= is =:nudge-slow=            |
+| =rate-for-is-relative-to-the-room-rate=              | =(rate-for :none 0.97)= is =0.97=; =(rate-for :catch-up 0.97)= is =1.05=; =(rate-for :nudge-slow 1.0)= is =0.95= |
+| =room-rate-slows-at-three-seconds-behind=            | prev 1.0, one client drift =-3.0= age 0 → =:rate 0.97 :for= that nick                       |
+| =room-rate-holds-between-exit-and-enter=             | prev 0.97, worst drift =-2.0= → =:rate 0.97=; prev 1.0, same input → =:rate 1.0=            |
+| =room-rate-recovers-when-everyone-is-within-a-second= | prev 0.97, drifts =-0.8= and =0.2= → =:rate 1.0 :for nil=                                   |
+| =room-rate-ignores-stale-and-gone-clients=           | prev 1.0, drift =-20= age 20000 → 1.0; drift =-70= age 0 → 1.0                              |
+| =reanchor-does-not-move-the-position=                | room pos 10 t0 1000 playing rate 1.0, now 5000, new rate 0.97 → pos 14.0, t0 5000, rate 0.97 |
+Keep =expected-pos-moves-with-clock=, =ntp-offset-estimates-server-skew=,
+=best-offset-prefers-lowest-rtt= as they are.
+
+** 5 · Release
+Behaviour change visible to every viewer: the merge's last commit carries
+=Release: minor= so CI cuts v0.3.0.
+
+* Risks and open questions
+- *A single flaky viewer slows the room.* Bounded three ways: the 3 s enter
+  threshold, the 60 s "gone" cut-off, the 15 s staleness cut-off. If it still
+  annoys, the knob is =:room-slow-enter=. A host-side toggle is deliberately
+  not in this plan; add it only if a real party asks.
+- *Audio at 0.95-1.05x.* =preservesPitch= makes it inaudible in Chrome and
+  Firefox; old Safari pitch-shifts slightly. Accepted.
+- *Catch-up needs runway, runway needs bandwidth.* A viewer who can never
+  buffer 8 s ahead never catches up on their own; the room's 0.97 and a
+  reload are their tools until #7 lowers their rung.
+- *Two sources of truth for rate on the client.* The element's
+  =playbackRate= is written only from =apply-policy!= and the pause handler;
+  nothing else touches it. Keep it that way.
+- *Status at 2 s.* ~40 bytes per viewer per 2 s; irrelevant.
+
+* Verification
+1. =make test=: expected tail =Ran 25 tests containing N assertions. 0 failures=
+   (12 new sync-core tests replace 2). Assertion audit: for each new test,
+   break the branch it guards (flip the comparison in =policy= / =room-rate=,
+   or drop the =reanchor= pos update), run the suite, confirm that test and
+   only that test fails, restore. Report which were audited.
+2. =make image && STORAGE=... ADMIN_PASSWORD=... make run=; upload
+   =test_data/[jackoneill] Dai Mahou Touge 1 [696A844C].mkv=, make a room.
+3. Two Chrome windows: host (admin cookie) and viewer. Viewer devtools →
+   Network → custom throttling profile 1500 kbit/s down. Play from the host.
+4. Viewer console: =v=document.querySelector('video'); v.currentTime-=6=.
+   Expect =v.playbackRate= to read 1.05 within 1 s, drift to close over
+   ~60-75 s (server.log: =room <id> rate 0.97 for <nick>= within 2 s, then
+   =rate 1.0= once within 1 s), no jump in =v.currentTime=.
+5. Viewer console: =v.currentTime-=40=. Expect: no seek, rate 1.05, hint
+   "you're 40s behind the room — reload to jump to it" under the video, host
+   peer list reads "40s behind" (sign fix), room at 0.97x note in the host
+   row with the viewer's nick. Reload the viewer: it parks at the room's
+   position and plays in sync after the native play press.
+6. Viewer console: =v.currentTime+=3=. Expect a single seek back and rate
+   returning to the room rate.
+7. Ten minutes of throttled playback with no console injection: at most one
+   =:stalled= line in server.log, host peer list within the band, no
+   audible rate change at the host.
+
+* Implementation notes
+(filled in when it ships)
