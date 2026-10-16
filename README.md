@@ -74,7 +74,7 @@ Windows, steps 3–7 above apply.
 - **[Full docs: `README.org`](https://github.com/soniccyclone/goob-toob/blob/main/README.org)** —
   quickstart, env vars, sharing, sync design, layout. The markdown you're
   reading is the short version; the org file is the real manual.
-- **[Plans site](https://nathanb.srht.site/goob-toob-plans/)** — every plan
+- **[Plans site](https://soniccyclone.github.io/goob-toob/)** — every plan
   rendered, newest first, with status stamps.
 - **[Plans directory](https://github.com/soniccyclone/goob-toob/tree/main/plans)** —
   the dated `.org` sources + plan-day html snapshots.

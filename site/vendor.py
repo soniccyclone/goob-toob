@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Vendor the themes' third-party CSS/JS into www/vendor and point the built HTML at it.
 
-srht.site serves with a Content-Security-Policy of style-src/script-src 'self', so every
-external stylesheet and script is refused. Assets are mirrored as vendor/<host>/<path>, so
+The published site carries no third-party dependency: every external stylesheet and script
+is mirrored as vendor/<host>/<path>, so
 relative url() refs inside CSS keep working; root-absolute and cross-host refs are
 rewritten to relative paths. CSS refs are followed recursively (fonts, icons, @imports).
 
