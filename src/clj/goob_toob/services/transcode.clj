@@ -52,6 +52,9 @@
   (let [fit (filter #(<= (:h %) height) ladder)]
     (if (seq fit) fit [(last ladder)])))
 
+(defn- ffmpeg-path [^java.io.File f]
+  (str/replace (.getPath f) "\\" "/"))
+
 (defn- ffmpeg-cmd [^java.io.File in ^java.io.File out {:keys [audio?]} ladder]
   (let [n (count ladder)
         split (str "[0:v]split=" n (str/join (for [i (range n)] (str "[s" i "]"))) ";")
@@ -77,7 +80,7 @@
      ["-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
       "-adaptation_sets" (if audio? "id=0,streams=v id=1,streams=a" "id=0,streams=v")
       "-progress" "pipe:1" "-nostats"
-      (.getPath out)])))
+      (ffmpeg-path out)])))
 
 (defn- run-ffmpeg [cmd video-id dur]
   "Runs the encode; updates DB progress on each out_time_ms line (~1/s)."
