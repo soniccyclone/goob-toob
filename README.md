@@ -10,31 +10,28 @@ and catch themselves up when their internet wobbles.
 
 ## Download
 
-**[goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)** — Windows installer
-&nbsp;&nbsp;·&nbsp;&nbsp;
 **[goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)** — Windows, no install: just run it
 &nbsp;&nbsp;·&nbsp;&nbsp;
 **[goob-toob-linux-x86_64.AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage)** — Linux
 
-The desktop app bundles everything (JRE, ffmpeg, cloudflared): install it, pick
+The desktop app bundles everything (JRE, ffmpeg, cloudflared): run it, pick
 a video folder, and it hands you a public link to toss at your friends. No
 terminal, no password — the admin console lives on loopback and the public
 tunnel has no admin surface at all.
 
 Prefer a container? `make image && make run` below.
 
-## Windows: install & first party
+## Windows: first party
 
 1. **Download**
-   [goob-toob-win-x64-setup.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-setup.exe)
-   (~250 MB — it carries its own JRE, ffmpeg, and cloudflared, so there is
-   nothing else to install). Prefer no install at all? Grab
    [goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)
-   and just run it — same app, nothing written outside its own folder
-   except your videos and a small config in `%APPDATA%`.
+   (~250 MB — it carries its own JRE, ffmpeg, and cloudflared, so there is
+   nothing else to install). Put it wherever you like; nothing is written
+   outside its own folder except your videos and a small config in
+   `%APPDATA%`.
 2. **Run it.** SmartScreen will say *"Windows protected your PC"* because the
-   installer isn't code-signed: click **"More info" → "Run anyway"**. It
-   installs per-user (no admin prompt) and adds a Start-menu shortcut.
+   exe isn't code-signed: click **"More info" → "Run anyway"**. No admin
+   prompt, no installer.
 3. **First launch** asks *"Where should goob-toob keep your videos?"* — pick
    (or create) the folder your library lives in. Uploads, the database, and
    the generated streams all live under that one folder.
@@ -62,7 +59,8 @@ Good to know:
 - Trouble? The log is `%APPDATA%\goob-toob-desktop\server.log`. The storage
   folder can be changed anytime with the **change** button on the sharing
   card (the server restarts against the new folder).
-- Uninstall from *Settings → Apps* like anything else.
+- To remove it, delete the exe (and `%APPDATA%\goob-toob-desktop` if you
+  want the config and log gone too). Your video folder is yours.
 
 ## Linux
 
@@ -81,7 +79,7 @@ Windows, steps 3–7 above apply.
 - **[Plans directory](https://github.com/soniccyclone/goob-toob/tree/main/plans)** —
   the dated `.org` sources + plan-day html snapshots.
 - **[Releases](https://github.com/soniccyclone/goob-toob/releases)** —
-  desktop installers, newest first.
+  desktop builds, newest first.
 - **[Actions](https://github.com/soniccyclone/goob-toob/actions)** — CI on
   every push; pushing a `v*` tag cuts a release.
 
