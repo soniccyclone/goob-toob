@@ -61,7 +61,7 @@
         scales (str/join ";" (for [i (range n)]
                                (str "[s" i "]scale=-2:" (:h (nth ladder i)) "[v" i "]")))
         maps-v (mapcat (fn [i] ["-map" (str "[v" i)]) (range n))
-        maps-a (when audio? (mapcat (fn [_] ["-map" "0:a:0"]) (range n)))
+        maps-a (when audio? ["-map" "0:a:0"])
         bitrates (mapcat (fn [i rung] [(str "-b:v:" i) (str (:v rung) "k")])
                          (range n) ladder)]
     (concat
