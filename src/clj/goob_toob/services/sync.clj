@@ -54,14 +54,14 @@
   (let [now (mono-ms)]
     (swap! rooms*
       (fn [rs]
-        (let [r (assoc (get rs room-id) :rate 1.0)
+        (let [r (get rs room-id)
               r (case op
                   "play"  (assoc r :pos (or pos (:pos r)) :t0 now :playing? true)
                   "pause" (assoc r :pos (or pos (sc/expected-pos (assoc r :now now)))
                                    :t0 now :playing? false)
                   "seek"  (assoc r :pos (or pos 0.0) :t0 now)
                   r)]
-          (assoc rs room-id r))))
+          (assoc rs room-id (assoc r :rate 1.0)))))
     (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op op))))
 
 (defn- behind-since [since now drift]
