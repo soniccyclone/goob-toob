@@ -34,7 +34,7 @@
       ]
     },
     "win": {
-      "target": ["nsis", "zip", "portable"],
+      "target": ["portable"],
       "icon": "icon.png",
       "extraResources": [
         { "from": "../vendor/windows/jre", "to": "jre" },
@@ -42,10 +42,6 @@
         { "from": "../vendor/windows/ffprobe.exe", "to": "ffmpeg/ffprobe.exe" },
         { "from": "../vendor/windows/cloudflared.exe", "to": "cloudflared/cloudflared.exe" }
       ]
-    },
-    "nsis": {
-      "oneClick": true,
-      "artifactName": "goob-toob-setup.exe"
     },
     "portable": {
       "artifactName": "goob-toob-win-x64-portable.exe"
