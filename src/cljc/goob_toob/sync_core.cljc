@@ -26,26 +26,63 @@
 
 (defn drift [local expected] (- local expected))
 
+(def tuning
+  {:dead-band       1.0
+   :settle          0.15
+   :nudge-enter     0.5
+   :seek-ahead      1.5
+   :catch-rate      1.05
+   :nudge-rate      0.95
+   :runway          8.0
+   :room-slow-rate  0.97
+   :room-slow-enter 3.0
+   :room-slow-exit  1.0
+   :status-fresh-ms 15000
+   :gone-after-s    60.0
+   :give-up-ms      180000})
+
 (defn policy
-  "What a viewer should do given drift (local - expected, seconds):
-  :none        in sync
-  :catch-up    behind -> glide back at catch-rate (no jump)
-  :nudge-slow  ahead by a little -> playbackRate 0.95
-  :seek        ahead by a lot, or >30 s behind (lost the plot) -> hard seek"
-  [d]
-  (let [a (abs d)]
+  "prev is the mode from the last tick, d is local - expected in seconds
+  (negative = behind), runway is buffered seconds ahead of currentTime.
+  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."
+  [prev d runway]
+  (let [{:keys [dead-band settle nudge-enter seek-ahead] runway-min :runway} tuning]
     (cond
-      (< a 0.3)   :none
-      (neg? d)    (if (>= a 30.0) :seek :catch-up)
-      (<= a 1.5)  :nudge-slow
-      :else       :seek)))
+      (> d seek-ahead)                                               :seek-back
+      (or (> d nudge-enter) (and (= prev :nudge-slow) (> d settle))) :nudge-slow
+      (and (>= runway runway-min)
+           (or (< d (- dead-band))
+               (and (= prev :catch-up) (< d (- settle)))))           :catch-up
+      :else                                                          :none)))
 
-(defn catch-rate
-  "Gradual catch-up playback rate for negative drift: 0.5 s behind -> 1.05x,
-  5 s or more behind -> 1.5x. Continuous, so stalls heal with a glide, not a
-  seek."
-  [d]
-  (min 1.5 (+ 1.0 (* 0.1 (abs d)))))
+(defn rate-for [mode room-rate]
+  (case mode
+    :catch-up   (:catch-rate tuning)
+    :nudge-slow (:nudge-rate tuning)
+    room-rate))
 
-(def nudge-slow-rate 0.95)
-(def settle-threshold 0.15)
+(defn room-rate
+  "prev is the room's current rate. clients is a seq of
+  {:nick s :drift d :age-ms n :behind-ms m} where drift is pos - expected
+  (negative = behind), age-ms is how old the report is and behind-ms is how
+  long this client has continuously been at or past :room-slow-enter (0 when
+  not). Returns {:rate r :for nick} with :for the worst eligible laggard
+  while slowed, else nil. A client past :give-up-ms no longer counts."
+  [prev clients]
+  (let [{:keys [room-slow-rate room-slow-enter room-slow-exit
+                status-fresh-ms gone-after-s give-up-ms]} tuning
+        eligible (filter #(and (<= (:age-ms %) status-fresh-ms)
+                               (<= (- (:drift %)) gone-after-s)
+                               (<= (or (:behind-ms %) 0) give-up-ms))
+                         clients)
+        worst (apply max-key #(- (:drift %)) {:drift 0.0 :nick nil} eligible)
+        behind (- (:drift worst))]
+    (cond
+      (>= behind room-slow-enter) {:rate room-slow-rate :for (:nick worst)}
+      (<= behind room-slow-exit)  {:rate 1.0 :for nil}
+      :else {:rate prev :for (when (= prev room-slow-rate) (:nick worst))})))
+
+(defn reanchor
+  "Change a playing room's rate without moving its position."
+  [room now rate]
+  (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
