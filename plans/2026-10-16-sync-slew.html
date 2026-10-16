@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-16 Fri 18:21 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sync slew: room slow-down, gentle catch-up, no forward seeks</title>
+<meta name="author" content="root" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Sync slew: room slow-down, gentle catch-up, no forward seeks</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org864c33d">Goal</a></li>
+<li><a href="#orgf6c26f2">Findings</a></li>
+<li><a href="#org59e8954">Plan</a>
+<ul>
+<li><a href="#org34e4e49">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</a></li>
+<li><a href="#orge6e2779">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</a></li>
+<li><a href="#org5cf2431">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</a></li>
+<li><a href="#orgebc8efe">4 · Tests</a></li>
+<li><a href="#orgd55b65b">5 · Release</a></li>
+</ul>
+</li>
+<li><a href="#org966fe56">Risks and open questions</a></li>
+<li><a href="#orgd9f19f4">Verification</a></li>
+<li><a href="#orgb0c2f6f">Implementation notes</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org864c33d" class="outline-2">
+<h2 id="org864c33d">Goal</h2>
+<div class="outline-text-2" id="text-org864c33d">
+<p>
+Stop the catch-up spiral for viewers on slow or jittery connections. Today a
+viewer 0.3 s behind is pushed to play faster, up to 1.5x, which pulls 1.5x
+the bitrate they already could not sustain, so the fix for a stall causes the
+next stall. After this plan: the room itself slows to 0.97x while anyone is
+meaningfully behind (on by default), a lagging viewer slews back at no more
+than 1.05x and only when it has buffer to spare, nobody is ever seeked
+forward, and a viewer who wants to jump to the room reloads the page. All
+rates stay inside the band humans do not notice.
+</p>
+
+<p>
+Decisions already taken on #8: room slow-down on by default; laggards only
+slew; reload is the jump; #7 (sync-aware quality cap, ladder bitrates) comes
+after this and is out of scope here.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf6c26f2" class="outline-2">
+<h2 id="orgf6c26f2">Findings</h2>
+<div class="outline-text-2" id="text-orgf6c26f2">
+<ul class="org-ul">
+<li>The server already carries a room rate and never uses it. <code>room-for</code> sets
+<code>:rate 1.0</code> (<code>src/clj/goob_toob/services/sync.clj:20</code>), <code>state-msg</code>
+broadcasts it (<code>sync.clj:24-26</code>), <code>expected-pos</code> honours it
+(<code>src/cljc/goob_toob/sync_core.cljc:8-14</code>). Nothing ever writes another
+value.</li>
+<li>The server knows every viewer's lag and stall flag from <code>status!</code>
+(<code>sync.clj:67-71</code>, fed every 5 s by <code>src/cljs/goob_toob/watch.cljs:280-283</code>)
+and uses it only to paint the peer list.</li>
+<li>The client policy is stateless and absolute: <code>policy d</code> (<code>sync_core.cljc:29-41</code>)
+has no memory, so a viewer hovering at the 0.3 s edge flips in and out of
+<code>:catch-up</code> every 500 ms tick (<code>watch.cljs:284</code>); and <code>:none</code> forces
+<code>playbackRate 1.0</code> (<code>watch.cljs:63-64</code>), which would fight any room rate
+other than 1.0 (expected advances at 0.97, the element plays 1.0, the
+viewer drifts ahead 0.03 s/s, nudges to 0.95 after ten seconds, repeat).</li>
+<li><code>catch-rate</code> is <code>1 + 0.1|d|</code> capped at 1.5 (<code>sync_core.cljc:43-48</code>): 0.3 s
+behind already plays 1.03x forever; 5 s behind plays 1.5x, plainly audible
+and 50 % more bandwidth. <code>settle-threshold</code> (<code>sync_core.cljc:51</code>) is
+defined and read nowhere.</li>
+<li>Behind by 30 s or more hard-seeks (<code>sync_core.cljc:39</code>). For a viewer whose
+problem is bandwidth, a forward seek lands in an empty buffer: a fresh
+stall.</li>
+<li>Peer lag never updates after join. <code>broadcast-peers</code> runs only from the
+join and leave paths (<code>src/clj/goob_toob/ws.clj:60,72</code>); <code>beat-msg</code> carries
+no peers (<code>sync.clj:28</code>). The host sees join-time lag until someone leaves.</li>
+<li>Peer lag sign is inverted on display. <code>status!</code> stores
+<code>expected − pos</code> (positive when behind, <code>sync.clj:69</code>); <code>ui/fmt-lag</code>
+prints <code>behind</code> for negative values (<code>src/cljs/goob_toob/ui.cljs:62-66</code>).
+A viewer 8 s behind shows as "8s ahead".</li>
+<li>Playback rate is the real mechanism, not timestamp jumps. The client sets
+<code>video.playbackRate</code> directly (<code>watch.cljs:65-66</code>); dash.js's own
+<code>setPlaybackRate</code> is the same assignment
+(<code>node_modules/dashjs/dist/dash.all.debug.js:17506-17508</code>) and its live
+catch-up feature is built on it. <code>preservesPitch</code> is already set at player
+create (<code>watch.cljs:155-156</code>).</li>
+<li>Prior art, from the #8 thread: NTP slews under 128 ms offset and steps
+above it (our <code>:catch-up</code> / <code>:seek</code>); broadcast time compression runs 2-5 %
+fast unnoticed and the tempo JND is about 5 %, so 1.05x is the invisible
+ceiling; Syncplay slows the <b>ahead</b> clients to 0.95x once someone is
+&gt;1.5 s behind, which costs the laggard no bandwidth and adds to the closing
+speed. With the room at 0.97 and the laggard at 1.05 the gap closes at
+0.08 s/s: 10 s heals in about two minutes with nobody past 5 %.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org59e8954" class="outline-2">
+<h2 id="org59e8954">Plan</h2>
+<div class="outline-text-2" id="text-org59e8954">
+</div>
+<div id="outline-container-org34e4e49" class="outline-3">
+<h3 id="org34e4e49">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</h3>
+<div class="outline-text-3" id="text-org34e4e49">
+<p>
+Replace <code>policy</code>, <code>catch-rate</code>, <code>nudge-slow-rate</code> and <code>settle-threshold</code>
+with the following. Everything is data in, data out; no platform calls.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def tuning
+  {:dead-band       1.0    ; behind by less than this: do nothing
+   :settle          0.15   ; hysteresis exit for catch-up and nudge
+   :nudge-enter     0.5    ; ahead by more than this: slow to :nudge-rate
+   :seek-ahead      1.5    ; ahead by more than this: seek back (buffer has it)
+   :catch-rate      1.05   ; absolute playbackRate while catching up
+   :nudge-rate      0.95   ; absolute playbackRate while ahead
+   :runway          8.0    ; seconds of buffered media required to catch up
+   :room-slow-rate  0.97
+   :room-slow-enter 3.0    ; someone this far behind: room slows
+   :room-slow-exit  1.0    ; everyone within this: room back to 1.0
+   :status-fresh-ms 15000  ; older status reports do not count
+   :gone-after-s    60.0}) ; this far behind is "reload me", not "wait for me"
+
+(defn policy
+  "prev is the mode from the last tick, d is local - expected in seconds
+  (negative = behind), runway is buffered seconds ahead of currentTime.
+  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."
+  [prev d runway]
+  (let [{:keys [dead-band settle nudge-enter seek-ahead] runway-min :runway} tuning]
+    (cond
+      (&gt; d seek-ahead)                                        :seek-back
+      (or (&gt; d nudge-enter) (and (= prev :nudge-slow) (&gt; d settle))) :nudge-slow
+      (and (&gt;= runway runway-min)
+           (or (&lt; d (- dead-band))
+               (and (= prev :catch-up) (&lt; d (- settle)))))    :catch-up
+      :else                                                   :none)))
+
+(defn rate-for [mode room-rate]
+  (case mode
+    :catch-up   (:catch-rate tuning)
+    :nudge-slow (:nudge-rate tuning)
+    room-rate))
+
+(defn room-rate
+  "prev is the room's current rate. clients is a seq of
+  {:nick s :drift d :age-ms n} where drift is pos - expected (negative =
+  behind) and age-ms is how old the report is. Returns {:rate r :for nick}
+  with :for the worst eligible laggard while slowed, else nil."
+  [prev clients]
+  (let [{:keys [room-slow-rate room-slow-enter room-slow-exit
+                status-fresh-ms gone-after-s]} tuning
+        eligible (filter #(and (&lt;= (:age-ms %) status-fresh-ms)
+                               (&lt;= (- (:drift %)) gone-after-s))
+                         clients)
+        worst (apply max-key #(- (:drift %)) {:drift 0.0 :nick nil} eligible)
+        behind (- (:drift worst))]
+    (cond
+      (&gt;= behind room-slow-enter) {:rate room-slow-rate :for (:nick worst)}
+      (&lt;= behind room-slow-exit)  {:rate 1.0 :for nil}
+      :else {:rate prev :for (when (= prev room-slow-rate) (:nick worst))})))
+
+(defn reanchor
+  "Change a playing room's rate without moving its position."
+  [room now rate]
+  (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
+</pre>
+</div>
+
+<p>
+Notes for the implementer: <code>max-key</code> with the <code>(- drift)</code> key picks the
+most-behind client; the seed map makes the empty case return <code>behind = 0</code>.
+Delete <code>catch-rate</code>, <code>nudge-slow-rate</code> and <code>settle-threshold</code> (their values
+live in <code>tuning</code> now) and fix the two callers in <code>watch.cljs</code>. <code>drift</code> and
+<code>expected-pos</code> are unchanged. Keep the ns docstring; add no comments.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge6e2779" class="outline-3">
+<h3 id="orge6e2779">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</h3>
+<div class="outline-text-3" id="text-orge6e2779">
+<ul class="org-ul">
+<li><code>status!</code>: store <code>:drift (- pos expected)</code> and <code>:at (mono-ms)</code> instead of
+<code>:lag</code>. Positive now means ahead, matching <code>sc/drift</code>. <code>peers-list</code> emits
+<code>:lag (:drift c)</code> so the wire name and <code>ui/fmt-lag</code> stay as they are and the
+display sign comes out right.</li>
+<li><code>host-cmd!</code>: every op (<code>play</code>, <code>pause</code>, <code>seek</code>) also sets <code>:rate 1.0</code>. The
+lag data is stale after a host action; the beat re-evaluates within 2 s.</li>
+<li><p>
+New <code>tick-room!</code>:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure">(defn- client-drifts [room now]
+  (for [[_ c] (:clients room)]
+    {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))}))
+
+(defn- tick-room! [room-id]
+  (let [now (mono-ms)
+        room (get @rooms* room-id)
+        {:keys [rate for]} (sc/room-rate (:rate room) (client-drifts room now))]
+    (when (and (:playing? room) (not= rate (:rate room)))
+      (swap! rooms* update room-id sc/reanchor now rate)
+      (println "room" room-id "rate" rate (if for (str "for " for) ""))
+      (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "rate")))
+    (let [room (get @rooms* room-id)]
+      (broadcast room-id (assoc (beat-msg room)
+                                :slow-for (when (= (:rate room) (:room-slow-rate sc/tuning)) for)
+                                :peers (peers-list room))))))
+</pre>
+</div>
+<p>
+<code>start-beat-loop!</code> calls <code>tick-room!</code> for each room with clients instead
+of broadcasting <code>beat-msg</code> directly. A paused room never changes rate (the
+<code>playing?</code> guard) but still beats.
+</p></li>
+<li><code>broadcast-peers</code> stays for join/leave (immediate list change).</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5cf2431" class="outline-3">
+<h3 id="org5cf2431">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</h3>
+<div class="outline-text-3" id="text-org5cf2431">
+<ul class="org-ul">
+<li><code>st</code> gains <code>"mode"</code> (init <code>:none</code>).</li>
+<li><p>
+New <code>buffer-ahead</code>:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure">(defn- buffer-ahead [video]
+  (let [b (.-buffered video) t (.-currentTime video)]
+    (loop [i 0]
+      (cond (&gt;= i (.-length b)) 0.0
+            (and (&lt;= (.start b i) t) (&lt;= t (.end b i))) (- (.end b i) t)
+            :else (recur (inc i))))))
+</pre>
+</div></li>
+<li><p>
+<code>apply-policy!</code> becomes:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure">(defn- apply-policy! [st video]
+  (when (and (.-started st) (.-room st) (not (.-buffering st)))
+    (let [room (.-room st)
+          expected (expected-now st room)
+          d (sc/drift (.-currentTime video) expected)
+          mode (sc/policy (.-mode st) d (buffer-ahead video))
+          rate (sc/rate-for mode (:rate room))]
+      (set! (.-mode st) mode)
+      (when (= mode :seek-back) (set! (.-currentTime video) expected))
+      (when (&gt; (sc/abs (- (.-playbackRate video) rate)) 0.001)
+        (set! (.-playbackRate video) rate))
+      (set! (.-textContent lag-hint)
+            (if (&lt; d -10.0)
+              (str "you're " (int (- d)) "s behind the room — reload to jump to it")
+              "")))))
+</pre>
+</div>
+<p>
+<code>lag-hint</code> is a new <code>:span.muted</code> under the video in <code>shell</code>, passed via
+<code>refs</code>. The hint is the only UI for being far behind; there is no button,
+by decision.
+</p></li>
+<li><code>apply-state-msg!</code>: <code>"pause"</code> keeps setting <code>playbackRate 1.0</code>; <code>"play"</code>
+and <code>"seek"</code> unchanged; <code>"rate"</code> needs no branch (the room map is already
+replaced at the top of the fn, the next tick applies it).</li>
+<li><code>"beat"</code> handler: additionally <code>render-peers!</code> from <code>(:peers msg)</code> and set
+a <code>slow-note</code> span in the host row to <code>"room at 0.97x for &lt;nick&gt;"</code> when
+<code>(:slow-for msg)</code> is non-nil, else empty.</li>
+<li><code>loops!</code>: status interval <code>5000</code> → <code>2000</code>. Ping stays 5000. The 500 ms
+policy tick stays.</li>
+<li>Remove the <code>:seek</code> branch and <code>sc/catch-rate</code> / <code>sc/nudge-slow-rate</code> uses.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgebc8efe" class="outline-3">
+<h3 id="orgebc8efe">4 · Tests</h3>
+<div class="outline-text-3" id="text-orgebc8efe">
+<p>
+<code>test/clj/goob_toob/sync_core_test.clj</code>: replace <code>policy-thresholds</code> and
+<code>catch-rate-ramps-continuously</code> with the following, one <code>deftest</code> each, names
+as given. Each must fail alone when its branch is broken (see Verification).
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test name</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>policy-ignores-drift-inside-the-dead-band</code></td>
+<td class="org-left"><code>(policy :none -0.9 20)</code> and <code>(policy :none 0.4 20)</code> are <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>policy-catches-up-only-with-runway</code></td>
+<td class="org-left"><code>(policy :none -2.0 20)</code> is <code>:catch-up</code>; <code>(policy :none -2.0 3)</code> is <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>policy-keeps-catching-up-until-settled</code></td>
+<td class="org-left"><code>(policy :catch-up -0.5 20)</code> is <code>:catch-up</code>; <code>(policy :catch-up -0.1 20)</code> is <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>policy-never-seeks-forward</code></td>
+<td class="org-left"><code>(policy :none -100.0 20)</code> is <code>:catch-up</code>; <code>(policy :none -100.0 0)</code> is <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>policy-nudges-when-ahead-and-exits-at-settle</code></td>
+<td class="org-left"><code>(policy :none 0.6 20)</code> is <code>:nudge-slow</code>; <code>(policy :nudge-slow 0.2 20)</code> is <code>:nudge-slow</code>; <code>(policy :nudge-slow 0.1 20)</code> is <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>policy-seeks-back-only-when-far-ahead</code></td>
+<td class="org-left"><code>(policy :none 1.6 20)</code> is <code>:seek-back</code>; <code>(policy :none 1.4 20)</code> is <code>:nudge-slow</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rate-for-is-relative-to-the-room-rate</code></td>
+<td class="org-left"><code>(rate-for :none 0.97)</code> is <code>0.97</code>; <code>(rate-for :catch-up 0.97)</code> is <code>1.05</code>; <code>(rate-for :nudge-slow 1.0)</code> is <code>0.95</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-rate-slows-at-three-seconds-behind</code></td>
+<td class="org-left">prev 1.0, one client drift <code>-3.0</code> age 0 → <code>:rate 0.97 :for</code> that nick</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-rate-holds-between-exit-and-enter</code></td>
+<td class="org-left">prev 0.97, worst drift <code>-2.0</code> → <code>:rate 0.97</code>; prev 1.0, same input → <code>:rate 1.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-rate-recovers-when-everyone-is-within-a-second</code></td>
+<td class="org-left">prev 0.97, drifts <code>-0.8</code> and <code>0.2</code> → <code>:rate 1.0 :for nil</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-rate-ignores-stale-and-gone-clients</code></td>
+<td class="org-left">prev 1.0, drift <code>-20</code> age 20000 → 1.0; drift <code>-70</code> age 0 → 1.0</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>reanchor-does-not-move-the-position</code></td>
+<td class="org-left">room pos 10 t0 1000 playing rate 1.0, now 5000, new rate 0.97 → pos 14.0, t0 5000, rate 0.97</td>
+</tr>
+</tbody>
+</table>
+<p>
+Keep <code>expected-pos-moves-with-clock</code>, <code>ntp-offset-estimates-server-skew</code>,
+<code>best-offset-prefers-lowest-rtt</code> as they are.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd55b65b" class="outline-3">
+<h3 id="orgd55b65b">5 · Release</h3>
+<div class="outline-text-3" id="text-orgd55b65b">
+<p>
+Behaviour change visible to every viewer: the merge's last commit carries
+<code>Release: minor</code> so CI cuts v0.3.0.
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org966fe56" class="outline-2">
+<h2 id="org966fe56">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org966fe56">
+<ul class="org-ul">
+<li><b>A single flaky viewer slows the room.</b> Bounded three ways: the 3 s enter
+threshold, the 60 s "gone" cut-off, the 15 s staleness cut-off. If it still
+annoys, the knob is <code>:room-slow-enter</code>. A host-side toggle is deliberately
+not in this plan; add it only if a real party asks.</li>
+<li><b>Audio at 0.95-1.05x.</b> <code>preservesPitch</code> makes it inaudible in Chrome and
+Firefox; old Safari pitch-shifts slightly. Accepted.</li>
+<li><b>Catch-up needs runway, runway needs bandwidth.</b> A viewer who can never
+buffer 8 s ahead never catches up on their own; the room's 0.97 and a
+reload are their tools until #7 lowers their rung.</li>
+<li><b>Two sources of truth for rate on the client.</b> The element's
+<code>playbackRate</code> is written only from <code>apply-policy!</code> and the pause handler;
+nothing else touches it. Keep it that way.</li>
+<li><b>Status at 2 s.</b> ~40 bytes per viewer per 2 s; irrelevant.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd9f19f4" class="outline-2">
+<h2 id="orgd9f19f4">Verification</h2>
+<div class="outline-text-2" id="text-orgd9f19f4">
+<ol class="org-ol">
+<li><code>make test</code>: expected tail <code>Ran 25 tests containing N assertions. 0 failures</code>
+(12 new sync-core tests replace 2). Assertion audit: for each new test,
+break the branch it guards (flip the comparison in <code>policy</code> / <code>room-rate</code>,
+or drop the <code>reanchor</code> pos update), run the suite, confirm that test and
+only that test fails, restore. Report which were audited.</li>
+<li><code>make image &amp;&amp; STORAGE</code>&#x2026; ADMIN_PASSWORD=&#x2026; make run=; upload
+<code>test_data/[jackoneill] Dai Mahou Touge 1 [696A844C].mkv</code>, make a room.</li>
+<li>Two Chrome windows: host (admin cookie) and viewer. Viewer devtools →
+Network → custom throttling profile 1500 kbit/s down. Play from the host.</li>
+<li>Viewer console: <code>v=document.querySelector('video'); v.currentTime-=6</code>.
+Expect <code>v.playbackRate</code> to read 1.05 within 1 s, drift to close over
+~60-75 s (server.log: <code>room &lt;id&gt; rate 0.97 for &lt;nick&gt;</code> within 2 s, then
+<code>rate 1.0</code> once within 1 s), no jump in <code>v.currentTime</code>.</li>
+<li>Viewer console: <code>v.currentTime-=40</code>. Expect: no seek, rate 1.05, hint
+"you're 40s behind the room — reload to jump to it" under the video, host
+peer list reads "40s behind" (sign fix), room at 0.97x note in the host
+row with the viewer's nick. Reload the viewer: it parks at the room's
+position and plays in sync after the native play press.</li>
+<li>Viewer console: <code>v.currentTime+=3</code>. Expect a single seek back and rate
+returning to the room rate.</li>
+<li>Ten minutes of throttled playback with no console injection: at most one
+<code>:stalled</code> line in server.log, host peer list within the band, no
+audible rate change at the host.</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgb0c2f6f" class="outline-2">
+<h2 id="orgb0c2f6f">Implementation notes</h2>
+<div class="outline-text-2" id="text-orgb0c2f6f">
+<p>
+(filled in when it ships)
+</p>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-16</p>
+<p class="author">Author: root</p>
+<p class="date">Created: 2026-10-16 Fri 18:21</p>
+</div>
+</body>
+</html>
