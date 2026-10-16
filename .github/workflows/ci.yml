@@ -58,34 +58,28 @@ jobs:
           gh workflow run release.yml --ref "$TAG"
 
   plans:
-    # Re-render the plans site and publish to srht.site. Needs an SRHT_TOKEN
-    # secret (sourcehut OAuth token with pages scope); skipped without it.
-    if: github.event_name == 'push'
+    # Re-render plans/*.org and publish to GitHub Pages
+    # (https://soniccyclone.github.io/goob-toob/).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
-      - name: Token present?   # secrets context is not allowed in if: expressions
-        id: tok
-        env:
-          SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
-        run: echo "present=$([ -n "$SRHT_TOKEN" ] && echo yes)" >> "$GITHUB_OUTPUT"
-      - if: steps.tok.outputs.present == 'yes'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox-noarch
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
       - name: Install htmlize
-        if: steps.tok.outputs.present == 'yes'
         run: emacs --batch --eval "(progn (require 'package) (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) (package-initialize) (package-refresh-contents) (package-install 'htmlize))"
       - name: Build site
-        if: steps.tok.outputs.present == 'yes'
-        run: sh scripts/build-plans-site.sh
-      - name: Publish to srht.site
-        if: steps.tok.outputs.present == 'yes'
-        env:
-          SRHT_TOKEN: ${{ secrets.SRHT_TOKEN }}
-        run: |
-          (cd gen/www && tar -cvz . > "$GITHUB_WORKSPACE/site.tar.gz")
-          curl --fail -X PUT \
-            -H "Authorization: OAuth $SRHT_TOKEN" \
-            -H "Content-Directory: /goob-toob-plans" \
-            -H "Content-Type: application/gzip" \
-            --data-binary @site.tar.gz \
-            https://pages.sr.ht/sites/nathanb.srht.site
+        run: bash scripts/build-plans-site.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: gen/www
+      - id: deploy
+        uses: actions/deploy-pages@v4

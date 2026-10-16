@@ -12,7 +12,7 @@ resolution and catch themselves up when their internet wobbles.
 * Links
 | [[https://github.com/soniccyclone/goob-toob][repo]]        | GitHub home: summary, tree, log, refs |
 | [[https://github.com/soniccyclone/goob-toob/tree/main/plans][plans]]       | dated plan files (+ rendered html snapshots) |
-| [[https://nathanb.srht.site/goob-toob-plans/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
+| [[https://soniccyclone.github.io/goob-toob/][plans site]]  | every plan re-rendered, newest first — the comfortable way to read them |
 | [[https://github.com/soniccyclone/goob-toob/releases][releases]]    | desktop builds: Windows portable exe + Linux AppImage                  |
 | [[https://github.com/soniccyclone/goob-toob/actions][builds]]      | CI: runs on every push; every green merge to main is tagged + released |
 
@@ -189,7 +189,7 @@ Plans live in =plans/= (date-prefixed =.org= + rendered =.html= snapshot; see
 the index in =plans/README.org=). Pushing main runs the =plans= job in
 =.github/workflows/ci.yml=, which re-renders every =plans/*.org= with the org-plan skill's
 bigblow theme (vendored into =site/themes/=), builds an index page, vendors
-the theme's CDN assets (srht.site's CSP is 'self'-only), and publishes to
-[[https://nathanb.srht.site/goob-toob-plans/]]. Build it locally with
-=sh scripts/build-plans-site.sh= (needs emacs + htmlize; output in =gen/www/=).
+the theme's CDN assets so the site is self-contained, and publishes to
+GitHub Pages at [[https://soniccyclone.github.io/goob-toob/]]. Build it locally with
+=bash scripts/build-plans-site.sh= (needs emacs + htmlize; output in =gen/www/=).
 

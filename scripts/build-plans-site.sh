@@ -1,11 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Build the plans site into gen/www: an index listing every plans/*.org plus the
 # rendered plan pages, styled with the org-plan skill's bigblow theme (vendored
 # into site/themes). Fails loudly rather than publishing a partial site.
 #
 # The plan .org files are the source of truth; plans/*.html in the repo is just
-# the local snapshot from plan day. srht.site's CSP only allows styles/scripts
-# from 'self', so site/vendor.py mirrors the theme's CDN assets in afterwards.
+# the local snapshot from plan day. site/vendor.py mirrors the theme's CDN
+# assets in afterwards so the published site has no third-party dependency.
 set -eu
 set -o pipefail
 cd "$(dirname "$0")/.."
@@ -23,7 +23,7 @@ for org in plans/*.org; do
   {
     sed -e "s|^#+SETUPFILE: .*|#+SETUPFILE: $ROOT/site/themes/default.setup|" \
         -e "s|\"[^\"]*diagrams/sequence\.html\"|\"$ROOT/site/diagrams/sequence.html\"|" "$org"
-    printf '\n* Links\n- [[file:index.org][All plans]]\n- [[https://git.sr.ht/~nathanb/goob-toob/tree/master/item/plans][Plans directory]]\n'
+    printf '\n* Links\n- [[file:index.org][All plans]]\n- [[https://github.com/soniccyclone/goob-toob/tree/main/plans][Plans directory]]\n'
   } > "gen/org/$slug.org"
 done
 
@@ -33,7 +33,7 @@ done
   printf '#+TITLE: goob-toob plans\n'
   printf '#+OPTIONS: toc:nil num:nil author:nil date:nil ^:nil\n'
   printf '#+SETUPFILE: %s/site/themes/default.setup\n\n' "$ROOT"
-  printf 'Rendered plans for [[https://git.sr.ht/~nathanb/goob-toob][goob-toob]], newest first.\n\n'
+  printf 'Rendered plans for [[https://github.com/soniccyclone/goob-toob][goob-toob]], newest first.\n\n'
   for org in $(ls plans/*.org | grep -v README | sort -r); do
     slug=$(basename "$org" .org)
     date=$(echo "$slug" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}')

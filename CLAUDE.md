@@ -17,9 +17,10 @@ saved **in this repo**, not in `~/.local/share/opencode/plans/`.
 - Plans are read-only until approved; don't implement until told to.
 
 ## Plans site
-Pushing master republishes every `plans/*.org` to
-https://nathanb.srht.site/goob-toob-plans/ via `.build.yml` — no extra step
-needed to make a new plan viewable.
+Every push to main re-renders `plans/*.org` and publishes them to GitHub
+Pages at https://soniccyclone.github.io/goob-toob/ (the `plans` job in
+`.github/workflows/ci.yml`) — no extra step needed to make a new plan
+viewable.
 
 ## Conventions
 - 100% Clojure/CLJS; dash.js is the only npm dep (via shadow-cljs).
