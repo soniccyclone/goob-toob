@@ -10,7 +10,9 @@
             [clojure.core.async :as a]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [goob-toob.config :as config]
             [goob-toob.services.sync :as sync]
+            [goob-toob.sync-core :as sc]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.video :as videos]))
 
@@ -55,6 +57,7 @@
                       :video {:id (:id video) :title (:title video)
                               :duration (:duration video)
                               :dash (str "/dash/" (:id video) "/manifest.mpd")}
+                      :start-kbps (sc/start-kbps (:ladder (config/cfg)))
                       :state (sync/state-msg room)
                       :peers (sync/peers-list room)}))
             (sync/broadcast-peers room-id)
