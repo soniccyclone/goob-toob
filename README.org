@@ -104,6 +104,7 @@ unless you set =ADMIN_PASSWORD=), upload videos, make a room, share the link.
 | TRANSCODE_WORKERS | parallel ffmpeg jobs (keep it 1 while hosting) | 1                |
 | KEEP_ORIGINAL     | keep uploaded source after transcode           | true             |
 | DB_PATH           | sqlite file                                    | $STORAGE_DIR/... |
+| LADDER            | DASH ladder as =height:kbps,...=; applies to new uploads only (existing transcodes keep their bitrates) | 1080:4000,720:2000,480:900,360:450 |
 
 * Sharing your party
 ** Cloudflare quick tunnel (works today, friends need nothing)
