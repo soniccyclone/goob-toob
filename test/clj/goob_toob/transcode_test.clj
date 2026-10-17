@@ -15,3 +15,8 @@
   (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
                                     {:audio? true} config/default-ladder)]
     (is (= 1 (count (filter #{"0:a:0"} cmd))))))
+
+(deftest ffmpeg-logs-only-warnings-and-errors
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? true} config/default-ladder)]
+    (is (= ["-loglevel" "warning"] (take 2 (drop-while #(not= "-loglevel" %) cmd))))))
