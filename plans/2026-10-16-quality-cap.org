@@ -1,0 +1,197 @@
+#+TITLE: Sync-aware quality: step down on trouble, start at 720, cooler ladder
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-16
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: approved 2026-10-16; implementing on feat/quality-cap (issue #7).
+
+* Goal
+Make "auto" picture quality react to the room. v0.3.0 stopped punishing a
+lagging viewer; it did nothing to stop them lagging, because auto is still
+dash.js's throughput ABR with no idea that a stall or a catch-up just
+happened. After this plan: a stall or entering catch-up caps the viewer one
+rung below what they were playing, a clean minute lifts the cap one rung,
+every viewer starts on the 720 rung and climbs, and the ladder's bitrates
+drop to what a residential uplink behind a quick tunnel can actually serve
+to a room.
+
+Decisions taken (Nathan, 2026-10-16): step down on stalls *and* on entering
+catch-up; step up after 60 s clean; ladder 1080p 4000k, 720p 2000k, 480p
+900k, 360p 450k with an env override; start at the 720 rung.
+
+* Findings
+- Auto is dash.js alone. =player/set-auto= flips
+  =streaming.abr.autoSwitchBitrate.video= and nothing else
+  (~src/cljs/goob_toob/player.cljs:25-26~).
+- dash.js 4.7 has the knobs. =streaming.abr.maxBitrate.video= and
+  =streaming.abr.initialBitrate.video=, both in *kbps*, =-1= for none
+  (~node_modules/dashjs/dist/dash.all.debug.js:3667-3690~). The cap is
+  enforced in =getMaxAllowedIndexFor= on every quality decision
+  (~dash.all.debug.js:24450~), so changing it mid-stream takes effect at the
+  next segment; =fastSwitchEnabled= is already on. dash.js clamps
+  =initialBitrate= to the highest representation at or below it, so a 476p
+  source with a single 360 rung still starts on that rung.
+- Quality indices ascend by bitrate. =getQualityFor "video"= returns the
+  playing index; =getBitrateInfoListFor "video"= gives ={qualityIndex,
+  height, bitrate (bps)}= in that order; =player/video-representations=
+  re-sorts by height descending for the menu (~player.cljs:18-23~).
+- The signals exist on the client. Stall entry is the =onwaiting= handler
+  that sets =buffering= (~src/cljs/goob_toob/watch.cljs:212~); catch-up entry
+  is =apply-policy!= moving =mode= to =:catch-up= (v0.3.0). Neither touches
+  quality.
+- Ladder is a constant with no override: =config/default-ladder=
+  (~src/clj/goob_toob/config.clj:11-13~), 6000/3000/1200/600 kbps. In desktop
+  mode every viewer pulls their own stream through the tunnel from the host's
+  uplink, so three viewers on 1080 is 18 Mbit/s upstream today, 12 after.
+- The welcome message carries what the player needs to start
+  (~src/clj/goob_toob/ws.clj:53-59~); the start bitrate goes there.
+
+* Plan
+** 1 · sync_core.cljc: quality-cap, cap-kbps, start-kbps (pure)
+#+begin_src clojure
+(def quality-tuning
+  {:step-up-ms  60000
+   :min-step-ms 10000})
+
+(defn quality-cap
+  "state is {:cap idx :at ms} or nil for no cap. event is :stall, :catch-up
+  or :tick. cur is the quality index dash.js is playing, top the highest
+  index (both ascend by bitrate). Returns the new state; nil means no cap.
+  A stall or catch-up caps one rung below the playing rung, at most once per
+  :min-step-ms; a :tick after :step-up-ms clean lifts the cap one rung and
+  clears it at the top."
+  [state event cur top now]
+  (let [{:keys [step-up-ms min-step-ms]} quality-tuning]
+    (case event
+      (:stall :catch-up)
+      (if (and state (< (- now (:at state)) min-step-ms))
+        state
+        {:cap (max 0 (dec (if state (min cur (:cap state)) cur))) :at now})
+      :tick
+      (cond
+        (nil? state)                          nil
+        (< (- now (:at state)) step-up-ms)    state
+        (>= (inc (:cap state)) top)           nil
+        :else                                 {:cap (inc (:cap state)) :at now})
+      state)))
+
+(defn cap-kbps
+  "reps ascend by quality index with :bitrate in bps. -1 means no cap."
+  [state reps]
+  (if state (quot (:bitrate (nth reps (:cap state))) 1000) -1))
+
+(defn start-kbps
+  "The 720 rung's bitrate, else the lowest rung's."
+  [ladder]
+  (:v (or (first (filter #(= 720 (:h %)) ladder)) (last ladder))))
+#+end_src
+
+** 2 · config.clj: ladder from the environment
+- =default-ladder= becomes =[{:h 1080 :v 4000} {:h 720 :v 2000} {:h 480 :v 900} {:h 360 :v 450}]=.
+- New public =parse-ladder [s]=: ="1080:4000,720:2000,480:900,360:450"= →
+  the vector above, in the order given. Blank or nil → =default-ladder=.
+  Anything else malformed throws =ex-info= (fail fast at boot, as
+  =STORAGE_DIR= does).
+- =load!= sets =:ladder (parse-ladder (System/getenv "LADDER"))=.
+- README.org env-var table gains =LADDER= with the format and the default.
+- Existing transcodes keep their old bandwidths (they are baked into each
+  manifest); only new uploads use the new ladder. Say so in the README line.
+
+** 3 · ws.clj: start bitrate in welcome
+=welcome= gains =:start-kbps (sc/start-kbps (:ladder (config/cfg)))=.
+=ws.clj= requires =goob-toob.config=.
+
+** 4 · player.cljs
+- =create [video-el url start-kbps on-ready]=: the =updateSettings= call
+  also sets =:abr #js {:initialBitrate #js {:video start-kbps}}= before
+  =initialize=.
+- New =set-max-kbps [ctx kbps]=: =updateSettings= with
+  =:streaming {:abr {:maxBitrate {:video kbps}}}=.
+- New =current-quality [ctx]= → =(.getQualityFor ctx "video")=, and
+  =quality-list [ctx]= → the =getBitrateInfoListFor= entries as
+  ={:idx :height :bitrate}= in index order (no re-sort). =video-representations=
+  stays as the menu's height-descending view.
+
+** 5 · watch.cljs
+- =st= gains ="auto" true=, ="qcap" nil=.
+- New =quality-event! [st token ev]=: when =(.-player st)=, =(.-auto st)= and
+  the stream is initialized (=quality-list= non-empty):
+  #+begin_src clojure
+  (let [ctx (.-player st)
+        reps (player/quality-list ctx)
+        next (sc/quality-cap (.-qcap st) ev (player/current-quality ctx)
+                             (dec (count reps)) (ui/perf-now))]
+    (when (not= next (.-qcap st))
+      (set! (.-qcap st) next)
+      (let [kbps (sc/cap-kbps next reps)]
+        (player/set-max-kbps ctx kbps)
+        (log! token :quality-cap {:event ev :cap (:cap next) :kbps kbps}))))
+  #+end_src
+- Stall entry: the =onwaiting= handler becomes "if not already buffering and
+  started: set buffering true and =(quality-event! st token :stall)=".
+- Catch-up entry: in =apply-policy!=, after computing =mode=, when
+  =(and (= mode :catch-up) (not= (.-mode st) :catch-up))= call
+  =(quality-event! st token :catch-up)= (before =set!= of the new mode).
+  =apply-policy!= therefore takes =token= too; both call sites have it.
+- Tick: =loops!= adds =(js/setInterval #(quality-event! st token :tick) 5000)=.
+- =res-menu=: choosing =auto= sets =(.-auto st) true=, =(.-qcap st) nil= and
+  =(player/set-max-kbps ctx -1)= then =set-auto=; choosing a height sets
+  =(.-auto st) false=, =(.-qcap st) nil=, =(player/set-max-kbps ctx -1)= then
+  =set-height=. The saved-lock branch at load does the same as choosing a
+  height.
+- =player/create= call passes =(:start-kbps msg)= from the welcome.
+
+** 6 · Tests
+=sync_core_test.clj=, one =deftest= each, names as given:
+| test name                                              | asserts                                                                                      |
+|--------------------------------------------------------+----------------------------------------------------------------------------------------------|
+| =quality-cap-steps-down-one-rung-on-stall=             | =(quality-cap nil :stall 3 3 1000)= is ={:cap 2 :at 1000}=                                     |
+| =quality-cap-steps-down-on-catch-up-entry=             | =(quality-cap nil :catch-up 2 3 1000)= is ={:cap 1 :at 1000}=                                  |
+| =quality-cap-floors-at-the-lowest-rung=                | =(quality-cap {:cap 0 :at 0} :stall 0 3 20000)= is ={:cap 0 :at 20000}=                        |
+| =quality-cap-ignores-events-within-min-step=           | =(quality-cap {:cap 2 :at 0} :stall 2 3 5000)= is ={:cap 2 :at 0}=                             |
+| =quality-cap-steps-down-from-the-playing-rung=         | =(quality-cap {:cap 3 :at 0} :stall 1 3 20000)= is ={:cap 0 :at 20000}=                        |
+| =quality-cap-holds-until-a-clean-minute=               | =(quality-cap {:cap 1 :at 0} :tick 1 3 59000)= is ={:cap 1 :at 0}=; at =60000= is ={:cap 2 :at 60000}= |
+| =quality-cap-clears-at-the-top=                        | =(quality-cap {:cap 2 :at 0} :tick 2 3 60000)= is =nil=; =(quality-cap nil :tick 3 3 60000)= is =nil= |
+| =cap-kbps-reads-the-capped-rung=                       | reps =[{:idx 0 :bitrate 450000} {:idx 1 :bitrate 900000}]=: cap 1 → =900=; nil → =-1=         |
+| =start-kbps-prefers-the-720-rung=                      | default ladder → =2000=; =[{:h 360 :v 450}]= → =450=                                           |
+New =config_test.clj= (or extend an existing config test if one appears):
+| =parse-ladder-reads-the-env-format=                    | ="1080:4000,720:2000"= → =[{:h 1080 :v 4000} {:h 720 :v 2000}]=; =nil= and =""= → =default-ladder=; ="junk"= throws |
+
+** 7 · Release
+Viewer-visible behaviour change: the merge's last commit carries
+=Release: minor= (v0.4.0).
+
+* Risks and open questions
+- *Edge-triggered events can double-fire.* A stall and the catch-up it
+  causes arrive seconds apart; =:min-step-ms= (10 s) makes the second a
+  no-op. If real stalls cluster faster than that on bad links, the cap
+  still only moves one rung per 10 s, which is the intended pace.
+- *The cap is advisory to dash.js.* It bounds the ABR's choice; dash.js may
+  still sit below the cap on its own throughput estimate, which is fine, and
+  =quality-cap= steps down from the *playing* rung, not the cap, so a
+  viewer dash.js already dropped is not pushed two rungs further.
+- *A locked resolution bypasses all of this* by design; the cap is cleared
+  when the viewer locks and when they return to auto (fresh start).
+- *Old transcodes keep the hot ladder.* Nothing migrates existing DASH
+  trees; re-upload to get the new bitrates. The README says so.
+- *=initialBitrate= is start-only.* Reloading the page restarts at 720; the
+  cap state is not persisted. Deliberate: a reload is the viewer's reset.
+
+* Verification
+1. =make test=: 45 tests (35 + 10), 0 failures. Audit every new assertion by
+   breaking the branch it guards; report the table.
+2. =make compile=: clean for =watch.cljs= and =player.cljs=.
+3. Browser (reviewer): =LADDER= unset; upload a 1080p source; viewer tab with
+   Chrome throttling at 1.5 Mbit/s. On play, =server.log= =stream-init=
+   then the first segments are the 720 rung (devtools Network: =chunk-stream1=
+   if the ladder is 1080/720/480/360). Force a stall (throttle to 300 kbit/s
+   for 10 s, back to 1.5 Mbit/s): =server.log= shows
+   =quality-cap {:event :stall :cap 1 :kbps 900}=, the player moves to 480
+   within a segment, no second step within 10 s. Leave it clean: after 60 s
+   =quality-cap {:event :tick :cap 2 :kbps 2000}=, after another 60 s
+   =:cap nil :kbps -1=. Pick 1080p in the menu: cap cleared, no further
+   =quality-cap= lines; back to auto: a fresh start.
+4. =LADDER=1080:3000,720:1500,480:700,360:300 make run= (container): a new
+   upload's manifest shows those bandwidths; =LADDER=junk= refuses to start.
+
+* Implementation notes
+(filled in when it ships)
