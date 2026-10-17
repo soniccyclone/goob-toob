@@ -6,11 +6,12 @@
 (defn create
   "Returns the dash.js context. on-ready fires when the stream is
   initialized (bitrate list available)."
-  [video-el url on-ready]
+  [video-el url start-kbps on-ready]
   (let [ctx (.create (MediaPlayer))]
     (.on ctx "streamInitialized"
          (fn [_] (on-ready ctx)))
-    (.updateSettings ctx #js {:streaming #js {:buffer #js {:fastSwitchEnabled true}}
+    (.updateSettings ctx #js {:streaming #js {:buffer #js {:fastSwitchEnabled true}
+                                              :abr #js {:initialBitrate #js {:video start-kbps}}}
                               :debug #js {:logLevel 1}})
     (.initialize ctx video-el url false)
     ctx))
@@ -21,6 +22,18 @@
                                   :height (.-height info)
                                   :bitrate (.-bitrate info)}))
        (sort-by :height >)))
+
+(defn quality-list [ctx]
+  (mapv (fn [info] {:idx (.-qualityIndex info)
+                    :height (.-height info)
+                    :bitrate (.-bitrate info)})
+        (array-seq (.getBitrateInfoListFor ctx "video"))))
+
+(defn current-quality [ctx]
+  (.getQualityFor ctx "video"))
+
+(defn set-max-kbps [ctx kbps]
+  (.updateSettings ctx #js {:streaming #js {:abr #js {:maxBitrate #js {:video kbps}}}}))
 
 (defn set-auto [ctx]
   (.updateSettings ctx #js {:streaming #js {:abr #js {:autoSwitchBitrate #js {:video true}}}}))

@@ -58,13 +58,28 @@
             (and (<= (.start b i) t) (<= t (.end b i))) (- (.end b i) t)
             :else (recur (inc i))))))
 
-(defn- apply-policy! [^js st video lag-hint]
+(defn- quality-event! [^js st token ev]
+  (when-let [ctx (.-player st)]
+    (when (.-auto st)
+      (let [reps (player/quality-list ctx)]
+        (when (seq reps)
+          (let [capped (sc/quality-cap (.-qcap st) ev (player/current-quality ctx)
+                                       (dec (count reps)) (ui/perf-now))]
+            (when (not= capped (.-qcap st))
+              (set! (.-qcap st) capped)
+              (let [kbps (sc/cap-kbps capped reps)]
+                (player/set-max-kbps ctx kbps)
+                (log! token :quality-cap {:event ev :cap (:cap capped) :kbps kbps})))))))))
+
+(defn- apply-policy! [^js st token video lag-hint]
   (when (and (.-started st) (.-room st) (not (.-buffering st)))
     (let [room (.-room st)
           expected (expected-now st room)
           d (sc/drift (.-currentTime video) expected)
           mode (sc/policy (.-mode st) d (buffer-ahead video))
           rate (sc/rate-for mode (:rate room))]
+      (when (and (= mode :catch-up) (not= (.-mode st) :catch-up))
+        (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
       (when (= mode :seek-back) (set! (.-currentTime video) expected))
       (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
@@ -113,6 +128,12 @@
       (set! (.-scrollTop log-el) (.-scrollHeight log-el))
       (set! (.-display (.-style pill-el)) "block"))))
 
+(defn- lock-height! [^js st idx]
+  (set! (.-auto st) false)
+  (set! (.-qcap st) nil)
+  (player/set-max-kbps (.-player st) -1)
+  (player/set-height (.-player st) idx))
+
 (defn- res-menu [^js st]
   (let [sel (h :select {:title "resolution"})
         saved (ui/store-get "goob-res")]
@@ -123,14 +144,17 @@
                           (.appendChild (.createTextNode js/document label))))
       (when (= saved v) (set! (.-value sel) v)))
     (when (and saved (not= saved "auto"))
-      (player/set-height (.-player st) (js/parseInt saved)))
+      (lock-height! st (js/parseInt saved)))
     (set! (.-onchange sel)
           (fn []
             (let [v (.-value sel)]
               (ui/store-set! "goob-res" v)
               (if (= v "auto")
-                (player/set-auto (.-player st))
-                (player/set-height (.-player st) (js/parseInt v))))))
+                (do (set! (.-auto st) true)
+                    (set! (.-qcap st) nil)
+                    (player/set-max-kbps (.-player st) -1)
+                    (player/set-auto (.-player st)))
+                (lock-height! st (js/parseInt v))))))
     sel))
 
 (defn- connect! [^js st token refs]
@@ -157,7 +181,7 @@
                   #(log! token :video-error {:code (some-> (.-error video) .-code)
                                              :msg (some-> (.-error video) .-message)}))
                 (set! (.-player st)
-                  (player/create video (get-in msg [:video :dash])
+                  (player/create video (get-in msg [:video :dash]) (:start-kbps msg)
                     (fn [ctx]
                       (log! token :stream-init {:dash (get-in msg [:video :dash])
                                                 :ua (.-userAgent js/navigator)})
@@ -170,7 +194,7 @@
                   (fn [d] (log! token (:ev d) (dissoc d :ev))))))
           "state" (apply-state-msg! st video msg)
           "beat"  (do (set! (.-room st) msg)
-                      (apply-policy! st video lag-hint)
+                      (apply-policy! st token video lag-hint)
                       (render-peers! peers-el (:peers msg) (.-ishost st))
                       (set! (.-textContent slow-note)
                             (if-let [nick (:slow-for msg)]
@@ -223,7 +247,10 @@
                       (when-not (empty? t)
                         (wsx/send! (.-ws st) {:type "chat" :text t})
                         (set! (.-value chat-input) ""))))]
-    (set! (.-onwaiting video) #(set! (.-buffering st) true))
+    (set! (.-onwaiting video)
+          #(do (when (and (.-started st) (not (.-buffering st)))
+                 (quality-event! st (unchecked-get st "token") :stall))
+               (set! (.-buffering st) true)))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
     (set! (.-onseeking video) #(set! (.-seeking st) true))
     (set! (.-onseeked video) #(set! (.-seeking st) false))
@@ -290,13 +317,15 @@
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
 (defn- loops! [^js st refs]
-  (let [{:keys [video seek lag-hint]} refs]
+  (let [{:keys [video seek lag-hint]} refs
+        token (unchecked-get st "token")]
     (js/setInterval #(wsx/send! (.-ws st) {:type "ping" :t (ui/perf-now)}) 5000)
     (js/setInterval #(wsx/send! (.-ws st) {:type "status"
                                             :pos (.-currentTime video)
                                             :buffering (boolean (.-buffering st))})
                     2000)
-    (js/setInterval #(apply-policy! st video lag-hint) 500) ; smooth catch-up between beats
+    (js/setInterval #(quality-event! st token :tick) 5000)
+    (js/setInterval #(apply-policy! st token video lag-hint) 500) ; smooth catch-up between beats
     (js/setInterval
       #(when (.-room st)
          (set! (.-max seek) (str (or (.-duration video) 0)))
@@ -327,7 +356,8 @@
 
 (defn page [token]
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
-                  "cancontrol" false "started" false "token" token "mode" :none)
+                  "cancontrol" false "started" false "token" token "mode" :none
+                  "auto" true "qcap" nil)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
