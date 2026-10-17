@@ -7,7 +7,7 @@ Newest date wins when figuring out what we're building.
 
 | Written    | Plan                                          | Status                                    |
 |------------+-----------------------------------------------+-------------------------------------------|
-| 2026-10-16 | [[file:2026-10-16-quality-cap.org][Sync-aware quality: step down on trouble, start at 720]] | approved 2026-10-16, implementing (#7) |
+| 2026-10-16 | [[file:2026-10-16-quality-cap.org][Sync-aware quality: step down on trouble, start at 720]] | shipped as v0.4.0, 2026-10-16 (#7)   |
 | 2026-10-16 | [[file:2026-10-16-sync-slew.org][Sync slew: room slow-down, gentle catch-up]] | shipped as v0.3.0, 2026-10-16 (#8)   |
 | 2026-10-12 | [[file:2026-10-12-desktop-distribution-releases.org][Desktop distribution, releases]] | shipped 2026-10-12                      |
 | 2026-10-12 | [[file:2026-10-12-watch-ux-cohost-controls.org][Watch UX, co-host control, gradual sync]] | shipped on master, 2026-10-12 |
