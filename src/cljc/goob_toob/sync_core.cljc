@@ -86,3 +86,39 @@
   "Change a playing room's rate without moving its position."
   [room now rate]
   (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
+
+(def quality-tuning
+  {:step-up-ms  60000
+   :min-step-ms 10000})
+
+(defn quality-cap
+  "state is {:cap idx :at ms} or nil for no cap. event is :stall, :catch-up
+  or :tick. cur is the quality index dash.js is playing, top the highest
+  index (both ascend by bitrate). Returns the new state; nil means no cap.
+  A stall or catch-up caps one rung below the playing rung, at most once per
+  :min-step-ms; a :tick after :step-up-ms clean lifts the cap one rung and
+  clears it at the top."
+  [state event cur top now]
+  (let [{:keys [step-up-ms min-step-ms]} quality-tuning]
+    (case event
+      (:stall :catch-up)
+      (if (and state (< (- now (:at state)) min-step-ms))
+        state
+        {:cap (max 0 (dec (if state (min cur (:cap state)) cur))) :at now})
+      :tick
+      (cond
+        (nil? state)                          nil
+        (< (- now (:at state)) step-up-ms)    state
+        (>= (inc (:cap state)) top)           nil
+        :else                                 {:cap (inc (:cap state)) :at now})
+      state)))
+
+(defn cap-kbps
+  "reps ascend by quality index with :bitrate in bps. -1 means no cap."
+  [state reps]
+  (if state (quot (:bitrate (nth reps (:cap state))) 1000) -1))
+
+(defn start-kbps
+  "The 720 rung's bitrate, else the lowest rung's."
+  [ladder]
+  (:v (or (first (filter #(= 720 (:h %)) ladder)) (last ladder))))

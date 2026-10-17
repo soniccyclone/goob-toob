@@ -79,3 +79,35 @@
          (sc/best-offset [{:rtt 80 :offset 30}
                           {:rtt 12 :offset 42}
                           {:rtt 55 :offset 50}]))))
+
+(deftest quality-cap-steps-down-one-rung-on-stall
+  (is (= {:cap 2 :at 1000} (sc/quality-cap nil :stall 3 3 1000))))
+
+(deftest quality-cap-steps-down-on-catch-up-entry
+  (is (= {:cap 1 :at 1000} (sc/quality-cap nil :catch-up 2 3 1000))))
+
+(deftest quality-cap-floors-at-the-lowest-rung
+  (is (= {:cap 0 :at 20000} (sc/quality-cap {:cap 0 :at 0} :stall 0 3 20000))))
+
+(deftest quality-cap-ignores-events-within-min-step
+  (is (= {:cap 2 :at 0} (sc/quality-cap {:cap 2 :at 0} :stall 2 3 5000))))
+
+(deftest quality-cap-steps-down-from-the-playing-rung
+  (is (= {:cap 0 :at 20000} (sc/quality-cap {:cap 3 :at 0} :stall 1 3 20000))))
+
+(deftest quality-cap-holds-until-a-clean-minute
+  (is (= {:cap 1 :at 0} (sc/quality-cap {:cap 1 :at 0} :tick 1 3 59000)))
+  (is (= {:cap 2 :at 60000} (sc/quality-cap {:cap 1 :at 0} :tick 1 3 60000))))
+
+(deftest quality-cap-clears-at-the-top
+  (is (nil? (sc/quality-cap {:cap 2 :at 0} :tick 2 3 60000)))
+  (is (nil? (sc/quality-cap nil :tick 3 3 60000))))
+
+(deftest cap-kbps-reads-the-capped-rung
+  (let [reps [{:idx 0 :bitrate 450000} {:idx 1 :bitrate 900000}]]
+    (is (= 900 (sc/cap-kbps {:cap 1 :at 0} reps)))
+    (is (= -1 (sc/cap-kbps nil reps)))))
+
+(deftest start-kbps-prefers-the-720-rung
+  (is (= 2000 (sc/start-kbps [{:h 1080 :v 4000} {:h 720 :v 2000} {:h 480 :v 900} {:h 360 :v 450}])))
+  (is (= 450 (sc/start-kbps [{:h 360 :v 450}]))))
