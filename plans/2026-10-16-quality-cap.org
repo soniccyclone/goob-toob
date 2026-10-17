@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-16
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-16; implementing on feat/quality-cap (issue #7).
+# Status: approved 2026-10-16; shipped as v0.4.0 on 2026-10-16 (see Implementation notes).
 
 * Goal
 Make "auto" picture quality react to the room. v0.3.0 stopped punishing a
@@ -194,4 +194,29 @@ Viewer-visible behaviour change: the merge's last commit carries
    upload's manifest shows those bandwidths; =LADDER=junk= refuses to start.
 
 * Implementation notes
-(filled in when it ships)
+Shipped 2026-10-16 (PR for #7, cut as v0.4.0 by CI). Implemented by an Opus
+subagent from this plan; reviewed and verified by the planning session.
+Landed as specced; the plan's =quality-cap= passed its tests unchanged.
+Deviations, all for the better:
+
+- =onwaiting= still sets =buffering= before the viewer starts; only the
+  =:stall= event is gated on =started= and not-already-buffering (the
+  plan's wording would have stopped pre-start status reports).
+- =loops!= and =shell= read =token= off =st= (=unchecked-get=) as the stall
+  watchdog already did; the plan assumed both had it in scope.
+- =ws.clj= requires =goob-toob.sync-core= as well as =goob-toob.config=.
+- The local in =quality-event!= is =capped=, not =next= (shadowed
+  =cljs.core/next=); =lock-height!= factors the four steps shared by
+  choosing a height and the saved-lock branch at load.
+- =parse-ladder= names the bad rung in its error and tolerates whitespace
+  around the numbers.
+
+Verified: =make test= 45 tests / 101 assertions, every new assertion
+audited to fail alone (17 mutations); =make compile= clean for
+=watch.cljs= and =player.cljs=; in the container, =LADDER=junk= refuses to
+boot (=bad rung: "junk"=, exit 1), =LADDER=1080:3000,720:1500,480:700,360:300=
+gives a fresh upload of the 476p test file a manifest with
+=bandwidth="300000"= for its single rung, and the welcome message carries
+=start-kbps 1500=. Not run here: the browser steps (720 start on the
+wire, the cap moving dash.js down and up, the menu interactions); they
+are the reviewer's.
