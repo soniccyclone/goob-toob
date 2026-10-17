@@ -10,7 +10,17 @@
 
 (def default-ladder
   "Height -> video bitrate (kbit/s) for the DASH ladder."
-  [{:h 1080 :v 6000} {:h 720 :v 3000} {:h 480 :v 1200} {:h 360 :v 600}])
+  [{:h 1080 :v 4000} {:h 720 :v 2000} {:h 480 :v 900} {:h 360 :v 450}])
+
+(defn parse-ladder [s]
+  (if (str/blank? s)
+    default-ladder
+    (mapv (fn [rung]
+            (if-let [[_ h v] (re-matches #"\s*(\d+)\s*:\s*(\d+)\s*" rung)]
+              {:h (Long/parseLong h) :v (Long/parseLong v)}
+              (throw (ex-info (str "LADDER must look like 1080:4000,720:2000,... (height:kbps); bad rung: " (pr-str rung))
+                              {:ladder s}))))
+          (str/split s #"," -1))))
 
 (defn- env-int [k default]
   (if-let [s (System/getenv k)]
@@ -38,7 +48,7 @@
                :ffmpeg-path  (or (System/getenv "FFMPEG_PATH") "ffmpeg")
                :workers      (env-int "TRANSCODE_WORKERS" 1)
                :keep-original (env-bool "KEEP_ORIGINAL" true)
-               :ladder       default-ladder}]
+               :ladder       (parse-ladder (System/getenv "LADDER"))}]
       (doseq [d ["" "uploads" "dash"]]
         (io/make-parents (io/file storage d "x")))
       (reset! config cfg))))
