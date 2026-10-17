@@ -67,7 +67,7 @@
     (concat
      ;; nice is Unix-only; on Windows just run ffmpeg directly
      (when-not windows? ["nice" "-n" "10"])
-     [(ffmpeg-bin) "-hide_banner" "-nostdin" "-y" "-i" (.getPath in)]
+     [(ffmpeg-bin) "-hide_banner" "-loglevel" "warning" "-nostdin" "-y" "-i" (.getPath in)]
      ["-filter_complex" (str split scales)]
      maps-v maps-a
      ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p"
@@ -91,7 +91,7 @@
         (loop []
           (when-let [line (.readLine r)]
             (.add err-lines line)
-            (when (> (.size err-lines) 80) (.poll err-lines))
+            (when (> (.size err-lines) 200) (.poll err-lines))
             (recur)))))
     (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream p)))]
       (loop []
@@ -101,7 +101,7 @@
               (videos/set-progress! video-id (min 0.99 (max 0.0 (/ secs dur))))))
           (recur))))
     {:exit (.waitFor p)
-     :stderr (str/join "\n" (take-last 40 err-lines))}))
+     :stderr (str/join "\n" err-lines)}))
 
 (defn- process-job [video-id]
   (let [cfg (config/cfg)
