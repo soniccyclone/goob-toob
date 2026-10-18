@@ -7,6 +7,7 @@
             [clojure.string :as str]
             [clojure.data.json :as json]
             [goob-toob.config :as config]
+            [goob-toob.log :as log]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.storage :as storage])
   (:import [java.lang ProcessBuilder]))
@@ -110,7 +111,7 @@
     (when-let [c (priority-cmd (.pid p) windows?)]
       (let [exit (-> (ProcessBuilder. ^java.util.List c) .inheritIO .start .waitFor)]
         (when-not (zero? exit)
-          (println "transcode: could not lower ffmpeg priority (exit" exit ")"))))
+          (log/info "transcode: could not lower ffmpeg priority (exit" exit ")"))))
     (a/thread ; stderr -> ring buffer for error reporting
       (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
         (loop []
@@ -138,7 +139,7 @@
               out (java.io.File. (storage/dash-dir video-id) "manifest.mpd")
               media (probe-media (ffprobe in))
               ladder (ladder-for media (:ladder cfg))
-              _ (println (format "transcode start: %s (%.0fs, height %d, ladder %s)"
+              _ (log/info (format "transcode start: %s (%.0fs, height %d, ladder %s)"
                                  (:title video) (:duration media) (:height media)
                                  (str/join ", " (map :h ladder))))
               _ (videos/set-duration! video-id (:duration media))
@@ -148,13 +149,13 @@
           (if (zero? exit)
             (do (videos/set-status! video-id "ready" :progress 1.0 :error nil)
                 (when-not (:keep-original cfg) (storage/delete-original! video-id))
-                (println "transcoded" (:title video) "-> ready"))
+                (log/info "transcoded" (:title video) "-> ready"))
             (do (videos/set-status! video-id "failed" :error stderr)
-                (println "transcode FAILED" (:title video) "::"
+                (log/info "transcode FAILED" (:title video) "::"
                          (str/join (take-last 300 stderr))))))
         (catch Exception e
           (videos/set-status! video-id "failed" :error (str e))
-          (println "transcode ERROR" video-id (.getMessage e)))))))
+          (log/info "transcode ERROR" video-id (.getMessage e)))))))
 
 (defn submit! [video-id]
   (when-let [jobs (:jobs @control)]
@@ -173,4 +174,4 @@
             (recur)))))
     (reset! control {:jobs jobs})
     (doseq [vid (videos/requeue-stuck)] (submit! vid))
-    (println "transcode workers:" (:workers cfg))))
+    (log/info "transcode workers:" (:workers cfg))))

@@ -6,6 +6,7 @@
   (:require [clojure.core.async :as a]
             [cheshire.core :as json]
             [goob-toob.sync-core :as sc]
+            [goob-toob.log :as log]
             [goob-toob.repos.room :as rooms]))
 
 (defonce rooms* (atom {})) ; room-id -> {:video-id :pos :t0 :playing? :rate :clients}
@@ -92,7 +93,7 @@
         {:keys [rate] laggard :for} (sc/room-rate (:rate room) (client-drifts room now))]
     (when (and (:playing? room) (not= rate (:rate room)))
       (swap! rooms* update room-id sc/reanchor now rate)
-      (println "room" room-id "rate" rate (if laggard (str "for " laggard) ""))
+      (log/info "room" room-id "rate" rate (if laggard (str "for " laggard) ""))
       (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "rate")))
     (let [room (get @rooms* room-id)]
       (broadcast room-id (assoc (beat-msg room)
