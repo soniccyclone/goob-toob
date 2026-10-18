@@ -1,7 +1,7 @@
 #!/bin/sh
 # Vendor the per-platform binaries the desktop bundle ships:
-#   cloudflared (Apache-2.0) · static ffmpeg+ffprobe (GPL, run as a separate
-#   process) · Temurin JRE (GPLv2+CE). Licenses ship in the app via
+#   cloudflared (Apache-2.0) · BtbN ffmpeg+ffprobe builds (GPL, run as a
+#   separate process) · Temurin JRE (GPLv2+CE). Licenses ship in the app via
 #   desktop/THIRD-PARTY.org.
 #
 # Usage: scripts/fetch-vendor.sh [linux|windows|all]
@@ -26,10 +26,10 @@ vendor_linux() {
   mkdir -p vendor/linux
   fetch "$CF/cloudflared-linux-amd64" vendor/linux/cloudflared
   chmod +x vendor/linux/cloudflared
-  fetch "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" /tmp/ff.tar.xz
+  fetch "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz" /tmp/ff.tar.xz
   rm -rf /tmp/ffx && mkdir -p /tmp/ffx && tar -xJf /tmp/ff.tar.xz -C /tmp/ffx
-  FF=$(ls -d /tmp/ffx/ffmpeg-*-amd64-static | head -1)
-  cp "$FF/ffmpeg" "$FF/ffprobe" vendor/linux/
+  FF=$(ls -d /tmp/ffx/ffmpeg-*-linux64-gpl | head -1)
+  cp "$FF/bin/ffmpeg" "$FF/bin/ffprobe" vendor/linux/
   chmod +x vendor/linux/ffmpeg vendor/linux/ffprobe
   fetch "https://api.adoptium.net/v3/binary/latest/$JRE/ga/linux/x64/jre/hotspot/normal/eclipse" /tmp/jre.tgz
   rm -rf vendor/linux/jre && mkdir -p vendor/linux/jre
@@ -59,7 +59,7 @@ esac
   echo "built: $(date -u +%FT%TZ)"
   echo "cloudflared: ${CLOUDFLARED_VERSION:-latest}"
   echo "jre: $JRE (temurin)"
-  echo "ffmpeg: linux=johnvansickle-static windows=BtbN-win64-gpl (rolling)"
+  echo "ffmpeg: linux=BtbN-linux64-gpl windows=BtbN-win64-gpl (rolling)"
   command -v sha256sum >/dev/null && find vendor -maxdepth 2 -type f \
     \( -name 'cloudflared*' -o -name 'ffmpeg*' -o -name 'ffprobe*' \) \
     -exec sha256sum {} \; | sort
