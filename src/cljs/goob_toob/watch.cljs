@@ -83,6 +83,9 @@
         (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
       (when (= mode :seek-back)
+        (log! token :seek-back {:drift (/ (Math/round (* 10 d)) 10)
+                                :offset (Math/round (.-offset st))
+                                :rate (:rate room)})
         (set! (.-ourseek st) (ui/perf-now))
         (set! (.-currentTime video) expected))
       (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
@@ -212,7 +215,12 @@
                         sample {:rtt (- t1 (:t msg))
                                 :offset (sc/ntp-offset (:t msg) (:st msg) t1)}]
                     (set! (.-samples st) (take 8 (cons sample (.-samples st))))
-                    (set! (.-offset st) (sc/best-offset (.-samples st)))
+                    (let [before (.-offset st)
+                          after (sc/best-offset (.-samples st))]
+                      (when (> (sc/abs (- after before)) 1000)
+                        (log! token :clock-jump {:from (Math/round before) :to (Math/round after)
+                                                 :rtt (Math/round (:rtt sample))}))
+                      (set! (.-offset st) after))
                     ;; the first pong is what makes `expected` trustworthy —
                     ;; keep the parked frame live until the viewer presses play
                     (when-not (.-started st) (park! st video)))
