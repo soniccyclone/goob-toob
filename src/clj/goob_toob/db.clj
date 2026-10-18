@@ -3,7 +3,8 @@
   (:require [next.jdbc :as jdbc]
             [honey.sql :as sql]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [goob-toob.log :as log]))
 
 (defonce ds (atom nil))
 
@@ -37,7 +38,7 @@
             (jdbc/execute! tx [stmt]))
           (jdbc/execute! tx (sql/format {:insert-into :schema_migrations
                                          :values [{:name name}]}))
-          (println "migrated" name))))))
+          (log/info "migrated" name))))))
 
 (defn init! [db-path]
   (io/make-parents db-path)

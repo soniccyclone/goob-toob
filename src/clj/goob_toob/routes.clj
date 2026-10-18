@@ -12,6 +12,7 @@
             [clojure.string :as str]
             [clojure.java.io :as io]
             [goob-toob.config :as config]
+            [goob-toob.log :as log]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
@@ -108,7 +109,7 @@
             title (or (some-> filename (str/replace #"\.[^.]*$" "") (not-empty)) id)
             dest  (storage/save-upload! (io/file tempfile) id ext)]
         (videos/insert! {:id id :title title :original-path (.getPath dest)})
-        (println (format "upload accepted: %s (%.1f MB) -> %s" filename (/ (or size 0) 1048576.0) id))
+        (log/info (format "upload accepted: %s (%.1f MB) -> %s" filename (/ (or size 0) 1048576.0) id))
         (transcode/submit! id)
         (-> (response {:id id :status "queued" :free-mb (storage/free-space-mb)}) (status 202))))))
 
@@ -140,7 +141,7 @@
   (let [{:keys [token msg]} params
         tok (clip (str token) 64)]
     (when (and msg (clientlog-allow? tok (System/currentTimeMillis)))
-      (println "client" (clip tok 8) ":" (clip (str msg) 400)))
+      (log/info "client" (clip tok 8) ":" (clip (str msg) 400)))
     (response {:ok true})))
 
 ;; ---- DASH serving (with Range support) -------------------------------------

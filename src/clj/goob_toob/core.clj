@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [goob-toob.config :as config]
             [goob-toob.db :as db]
+            [goob-toob.log :as log]
             [goob-toob.routes :as routes]
             [goob-toob.services.transcode :as transcode]
             [goob-toob.services.sync :as sync])
@@ -22,7 +23,7 @@
 (defn -main []
   (let [cfg (config/load!)
         desktop? (= :desktop (:mode cfg))]
-    (println "goob-toob" (version))
+    (log/info "goob-toob" (version))
     (db/init! (:db-path cfg))
     (transcode/start!)
     (sync/start-beat-loop!)
@@ -36,9 +37,9 @@
                   (run-jetty (routes/wrap-desktop-admin (routes/app {:admin? true}))
                              {:port (:admin-port cfg) :host "127.0.0.1"
                               :join? false}))
-          (println "goob-toob glooping — public :" (:port cfg)
+          (log/info "goob-toob glooping — public :" (:port cfg)
                    " admin(loopback) :" (:admin-port cfg)))
       (do (reset! server
                   (run-jetty (routes/app {:admin? true :login? true})
                              {:port (:port cfg) :join? false}))
-          (println "goob-toob glooping on port" (:port cfg))))))
+          (log/info "goob-toob glooping on port" (:port cfg))))))
