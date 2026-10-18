@@ -95,10 +95,22 @@
       "-progress" "pipe:1" "-nostats"
       (ffmpeg-path out)])))
 
+(defn priority-cmd
+  "Command that drops an already-running ffmpeg to below-normal priority on
+  Windows, where nice does not exist; nil elsewhere."
+  [pid windows?]
+  (when windows?
+    ["powershell" "-NoProfile" "-NonInteractive" "-Command"
+     (str "(Get-Process -Id " pid ").PriorityClass='BelowNormal'")]))
+
 (defn- run-ffmpeg [cmd video-id dur]
   "Runs the encode; updates DB progress on each out_time_ms line (~1/s)."
   (let [p (-> (ProcessBuilder. (vec cmd)) .start)
         err-lines (java.util.concurrent.ConcurrentLinkedQueue.)]
+    (when-let [c (priority-cmd (.pid p) windows?)]
+      (let [exit (-> (ProcessBuilder. ^java.util.List c) .inheritIO .start .waitFor)]
+        (when-not (zero? exit)
+          (println "transcode: could not lower ffmpeg priority (exit" exit ")"))))
     (a/thread ; stderr -> ring buffer for error reporting
       (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
         (loop []
