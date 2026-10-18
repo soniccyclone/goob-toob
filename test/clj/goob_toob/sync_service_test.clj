@@ -53,7 +53,7 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (at! 11000)
         (report-behind! id 4.0)
         (let [at-tick (expected id)]
@@ -71,7 +71,7 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "pause" 10.0)
+        (sync/host-cmd! id "pause" 10.0 "host")
         (at! 11000)
         (report-behind! id 4.0)
         (sync/tick-room! id)
@@ -81,7 +81,7 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (report-behind! id 4.0)
         (at! 11000)
         (report-behind! id 4.0)
@@ -96,16 +96,35 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (swap! sync/rooms* assoc-in [id :rate] 0.97)
-        (sync/host-cmd! id "seek" 5.0)
+        (sync/host-cmd! id "seek" 5.0 "host")
         (is (= 1.0 (:rate (room id))))))))
+
+(deftest host-command-is-logged-with-the-nick
+  (run
+    (fn []
+      (let [id (room-id!)]
+        (is (.contains (with-out-str (sync/host-cmd! id "seek" 5.0 "Nathan"))
+                       "seek 5.0 by Nathan"))))))
+
+(deftest status-logs-a-jump-between-reports
+  (run
+    (fn []
+      (let [id (room-id!)]
+        (sync/host-cmd! id "play" 0.0 "host")
+        (at! 11000)
+        (report-behind! id 4.0)
+        (at! 13000)
+        (is (.contains (with-out-str (report-behind! id 0.5)) "laggard jumped +3.5s"))
+        (at! 15000)
+        (is (= "" (with-out-str (report-behind! id 0.6))))))))
 
 (deftest status-records-drift-with-behind-meaning-negative
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (at! 11000)
         (report-behind! id 4.0)
         (is (< (Math/abs (+ 4.0 (get-in (room id) [:clients "lag" :drift]))) 1e-9))
@@ -116,7 +135,7 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (report-behind! id 4.0)
         (at! 11000)
         (report-behind! id 0.5)
@@ -129,10 +148,10 @@
   (run
     (fn []
       (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0)
+        (sync/host-cmd! id "play" 0.0 "host")
         (at! 11000)
         (swap! sync/rooms* update id sc/reanchor 11000 0.97)
         (at! 111000)
-        (sync/host-cmd! id "pause" nil)
+        (sync/host-cmd! id "pause" nil "host")
         (is (< (Math/abs (- 107.0 (:pos (room id)))) 1e-6))
         (is (= 1.0 (:rate (room id))))))))

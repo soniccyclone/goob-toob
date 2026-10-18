@@ -51,7 +51,8 @@
 (defn leave! [room-id cid]
   (swap! rooms* update-in [room-id :clients] dissoc cid))
 
-(defn host-cmd! [room-id op pos]
+(defn host-cmd! [room-id op pos nick]
+  (log/info "room" room-id op (or pos "-") "by" nick)
   (let [now (mono-ms)]
     (swap! rooms*
       (fn [rs]
@@ -76,7 +77,14 @@
 (defn status! [room-id cid pos buffering]
   (when-let [room (get @rooms* room-id)]
     (let [now (mono-ms)
-          drift (double (if (some? pos) (- pos (sc/expected-pos (assoc room :now now))) 0))]
+          drift (double (if (some? pos) (- pos (sc/expected-pos (assoc room :now now))) 0))
+          c (get-in room [:clients cid])
+          prev (when (:at c) (:drift c))]
+      (when prev
+        (let [delta (- drift prev)]
+          (when (> (Math/abs delta) 1.0)
+            (log/info "client" (:nick c) "jumped" (format "%+.1fs" delta)
+                      "(drift" (format "%.1f" prev) "->" (format "%.1f" drift) ")"))))
       (swap! rooms* update-in [room-id :clients cid]
              (fn [c]
                (assoc c :drift drift :at now :buffering (boolean buffering)

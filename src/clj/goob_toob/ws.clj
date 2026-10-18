@@ -27,7 +27,7 @@
   (case (:type m)
     "ping"   (send! {:type "pong" :t (:t m) :st (sync/mono-ms)})
     "cmd"    (when (or admin? (control-allowed? room-id))
-               (sync/host-cmd! room-id (:op m) (:pos m)))
+               (sync/host-cmd! room-id (:op m) (:pos m) (:nick m)))
     "chat"   (let [text (clamp-text (:text m) 500)]
                (when-not (str/blank? text)
                  (sync/broadcast room-id {:type "chat" :from (:nick m) :text text
