@@ -49,6 +49,7 @@
     (let [e (max 0.0 (expected-now st room))
           e (if (< (sc/abs (- (.-currentTime video) e)) 0.01) (+ e 0.001) e)]
       (.pause video)
+      (set! (.-ourseek st) (ui/perf-now))
       (try (set! (.-currentTime video) e) (catch js/Error _ nil)))))
 
 (defn- buffer-ahead [video]
@@ -81,7 +82,9 @@
       (when (and (= mode :catch-up) (not= (.-mode st) :catch-up))
         (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
-      (when (= mode :seek-back) (set! (.-currentTime video) expected))
+      (when (= mode :seek-back)
+        (set! (.-ourseek st) (ui/perf-now))
+        (set! (.-currentTime video) expected))
       (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
         (set! (.-playbackRate video) rate))
       (set! (.-textContent lag-hint)
@@ -94,12 +97,15 @@
   (if-not (.-started st)
     (park! st video) ;; unstarted: keep the parked frame fresh as the room moves
     (case (:op msg)
-      "play"  (do (set! (.-currentTime video) (:pos msg))
+      "play"  (do (set! (.-ourseek st) (ui/perf-now))
+                  (set! (.-currentTime video) (:pos msg))
                   (play! video))
       "pause" (do (.pause video)
+                  (set! (.-ourseek st) (ui/perf-now))
                   (set! (.-currentTime video) (:pos msg))
                   (set! (.-playbackRate video) 1.0))
-      "seek"  (set! (.-currentTime video) (:pos msg))
+      "seek"  (do (set! (.-ourseek st) (ui/perf-now))
+                  (set! (.-currentTime video) (:pos msg)))
       nil)))
 
 (defn- render-peers! [peers-el peers host?]
@@ -253,7 +259,16 @@
                (set! (.-buffering st) true)))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
     (set! (.-onseeking video) #(set! (.-seeking st) true))
-    (set! (.-onseeked video) #(set! (.-seeking st) false))
+    (set! (.-onseeked video)
+      (fn []
+        (set! (.-seeking st) false)
+        (when (and (> (- (ui/perf-now) (.-ourseek st)) 1000) (.-started st))
+          (log! (unchecked-get st "token") :seek-unexplained
+                {:to (Math/round (.-currentTime video))
+                 :drift (when-let [room (.-room st)]
+                          (let [d (sc/drift (.-currentTime video) (expected-now st room))]
+                            (/ (Math/round (* 10 d)) 10)))
+                 :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))
     ;; the native play button is the start trigger (proven in the scratch harness)
     (set! (.-onplay video)
       (fn []
@@ -264,12 +279,17 @@
           ;; first play: this is the join gesture
           (let [act (.-userActivation js/navigator)]
             (if (and act (not (.-isActive act)))
-              (park! st video) ;; gesture-less play; real browsers reject it anyway
+              (do (log! (unchecked-get st "token") :play-rejected {})
+                  (park! st video)) ;; gesture-less play; real browsers reject it anyway
               (do (set! (.-started st) true)
+                  (log! (unchecked-get st "token") :started
+                        {:activation (boolean (and act (.-isActive act)))})
                   (when-let [room (.-room st)]
                     (cond
-                      (:playing room)   (set! (.-currentTime video) (expected-now st room))
-                      (.-cancontrol st) (do (set! (.-currentTime video) (expected-now st room))
+                      (:playing room)   (do (set! (.-ourseek st) (ui/perf-now))
+                                            (set! (.-currentTime video) (expected-now st room)))
+                      (.-cancontrol st) (do (set! (.-ourseek st) (ui/perf-now))
+                                            (set! (.-currentTime video) (expected-now st room))
                                             (wsx/send! (.-ws st) {:type "cmd" :op "play"
                                                                    :pos (expected-now st room)}))
                       :else             (park! st video)))))))))
@@ -357,7 +377,7 @@
 (defn page [token]
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none
-                  "auto" true "qcap" nil)
+                  "auto" true "qcap" nil "ourseek" 0)
         saved-nick (ui/store-get "goob-nick")]
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})

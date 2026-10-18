@@ -11,7 +11,8 @@
     (.on ctx "streamInitialized"
          (fn [_] (on-ready ctx)))
     (.updateSettings ctx #js {:streaming #js {:buffer #js {:fastSwitchEnabled true}
-                                              :abr #js {:initialBitrate #js {:video start-kbps}}}
+                                              :abr #js {:initialBitrate #js {:video start-kbps}}
+                                              :gaps #js {:jumpLargeGaps false}}
                               :debug #js {:logLevel 1}})
     (.initialize ctx video-el url false)
     ctx))
