@@ -48,9 +48,22 @@
      :audio? (boolean a)
      :duration (or dur 1.0)}))
 
-(defn- ladder-for [{:keys [height]} ladder]
-  (let [fit (filter #(<= (:h %) height) ladder)]
-    (if (seq fit) fit [(last ladder)])))
+(defn ladder-for
+  "Rungs to encode for a source of the given height: every ladder rung below
+  it plus, when the height is not itself a rung and sits below the top rung,
+  the source height at the next rung's bitrate scaled by pixel ratio. A source
+  below the lowest rung gets only its own height at the lowest rung's bitrate
+  scaled by pixel ratio; a source above the top rung gets the whole ladder."
+  [{:keys [height]} ladder]
+  (let [below (filter #(< (:h %) height) ladder)
+        exact (some #(when (= (:h %) height) %) ladder)
+        above (last (filter #(> (:h %) height) ladder))]
+    (cond
+      exact (cons exact below)
+      above (cons {:h height
+                   :v (long (Math/round (* (:v above) (Math/pow (/ height (double (:h above))) 2))))}
+                  below)
+      :else below)))
 
 (defn- ffmpeg-path [^java.io.File f]
   (str/replace (.getPath f) "\\" "/"))
