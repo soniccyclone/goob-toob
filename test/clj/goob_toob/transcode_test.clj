@@ -42,3 +42,11 @@
 
 (deftest ladder-for-never-upscales-a-source-below-the-ladder
   (is (= [{:h 240 :v 200}] (transcode/ladder-for {:height 240} config/default-ladder))))
+
+(deftest priority-cmd-lowers-ffmpeg-on-windows
+  (is (= ["powershell" "-NoProfile" "-NonInteractive" "-Command"
+          "(Get-Process -Id 4242).PriorityClass='BelowNormal'"]
+         (transcode/priority-cmd 4242 true))))
+
+(deftest priority-cmd-is-nil-elsewhere
+  (is (nil? (transcode/priority-cmd 4242 false))))
