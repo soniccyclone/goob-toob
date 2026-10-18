@@ -288,7 +288,7 @@ Behaviour change visible to every viewer: the merge's last commit carries
    or drop the =reanchor= pos update), run the suite, confirm that test and
    only that test fails, restore. Report which were audited.
 2. =make image && STORAGE=... ADMIN_PASSWORD=... make run=; upload
-   =test_data/[jackoneill] Dai Mahou Touge 1 [696A844C].mkv=, make a room.
+   a video from =test_data/=, make a room.
 3. Two Chrome windows: host (admin cookie) and viewer. Viewer devtools →
    Network → custom throttling profile 1500 kbit/s down. Play from the host.
 4. Viewer console: =v=document.querySelector('video'); v.currentTime-=6=.
