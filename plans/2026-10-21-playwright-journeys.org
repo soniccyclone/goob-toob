@@ -506,3 +506,64 @@ green.
    shows the metrics table, the artifacts contain =metrics/= and
    =report/= per project.
 5. Five green =main= runs later: open the retirement PR.
+
+* Implementation notes
+Implemented 2026-10-21 by three Opus subagents from this plan (step 1;
+steps 2-5; step 6), reviewed and verified by the planning session; PR
+for #40. Landed as specced, plus:
+
+- *No JavaScript in the repo.* shadow's =:esm= =:exports {default ...}=
+  gives Playwright the config it wants. Playwright reads fixture names by
+  parsing the test function's source, which compiled CLJS cannot
+  provide, so =defjourney= hands it a function whose =toString= names the
+  fixtures, and emits the =test= call inside the spec's own namespace so
+  the report attributes each test to its spec file rather than to the
+  shared chunk. The =:e2e= build is =:optimizations :simple= with
+  =:infer-externs false=.
+- *Two journeys ship as expected failures*, each pinned to an issue:
+  =a dropped socket resyncs= (#41, all engines: a reconnect applies the
+  room clock but never seeks the element, so a seek missed while offline
+  leaves the viewer 19-38 s behind) and =a laggard catches up without
+  seeking= in WebKit only (#42: an injected backward seek ends in
+  =MEDIA_ERR_DECODE= in Playwright's WebKitGTK build; real Safari is
+  unknown). Both flip to "unexpected pass" when fixed; delete the mark
+  then.
+- *The parked frame sits at 0:00 for 3-4.4 s* in every engine: the park
+  on stream-init runs before the first pong, so =expected= is computed
+  with offset 0, and only the next pong lands it; between pongs the
+  frozen frame drifts up to 5 s by design (re-parks follow the 5 s ping).
+  Thresholds encode what was measured (=:park-live-within 7000=,
+  =:park-track 5.5=). The autoplay plan's =ready?= gate (samples
+  non-empty before starting) is the fix for the first part.
+- *WebKit never starts on Space*; the click fallback always does, about
+  1.1 s after the gesture. =join!= tries Space, then the surface click.
+- *=setOffline= does not close an open WebSocket* in any engine, so the
+  dropped-socket journey cuts it with =routeWebSocket= while =setOffline=
+  still blocks segment fetches.
+- *Thresholds changed from the plan*, each from recorded numbers:
+  =:room-slow-within= 4000 → 6000 ms (a status every 2 s plus a tick
+  every 2 s; recorded 2052-4213), =:closing-min= 0.02 → 0.05 s/s (healthy
+  0.076-0.078; with the catch rate broken to 1.0 the room's 0.97 alone
+  closes 0.027, which 0.02 would have passed), laggard injection -3.0 →
+  -3.5 s (Firefox once reported 2.99 s and the room never slowed), clip
+  60 → 90 s and the upload clip 180 s, =:parked-window= 3 → 12 s. Counts
+  the plan stated as "exactly one" are =T= entries; step lengths and
+  deltas are in a =W= map; specs contain no numeric literal but 0.
+- *=make e2e= runs =npm install --prefer-offline=* at the root and in
+  =e2e/= first, because the repo bind mount hides the image's
+  =node_modules=. CI sets =HOME=/root= for Playwright's Firefox.
+- *Retirement kept three tests the table named*:
+  =delete-video-removes-rows-and-files=,
+  =delete-video-files-removes-dash-and-original= and
+  =deleting-a-video-closes-its-rooms=. No journey deletes a video (the
+  only delete in the console journeys is the room row), so those would
+  have left the file-deletion path untested. 24 retired; the JVM suite
+  is 106 tests.
+- *Verified*: three consecutive full =make e2e= runs ending
+  =34 passed, 2 skipped= (the 34 include the four expected failures; the
+  two skips are the Chromium-only throttled journey in the other
+  engines), about 12 minutes each in the container (over the plan's
+  10-minute target; CI runs the engines as parallel legs). Break check:
+  =:catch-rate 1.0= failed the laggard journey on the closing-rate
+  assertion in Chromium (0.0275) and Firefox (0.0269) and nothing else.
+  =make test= 106 tests, 220 assertions.
