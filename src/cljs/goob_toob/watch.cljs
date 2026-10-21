@@ -97,19 +97,19 @@
 
 (defn- apply-state-msg! [^js st video msg]
   (set! (.-room st) msg)
-  (if-not (.-started st)
-    (park! st video) ;; unstarted: keep the parked frame fresh as the room moves
-    (case (:op msg)
-      "play"  (do (set! (.-ourseek st) (ui/perf-now))
-                  (set! (.-currentTime video) (:pos msg))
-                  (play! video))
-      "pause" (do (.pause video)
-                  (set! (.-ourseek st) (ui/perf-now))
-                  (set! (.-currentTime video) (:pos msg))
-                  (set! (.-playbackRate video) 1.0))
-      "seek"  (do (set! (.-ourseek st) (ui/perf-now))
-                  (set! (.-currentTime video) (:pos msg)))
-      nil)))
+  (case (sc/start-action :state {:started? (boolean (.-started st))})
+    :park (park! st video)
+    :none (case (:op msg)
+            "play"  (do (set! (.-ourseek st) (ui/perf-now))
+                        (set! (.-currentTime video) (:pos msg))
+                        (play! video))
+            "pause" (do (.pause video)
+                        (set! (.-ourseek st) (ui/perf-now))
+                        (set! (.-currentTime video) (:pos msg))
+                        (set! (.-playbackRate video) 1.0))
+            "seek"  (do (set! (.-ourseek st) (ui/perf-now))
+                        (set! (.-currentTime video) (:pos msg)))
+            nil)))
 
 (defn- render-peers! [peers-el peers host?]
   (ui/clear! peers-el)
@@ -277,30 +277,31 @@
                           (let [d (sc/drift (.-currentTime video) (expected-now st room))]
                             (/ (Math/round (* 10 d)) 10)))
                  :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))
-    ;; the native play button is the start trigger (proven in the scratch harness)
     (set! (.-onplay video)
       (fn []
-        (if (.-started st)
-          ;; already in: the room rules — a paused room means no solo-play
-          (when-let [room (.-room st)]
-            (when-not (:playing room) (park! st video)))
-          ;; first play: this is the join gesture
-          (let [act (.-userActivation js/navigator)]
-            (if (and act (not (.-isActive act)))
-              (do (log! (unchecked-get st "token") :play-rejected {})
-                  (park! st video)) ;; gesture-less play; real browsers reject it anyway
+        (let [act      (.-userActivation js/navigator)
+              gesture? (or (nil? act) (boolean (.-isActive act)))
+              started? (boolean (.-started st))
+              room     (.-room st)
+              action   (sc/start-action :play {:started? started? :gesture? gesture?
+                                               :playing? (boolean (:playing room))
+                                               :can-control? (boolean (.-cancontrol st))})]
+          (when-not started?
+            (if gesture?
               (do (set! (.-started st) true)
                   (log! (unchecked-get st "token") :started
-                        {:activation (boolean (and act (.-isActive act)))})
-                  (when-let [room (.-room st)]
-                    (cond
-                      (:playing room)   (do (set! (.-ourseek st) (ui/perf-now))
-                                            (set! (.-currentTime video) (expected-now st room)))
-                      (.-cancontrol st) (do (set! (.-ourseek st) (ui/perf-now))
-                                            (set! (.-currentTime video) (expected-now st room))
-                                            (wsx/send! (.-ws st) {:type "cmd" :op "play"
-                                                                   :pos (expected-now st room)}))
-                      :else             (park! st video)))))))))
+                        {:activation (boolean (and act (.-isActive act)))}))
+              (log! (unchecked-get st "token") :play-rejected {})))
+          (case action
+            :none       nil
+            :park       (park! st video)
+            :start      (do (set! (.-ourseek st) (ui/perf-now))
+                            (set! (.-currentTime video) (expected-now st room)))
+            :start-room (when room
+                          (set! (.-ourseek st) (ui/perf-now))
+                          (set! (.-currentTime video) (expected-now st room))
+                          (wsx/send! (.-ws st) {:type "cmd" :op "play"
+                                                 :pos (expected-now st room)}))))))
     (set! (.-onkeydown chat-input) #(when (= "Enter" (.-key %)) (send-chat)))
     (set! (.-onclick new-msgs)
           #(do (set! (.-scrollTop chat-log) (.-scrollHeight chat-log))
