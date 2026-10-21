@@ -65,6 +65,16 @@ remaining manual.
   =NotAllowedError= should trigger the muted retry.
 - A =play()= on a muted element then =muted=false= from a click works
   everywhere: the click is the activation.
+- *Measured 2026-10-21 (Playwright plan):* Playwright's Chromium, Firefox
+  and WebKit builds all decode the H.264/AAC ladder, so every branch
+  above can run under automation. The policy is forceable per launch in
+  two of them: Chromium =--autoplay-policy=user-gesture-required= (strict)
+  or =no-user-gesture-required= (lenient); Firefox =media.autoplay.default=
+  =1= (block audible, allow muted: the shipped default) or =0= (allow).
+  WebKit has no launch-time knob in Playwright, so its outcome is
+  recorded, not forced. Chrome's navigation carry-over stays unmeasured
+  (the journeys never navigate from the lobby with a gesture); it is a
+  bonus in the field, never a dependency.
 
 * Plan
 ** 1 · =sync_core.cljc=: the decision gains =:autostart=
@@ -91,7 +101,9 @@ everyone is a deliberate act).
 
 ** 2 · =watch.cljs=: =autostart!= with the step-down ladder
 New state on =st=: ="streamok" false= (set true in the dash on-ready),
-="starting" false= (an attempt is in flight), ="automuted" false=.
+="starting" false= (an attempt is in flight), ="automuted" false=,
+="autostart" nil= (the outcome: ="audible"=, ="muted"= or ="blocked"=;
+=goobProbe()= from the Playwright plan reports it as =:autostart=).
 
 #+begin_src clojure
 (defn- ready? [^js st]
@@ -111,10 +123,12 @@ New state on =st=: ="streamok" false= (set true in the dash on-ready),
                  (set! (.-starting st) false)
                  (set! (.-automuted st) muted?)
                  (set! (.-display (.-style unmute)) (if muted? "" "none"))
+                 (set! (.-autostart st) (if muted? "muted" "audible"))
                  (log! token :autostart {:muted muted?}))
           blocked (fn [err]
                     (set! (.-starting st) false)
                     (set! (.-started st) false)
+                    (set! (.-autostart st) "blocked")
                     (log! token :autostart-blocked {:err (some-> err .-name)})
                     (park! st video))]
       (-> (.play video)
@@ -196,9 +210,26 @@ load; enough to see in the field which browsers land where.
 The four other =start-action= tests from the lockdown stay and must still
 pass unchanged (the =:play= rows did not move).
 
-No browser automation: the behaviour under test is the browser's own
-autoplay policy, which only a real browser exercises. The manual matrix
-below is the acceptance test; =server.log= is the record.
+*** Journeys (the Playwright plan's harness)
+=e2e/src/goob_toob/e2e/config.cljs= gains two projects:
+=chromium-lenient= (=--autoplay-policy=no-user-gesture-required=) and
+=firefox-lenient= (=media.autoplay.default 0=). New spec
+=journeys/autoplay.cljs=; thresholds =:autostart-within 6000= ms and
+=:unmute-within 1000= ms. Every journey runs in all five projects; the
+assertions say which projects they apply to. =viewer= in =party.cljs=
+gains a =:nick nil= option that leaves =localStorage= empty so the nick
+prompt shows.
+| journey                                                | steps                                                                              | asserts                                                                                                              |
+|--------------------------------------------------------+------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------|
+| =a returning viewer autostarts into a playing room=    | host playing; viewer with a saved nick opens the page; sample 12 s                 | =started= true within =:autostart-within= with no gesture; strict chromium/firefox: =:autostart "muted"=, =muted= true, the "tap for sound" button visible; lenient: =:autostart "audible"=, =muted= false, no button; webkit: outcome recorded, =started= true or =:autostart "blocked"= with a parked frame, never a stuck page; all: =counters.rejected= 0, drift ≤ =:settled= within =:sync-within=, server drift agrees |
+| =tap for sound unmutes without a seek=                 | strict projects after the journey above; click the button                          | =muted= false within =:unmute-within=; button hidden; =seeks= unchanged; drift p95 ≤ =:steady-p95= over the next 5 s |
+| =a first-time viewer's join click gives sound=         | host playing; viewer with no saved nick; type a nick, click "join the goo"; sample 12 s | no =location.reload= (the page object is the same, a marker set by =addInitScript= survives); =:autostart "audible"= in chromium and firefox, strict or lenient; =muted= false; webkit recorded |
+| =a parked viewer starts when the host presses play=    | room paused; viewer loads (parked, =started= false); host play; sample 12 s         | =started= true within =:autostart-within= of the host's play with no gesture on the viewer; strict: muted with the button; lenient: audible; drift ≤ =:settled= within =:sync-within= |
+| =a controller still has to start a paused room=        | room paused; co-host control on; viewer loads                                       | =started= stays false for 5 s; server =playing= false; the native play press then starts the room for everyone (server =playing= true, host element playing) |
+| =solo pause and play keep the join=                    | viewer autostarted; press Space twice (pause, play)                                 | =started= stays true; =:autostart= unchanged; no second autostart (counters and the button do not change); drift ≤ =:settled= within =:sync-within= |
+The browser's own policy is the thing under test, so only these journeys
+count as acceptance. =server.log= still records the same outcomes for the
+field.
 
 ** 7 · Release
 Every viewer sees it: the merge's last commit carries =Release: minor=.
@@ -231,24 +262,13 @@ Every viewer sees it: the merge's last commit carries =Release: minor=.
    first branch and confirm only =start-action-autostarts-into-a-playing-room=
    fails).
 2. =make compile=: clean for =watch.cljs=.
-3. =make run=, upload a clip, make a room, host playing. Then in order,
-   watching =server.log= for the =autostart= lines:
-   - Chrome, fresh profile, open the room link directly, type a nick, click
-     "join the goo": video starts with sound within 2 s, drift under 1 s
-     on the host's peer list, no "tap for sound". Log: =autostart {:muted false}=.
-   - Same tab, reload (nick saved): expect =autostart {:muted true}= and the
-     "tap for sound" button; tap it: sound on, button gone, no seek.
-   - Chrome, open the lobby first and click the room's "watch together":
-     record whether the start is audible (Chrome's carry-over). Either
-     result is acceptable; note it in the implementation notes.
-   - Firefox, both paths. Safari or iOS Safari if available: expect muted;
-     with Low Power Mode on, expect =autostart-blocked= and the parked frame
-     with the native play button.
-   - Host pauses: viewers pause at the same frame. Host plays: viewers
-     resume (muted ones stay muted, no new pill). A viewer who loaded while
-     paused is parked; host presses play → that viewer autostarts (muted or
-     not) without touching anything.
-   - A viewer presses native pause then play while the room plays: resumes
-     and catches up, no autostart lines (started stays true).
-4. Ten minutes of playback across the above tabs: no =:seek-unexplained=
-   lines attributable to the start path, no =play-rejected= lines.
+3. =make e2e=: every journey above green in all five projects, three runs
+   in a row; the metrics table shows =:autostart= per project (muted under
+   strict, audible under lenient, webkit's actual outcome). Break it once:
+   skip the muted retry in =autostart!= and confirm the strict projects
+   fail the first journey and nothing else; restore.
+4. One CI run on the PR with all legs green.
+5. Manual, once, real Safari (desktop or iOS) against the running
+   container: a returning viewer gets a muted start with the button, and
+   with Low Power Mode on gets the parked frame. Record the outcome in the
+   implementation notes; it is the only check automation cannot do.
