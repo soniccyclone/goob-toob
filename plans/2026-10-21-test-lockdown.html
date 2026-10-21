@@ -1,0 +1,1060 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-21 Wed 10:52 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Test lockdown: pin the stable system before autoplay and playlists</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Test lockdown: pin the stable system before autoplay and playlists</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc7516dc">Goal</a></li>
+<li><a href="#org92422c3">Findings</a>
+<ul>
+<li><a href="#org3856698">What is covered today</a></li>
+<li><a href="#orga0602af">Bugs found in untested code</a></li>
+<li><a href="#org147f47e">False assumption: foreign keys are not enforced</a></li>
+<li><a href="#orgc393a22">Client logic worth pinning on the JVM</a></li>
+<li><a href="#org1219364">What a real integration test needs</a></li>
+</ul>
+</li>
+<li><a href="#orgd5efc3b">Plan</a>
+<ul>
+<li><a href="#org7184012">1 · Shared fixture</a></li>
+<li><a href="#org26a8b74">2 · Pure and repo-level tests (no code change)</a></li>
+<li><a href="#org7632db3">3 · WebSocket integration test</a></li>
+<li><a href="#org089cb9d">4 · Transcode pipeline tests</a></li>
+<li><a href="#orgf7d45da">5 · Fix: login rate limit</a></li>
+<li><a href="#org6d54517">6 · Fix: isolate the beat loop and validate command positions</a></li>
+<li><a href="#org5b2ad14">7 · Refactor: extract the start decision to <code>sync_core.cljc</code></a></li>
+</ul>
+</li>
+<li><a href="#orge3e23eb">Risks and open questions</a></li>
+<li><a href="#orge5f48d0">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgc7516dc" class="outline-2">
+<h2 id="orgc7516dc">Goal</h2>
+<div class="outline-text-2" id="text-orgc7516dc">
+<p>
+v0.4.x is working and stable. Two feature plans follow this one (autoplay on
+load, room playlists) and both cut through the watch page, the websocket
+protocol, the room model and the rooms table. Before they land, every
+behaviour we rely on today gets a test that fails when it breaks. The audit
+below says what is covered, what is not, and found two real bugs in
+untested code plus one false assumption about the database. This plan adds
+the missing tests, fixes the two bugs, and extracts one piece of client
+logic into <code>sync_core.cljc</code> so the JVM suite can pin it. Nothing else
+changes behaviour.
+</p>
+
+<p>
+Baseline on <code>main</code> (2ea31c4): <code>make test</code> runs 56 tests, 116 assertions,
+0 failures. The CLJS client has no tests at all and no test build.
+</p>
+</div>
+</div>
+<div id="outline-container-org92422c3" class="outline-2">
+<h2 id="org92422c3">Findings</h2>
+<div class="outline-text-2" id="text-org92422c3">
+</div>
+<div id="outline-container-org3856698" class="outline-3">
+<h3 id="org3856698">What is covered today</h3>
+<div class="outline-text-3" id="text-org3856698">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">area</th>
+<th scope="col" class="org-right">tests</th>
+<th scope="col" class="org-left">verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>sync_core.cljc</code> (pure math)</td>
+<td class="org-right">21</td>
+<td class="org-left">good: policy, room-rate, reanchor, ntp, quality-cap, start-kbps all pinned</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>services/sync.clj</code></td>
+<td class="org-right">8</td>
+<td class="org-left">good on rate control; nothing on join/leave, broadcast scoping, beat payload</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>services/transcode.clj</code></td>
+<td class="org-right">9</td>
+<td class="org-left">good on <code>ffmpeg-cmd</code> and <code>ladder-for</code>; the pipeline itself never runs</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>routes.clj</code></td>
+<td class="org-right">4</td>
+<td class="org-left">the two-port invariant only; no login flow, upload, delete, range, limits</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>repos/*</code></td>
+<td class="org-right">4</td>
+<td class="org-left">lifecycle + tokens + traversal; no requeue, no error clearing, no rooms join</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>db.clj</code></td>
+<td class="org-right">2</td>
+<td class="org-left">classpath + schema; not idempotence, not the missing-migration guard</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ws.clj</code></td>
+<td class="org-right">0</td>
+<td class="org-left">the control gate (viewer <code>cmd</code> ignored unless co-host) is untested</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>config.clj</code>, <code>log.clj</code></td>
+<td class="org-right">2</td>
+<td class="org-left">fine for their size</td>
+</tr>
+
+<tr>
+<td class="org-left">client (<code>src/cljs</code>)</td>
+<td class="org-right">0</td>
+<td class="org-left">no test build; the join gesture, park, follow rule, quality cap wiring are unpinned</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orga0602af" class="outline-3">
+<h3 id="orga0602af">Bugs found in untested code</h3>
+<div class="outline-text-3" id="text-orga0602af">
+</div>
+<div id="outline-container-org14b2253" class="outline-4">
+<h4 id="org14b2253">Login rate limit never fires</h4>
+<div class="outline-text-4" id="text-org14b2253">
+<p>
+<code>src/clj/goob_toob/routes.clj:28-33</code>. Two independent faults:
+</p>
+<ul class="org-ul">
+<li><code>(get @login-attempts [])</code> looks up the key <code>[]</code> (a literal empty
+vector), not <code>ip</code>. It is always nil, so <code>recent</code> is always empty and
+<code>ok?</code> is always true.</li>
+<li>The filter keeps attempts <b>older</b> than 60 s (<code>(&gt; (- now %) 60000)</code>), the
+inverse of "recent".</li>
+</ul>
+<p>
+Verified in the container: eight rapid <code>allow-login?</code> calls from one IP
+return <code>[true true true true true true true true]</code> and the atom holds a
+single timestamp. The admin UI's "too many tries, wait a minute" text
+describes a limit that does not exist. Container mode exposes <code>/api/login</code>
+on the public port, so this is the only brute-force defence and it is off.
+</p>
+</div>
+</div>
+<div id="outline-container-org477638e" class="outline-4">
+<h4 id="org477638e">One bad host command kills the beat loop for every room</h4>
+<div class="outline-text-4" id="text-org477638e">
+<p>
+<code>src/clj/goob_toob/services/sync.clj:111-118</code> is a <code>future</code> running a bare
+loop with no exception handling. <code>ws.clj:29-30</code> passes <code>(:pos m)</code> from the
+JSON straight into <code>host-cmd!</code>, and <code>sync.clj:61-64</code> stores it unchecked.
+A <code>cmd</code> with <code>pos</code> as a string (any co-host with the link, or an admin
+typo in devtools) lands in <code>rooms*</code>; the next <code>tick-room!</code> calls
+<code>sc/reanchor</code> / <code>expected-pos</code>, throws <code>ClassCastException</code>, and the
+future ends. No room beats again until the process restarts, and the log
+says nothing. The same lack of a <code>try</code> in the per-socket loop
+(<code>ws.clj:64-71</code>) means a <code>status</code> with a non-numeric <code>pos</code> throws inside
+<code>status!</code>, the go block dies, and <code>ws.clj:73-75</code> (<code>leave!</code>) never runs:
+a ghost peer stays in the list forever.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-org147f47e" class="outline-3">
+<h3 id="org147f47e">False assumption: foreign keys are not enforced</h3>
+<div class="outline-text-3" id="text-org147f47e">
+<p>
+<code>src/clj/goob_toob/db.clj:47</code> runs <code>PRAGMA foreign_keys=ON</code> once on the
+datasource. That pragma is per connection, and next.jdbc opens a fresh
+connection for every <code>execute!</code> on a datasource, so every real query runs
+with foreign keys off. Verified in the container: <code>PRAGMA foreign_keys</code>
+reads 0 on a fresh <code>execute!</code> and inside <code>with-transaction</code>, and an
+<code>INSERT INTO rooms</code> with a bogus <code>video_id</code> is accepted. The code already
+compensates by hand (<code>repos/room.clj:16-17</code> checks the video exists,
+<code>repos/video.clj:62</code> deletes rooms before the video), which is why nothing
+has broken. Not fixed here: flipping it on is a schema-touching change and
+belongs to the playlist plan, which adds the next migration anyway. The
+lockdown must not assert either way.
+</p>
+</div>
+</div>
+<div id="outline-container-orgc393a22" class="outline-3">
+<h3 id="orgc393a22">Client logic worth pinning on the JVM</h3>
+<div class="outline-text-3" id="text-orgc393a22">
+<p>
+The start trigger in <code>src/cljs/goob_toob/watch.cljs:281-303</code> and the
+unstarted branch of <code>watch.cljs:98-101</code> decide, from five booleans, whether
+a viewer starts, starts the room, parks or does nothing. That table is the
+exact thing the autoplay plan changes. It is pure; it just lives inside DOM
+handlers. Extracting it to <code>sync_core.cljc</code> (as <code>policy</code> and <code>quality-cap</code>
+already are) makes it testable here and lets the autoplay plan change one
+function with a test table instead of a handler.
+</p>
+</div>
+</div>
+<div id="outline-container-org1219364" class="outline-3">
+<h3 id="org1219364">What a real integration test needs</h3>
+<div class="outline-text-3" id="text-org1219364">
+<ul class="org-ul">
+<li>JDK 11+ ships <code>java.net.http.HttpClient</code> with a WebSocket client, so a
+test can start Jetty on an ephemeral port with <code>routes/app</code>, log in over
+HTTP, pass the session cookie on the upgrade and drive <code>ws/endpoint</code> for
+real. No new dependency.</li>
+<li>The container image has ffmpeg 8.1 with libx264 (<code>container/Containerfile:7-10</code>),
+so the transcode pipeline can run end to end on a two-second <code>lavfi</code>
+clip inside <code>make test</code>. CI (<code>.github/workflows/ci.yml:9-33</code>) has no
+ffmpeg; it needs one <code>apt-get</code> line.</li>
+<li><code>transcode/submit!</code> is a no-op while <code>control</code> is nil (<code>transcode.clj:160-162</code>),
+so route tests can upload without a worker.</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-orgd5efc3b" class="outline-2">
+<h2 id="orgd5efc3b">Plan</h2>
+<div class="outline-text-2" id="text-orgd5efc3b">
+<p>
+Six commits, in this order. Tests first (no behaviour change), then the two
+fixes, then the refactor. Every new <code>deftest</code> name below is final; every
+assertion must fail alone (see Verification).
+</p>
+</div>
+<div id="outline-container-org7184012" class="outline-3">
+<h3 id="org7184012">1 · Shared fixture</h3>
+<div class="outline-text-3" id="text-org7184012">
+<p>
+New <code>test/clj/goob_toob/test_util.clj</code>:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">ns</span> <span class="org-type">goob-toob.test-util</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require</span> <span class="org-rainbow-delimiters-depth-3">[</span>clojure.java.io <span class="org-clojure-keyword">:as</span> io<span class="org-rainbow-delimiters-depth-3">]</span>
+            <span class="org-rainbow-delimiters-depth-3">[</span>goob-toob.config <span class="org-clojure-keyword">:as</span> config<span class="org-rainbow-delimiters-depth-3">]</span>
+            <span class="org-rainbow-delimiters-depth-3">[</span>goob-toob.db <span class="org-clojure-keyword">:as</span> db<span class="org-rainbow-delimiters-depth-3">]</span>
+            <span class="org-rainbow-delimiters-depth-3">[</span>goob-toob.services.sync <span class="org-clojure-keyword">:as</span> sync<span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">tmp-dir</span> <span class="org-rainbow-delimiters-depth-2">[]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>str <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">java.nio.file.Files</span>/createTempDirectory
+         <span class="org-string">"goob-test"</span> <span class="org-rainbow-delimiters-depth-4">(</span>make-array java.nio.file.attribute.FileAttribute 0<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">with-tmp</span>
+  <span class="org-doc">"Fresh storage dir + db + empty sync state around f. Sets admin-pass so
+  container-mode routes can log in."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>f<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>dir <span class="org-rainbow-delimiters-depth-4">(</span>tmp-dir<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>swap! <span class="org-type">config</span>/config merge <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:storage-dir</span> dir <span class="org-clojure-keyword">:ladder</span> <span class="org-type">config</span>/default-ladder
+                                <span class="org-clojure-keyword">:keep-original</span> <span class="org-constant">true</span> <span class="org-clojure-keyword">:workers</span> 1
+                                <span class="org-clojure-keyword">:admin-pass</span> <span class="org-string">"pw"</span> <span class="org-clojure-keyword">:ffmpeg-path</span> <span class="org-string">"ffmpeg"</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">db</span>/init! <span class="org-rainbow-delimiters-depth-4">(</span>str dir <span class="org-string">"/test.db"</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>reset! <span class="org-type">sync</span>/rooms* <span class="org-rainbow-delimiters-depth-4">{}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>reset! <span class="org-type">sync</span>/conns* <span class="org-rainbow-delimiters-depth-4">{}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>f<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>reset! <span class="org-type">sync</span>/rooms* <span class="org-rainbow-delimiters-depth-4">{}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>reset! <span class="org-type">sync</span>/conns* <span class="org-rainbow-delimiters-depth-4">{}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>run! #<span class="org-rainbow-delimiters-depth-4">(</span>.delete <span class="org-default">^</span><span class="org-type">java.io.File</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span>reverse <span class="org-rainbow-delimiters-depth-5">(</span>file-seq <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">io</span>/file dir<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>repos_test</code> and <code>sync_service_test</code> switch to it (delete their local copies).
+</p>
+</div>
+</div>
+<div id="outline-container-org26a8b74" class="outline-3">
+<h3 id="org26a8b74">2 · Pure and repo-level tests (no code change)</h3>
+<div class="outline-text-3" id="text-org26a8b74">
+</div>
+<div id="outline-container-orgf17f2aa" class="outline-4">
+<h4 id="orgf17f2aa"><code>test/clj/goob_toob/sync_core_test.clj</code> (add)</h4>
+<div class="outline-text-4" id="text-orgf17f2aa">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>expected-pos-honours-the-room-rate</code></td>
+<td class="org-left"><code>(expected-pos {:pos 10 :t0 0 :now 10000 :playing? true :rate 0.97})</code> is <code>19.7</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>drift-is-local-minus-expected</code></td>
+<td class="org-left"><code>(drift 9.5 10.0)</code> is <code>-0.5</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-rate-picks-the-worst-laggard</code></td>
+<td class="org-left">prev 1.0, drifts -3.5 (nick "a") and -5.0 (nick "b") → <code>:for "b"</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orgeb4d081" class="outline-4">
+<h4 id="orgeb4d081"><code>test/clj/goob_toob/sync_service_test.clj</code> (add; use the existing <code>run</code> harness)</h4>
+<div class="outline-text-4" id="text-orgeb4d081">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>room-for-loads-a-room-from-the-db-once</code></td>
+<td class="org-left">after <code>rooms/create!</code>, <code>(room-for id)</code> is <code>:pos 0.0 :playing? false :rate 1.0 :clients {}</code> and carries <code>:video-id</code>; a second call returns the same map without touching the db (<code>with-redefs rooms/get-by-id</code> to throw)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>room-for-is-nil-for-an-unknown-room</code></td>
+<td class="org-left"><code>(room-for "nope")</code> is nil and <code>rooms*</code> stays empty</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>join-and-leave-maintain-the-client-map</code></td>
+<td class="org-left">join two cids → <code>peers-list</code> has both nicks with <code>:lag 0.0 :buffering false</code>; leave one → only the other</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>broadcast-reaches-only-the-rooms-clients</code></td>
+<td class="org-left">two rooms, one client each, <code>conns*</code> <code>:send</code> fns capturing; <code>broadcast</code> to room A → only A's fn called, with the JSON of the msg</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>send-to-swallows-a-dead-socket</code></td>
+<td class="org-left"><code>:send</code> that throws → <code>(send-to cid {...})</code> returns nil, no exception</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-play-without-a-position-resumes-where-it-was</code></td>
+<td class="org-left">pause at 10.0 then <code>(host-cmd! id "play" nil "h")</code> → <code>:pos 10.0 :playing? true</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-seek-without-a-position-goes-to-zero</code></td>
+<td class="org-left"><code>(host-cmd! id "seek" nil "h")</code> → <code>:pos 0.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-command-broadcasts-state-with-the-op</code></td>
+<td class="org-left">after <code>play 5.0</code>: exactly one captured msg with <code>:type "state" :op "play" :pos 5.0 :playing true :rate 1.0</code> and numeric <code>:t0</code> and <code>:now</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>unknown-op-leaves-the-room-alone</code></td>
+<td class="org-left"><code>(host-cmd! id "dance" 1.0 "h")</code> → room unchanged except <code>:rate 1.0</code>; one broadcast</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>beat-carries-peers-and-the-slow-note</code></td>
+<td class="org-left">playing, laggard 4 s behind, tick → the <code>beat</code> msg has <code>:peers</code> with the laggard's <code>:lag</code> about -4.0 and <code>:slow-for "laggard"</code>; after recovery <code>:slow-for nil</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>status-ignores-a-room-that-is-not-live</code></td>
+<td class="org-left"><code>(status! "nope" "c" 1.0 false)</code> is nil and <code>rooms*</code> unchanged</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orgb7c06d9" class="outline-4">
+<h4 id="orgb7c06d9"><code>test/clj/goob_toob/repos_test.clj</code> (add)</h4>
+<div class="outline-text-4" id="text-orgb7c06d9">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>requeue-stuck-returns-only-mid-flight-videos</code></td>
+<td class="org-left">insert four videos with statuses uploaded, transcoding, ready, failed → <code>(requeue-stuck)</code> is exactly the first two ids</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>set-status-ready-clears-a-previous-error</code></td>
+<td class="org-left"><code>set-status! "failed" :error "boom"</code> then <code>set-status! "ready" :error nil</code> → <code>:error</code> nil, <code>:progress</code> kept via coalesce</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>list-all-is-newest-first</code></td>
+<td class="org-left">insert a, then b (<code>Thread/sleep 1100</code> between, <code>created_at</code> has second resolution) → <code>(map :id (list-all))</code> is <code>["b" "a"]</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rooms-list-all-joins-the-video-title-and-status</code></td>
+<td class="org-left">room on a video titled "T" status "uploaded" → row has <code>:title "T" :status "uploaded" :allow-control 0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>set-control-flips-the-flag</code></td>
+<td class="org-left"><code>set-control! id true</code> → <code>:allow-control 1</code>; false → 0</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>deleting-a-video-closes-its-rooms</code></td>
+<td class="org-left">room on v → <code>videos/delete! v</code> → <code>rooms/list-all</code> empty</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>save-upload-moves-the-file-under-uploads</code></td>
+<td class="org-left">spit a tmp file, <code>save-upload!</code> → dest at <code>uploads/&lt;id&gt;.mkv</code>, tmp gone, <code>find-original</code> finds it</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>save-upload-rejects-an-id-that-escapes-the-root</code></td>
+<td class="org-left"><code>(save-upload! tmp "../../x" "mkv")</code> throws</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>delete-video-files-removes-dash-and-original</code></td>
+<td class="org-left">create <code>dash/&lt;id&gt;/a.m4s</code> and an original → <code>delete-video-files!</code> → neither exists, uploads dir still exists</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orga1f4d3b" class="outline-4">
+<h4 id="orga1f4d3b"><code>test/clj/goob_toob/db_test.clj</code> (add)</h4>
+<div class="outline-text-4" id="text-orga1f4d3b">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>init-is-idempotent</code></td>
+<td class="org-left"><code>init!</code> twice on the same path → <code>schema_migrations</code> has exactly <code>(count db/migrations)</code> rows; second run logs no "migrated" line (<code>with-out-str</code> empty)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>a-listed-migration-missing-from-the-classpath-fails-fast</code></td>
+<td class="org-left"><code>with-redefs [db/migrations ["999-nope.sql"]]</code> → <code>init!</code> throws <code>ExceptionInfo</code> whose message names <code>999-nope.sql</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org5362d9a" class="outline-4">
+<h4 id="org5362d9a"><code>test/clj/goob_toob/transcode_test.clj</code> (add)</h4>
+<div class="outline-text-4" id="text-org5362d9a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>probe-media-reads-height-audio-and-duration</code></td>
+<td class="org-left"><code>(#'transcode/probe-media {:streams [{:codec_type "video" :height 696} {:codec_type "audio"}] :format {:duration "12.5"}})</code> is <code>{:height 696 :audio? true :duration 12.5}</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>probe-media-defaults-when-fields-are-missing</code></td>
+<td class="org-left">video stream without <code>:height</code>, no audio, no duration → <code>{:height 1080 :audio? false :duration 1.0}</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>probe-media-refuses-a-file-without-video</code></td>
+<td class="org-left">audio-only probe → throws</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ffprobe-sits-next-to-a-vendored-ffmpeg</code></td>
+<td class="org-left"><code>:ffmpeg-path "/opt/g/ffmpeg/ffmpeg.exe"</code> → <code>(#'transcode/ffprobe-bin)</code> is <code>"/opt/g/ffmpeg/ffprobe.exe"</code>; path <code>"ffmpeg"</code> → <code>"ffprobe"</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ffmpeg-cmd-omits-audio-when-the-source-has-none</code></td>
+<td class="org-left"><code>{:audio? false}</code> → no <code>"0:a:0"</code>, no <code>"-c:a"</code>, adaptation sets <code>"id=0,streams=v"</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org4e244c3" class="outline-4">
+<h4 id="org4e244c3"><code>test/clj/goob_toob/routes_test.clj</code> (add; these need the fixture, so add <code>use-fixtures :each with-tmp</code>)</h4>
+<div class="outline-text-4" id="text-org4e244c3">
+<p>
+Helper: <code>(defn- call [app method path &amp; {:keys [body cookie headers]}])</code> that
+JSON-encodes <code>body</code> into a <code>ByteArrayInputStream</code> with
+<code>"Content-Type" "application/json"</code>, adds a <code>"cookie"</code> header when given, and
+returns the response with <code>:body</code> parsed when it is a JSON string.
+Session cookie: read <code>(get-in resp [:headers "Set-Cookie"])</code>, take the
+first element up to <code>;</code>.
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>login-sets-a-session-that-admin-routes-accept</code></td>
+<td class="org-left">container app; <code>POST /api/login {:password "pw"}</code> → 200 with a Set-Cookie; <code>GET /api/me</code> with it → <code>:admin true</code>; <code>GET /api/admin/videos</code> with it → 200; <code>POST /api/logout</code> with it → <code>GET /api/me</code> <code>:admin false</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>wrong-password-is-401</code></td>
+<td class="org-left"><code>POST /api/login {:password "no"}</code> → 401, no Set-Cookie granting admin (<code>GET /api/me</code> with any returned cookie → false)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>parse-range-forms</code></td>
+<td class="org-left"><code>(#'routes/parse-range "bytes=0-99" 1000)</code> is <code>[0 99]</code>; <code>"bytes=900-" → [900 999]</code>; <code>"bytes</code>-100" → [900 999]=; <code>"bytes=0-5000" → [0 999]</code>; <code>"bytes=5-2"</code> nil; <code>"junk"</code> nil; <code>"bytes</code>-0"= nil</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>dash-files-serve-whole-and-ranged</code></td>
+<td class="org-left">write <code>dash/v1/manifest.mpd</code> ("hello world") → <code>GET /dash/v1/manifest.mpd</code> 200, <code>Content-Type application/dash+xml</code>, <code>Content-Length 11</code>; with <code>Range: bytes=6-10</code> → 206, body <code>"world"</code>, <code>Content-Range bytes 6-10/11</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>dash-files-outside-the-dir-are-404</code></td>
+<td class="org-left"><code>GET /dash/v1/../../test.db</code> → 404; unknown file → 404</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>public-rooms-lists-only-ready-videos</code></td>
+<td class="org-left">rooms on a ready and an uploaded video → <code>GET /api/rooms</code> has one entry with <code>:token</code> and <code>:title</code> only</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>create-room-returns-a-watch-url</code></td>
+<td class="org-left">admin session; <code>POST /api/admin/rooms {:video-id v}</code> → 201, <code>:url</code> is <code>"/watch/&lt;token&gt;"</code>; unknown video → 400</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>update-room-flips-co-host-control</code></td>
+<td class="org-left"><code>PATCH /api/admin/rooms/:id {:allow-control true}</code> → <code>rooms/get-by-id</code> has <code>:allow-control 1</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>upload-stores-the-file-and-queues-it</code></td>
+<td class="org-left">multipart-free path: call <code>routes/upload</code> directly with <code>:params {:file {:tempfile f :filename "My.Show.S01E01.MKV" :size 12}}</code> → 202, <code>:status "queued"</code>, video row titled <code>"My.Show.S01E01"</code> with status uploaded, file at <code>uploads/&lt;id&gt;.mkv</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>upload-without-a-file-is-400</code></td>
+<td class="org-left"><code>:params {}</code> → 400</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>delete-video-removes-rows-and-files</code></td>
+<td class="org-left">admin session; video with a room and a dash file → <code>DELETE /api/admin/videos/:id</code> → 200, <code>get-by-id</code> nil, room gone, dash dir gone</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>watch-pages-are-public</code></td>
+<td class="org-left">public app: <code>GET /watch/anything</code> → 200 html; <code>GET /</code> → 200</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>clientlog-is-rate-limited-per-token</code></td>
+<td class="org-left"><code>(#'routes/clientlog-allow? "t" 0)</code> 120 times → all true; 121st (still at ms 0) false; at ms 60000 → true again</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>clientlog-clips-and-logs</code></td>
+<td class="org-left"><code>POST /api/clientlog {:token "abcdefghijk" :msg "hi"}</code> → 200 and <code>with-out-str</code> contains <code>"client abcdefgh : hi"</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="outline-container-org7632db3" class="outline-3">
+<h3 id="org7632db3">3 · WebSocket integration test</h3>
+<div class="outline-text-3" id="text-org7632db3">
+<p>
+New <code>test/clj/goob_toob/ws_test.clj</code>. Starts <code>(run-jetty (routes/app {:admin? true :login? true}) {:port 0 :join? false})</code>
+in a <code>:once</code> fixture, reads the port from <code>(.getPort (.getURI server))</code>, stops
+it after. Client helper:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">ws-client</span>
+  <span class="org-doc">"Opens a socket; returns {:ws ws :in chan}. Every complete text frame is
+  parsed and put on :in."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>port token nick cookie<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>in <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">a</span>/chan 64<span class="org-rainbow-delimiters-depth-4">)</span>
+        buf <span class="org-rainbow-delimiters-depth-4">(</span>StringBuilder.<span class="org-rainbow-delimiters-depth-4">)</span>
+        listener <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">reify</span> java.net.http.WebSocket$Listener
+                   <span class="org-rainbow-delimiters-depth-5">(</span>onOpen <span class="org-rainbow-delimiters-depth-6">[</span>_ ws<span class="org-rainbow-delimiters-depth-6">]</span> <span class="org-rainbow-delimiters-depth-6">(</span>.request ws 1<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                   <span class="org-rainbow-delimiters-depth-5">(</span>onText <span class="org-rainbow-delimiters-depth-6">[</span>_ ws data last?<span class="org-rainbow-delimiters-depth-6">]</span>
+                     <span class="org-rainbow-delimiters-depth-6">(</span>.append buf data<span class="org-rainbow-delimiters-depth-6">)</span>
+                     <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">when</span> last?
+                       <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-type">a</span>/put! in <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-type">json</span>/parse-string <span class="org-rainbow-delimiters-depth-9">(</span>str buf<span class="org-rainbow-delimiters-depth-9">)</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span>
+                       <span class="org-rainbow-delimiters-depth-7">(</span>.setLength buf 0<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                     <span class="org-rainbow-delimiters-depth-6">(</span>.request ws 1<span class="org-rainbow-delimiters-depth-6">)</span>
+                     <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+        b <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">cond-&gt;</span> <span class="org-rainbow-delimiters-depth-5">(</span>.newWebSocketBuilder <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">java.net.http.HttpClient</span>/newHttpClient<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+            cookie <span class="org-rainbow-delimiters-depth-5">(</span>.header <span class="org-string">"Cookie"</span> cookie<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+        ws <span class="org-rainbow-delimiters-depth-4">(</span>.join <span class="org-rainbow-delimiters-depth-5">(</span>.buildAsync b <span class="org-rainbow-delimiters-depth-6">(</span>java.net.URI. <span class="org-rainbow-delimiters-depth-7">(</span>str <span class="org-string">"ws://127.0.0.1:"</span> port <span class="org-string">"/ws/room/"</span> token <span class="org-string">"?nick="</span> nick<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span> listener<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:ws</span> ws <span class="org-clojure-keyword">:in</span> in<span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">send!</span> <span class="org-rainbow-delimiters-depth-2">[</span>ws m<span class="org-rainbow-delimiters-depth-2">]</span> <span class="org-rainbow-delimiters-depth-2">(</span>.join <span class="org-rainbow-delimiters-depth-3">(</span>.sendText ws <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">json</span>/generate-string m<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">recv!</span> <span class="org-rainbow-delimiters-depth-2">[</span>in<span class="org-rainbow-delimiters-depth-2">]</span> <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span>v _<span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">a</span>/alts!! <span class="org-rainbow-delimiters-depth-5">[</span>in <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">a</span>/timeout 3000<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span> v<span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">recv-type!</span> <span class="org-rainbow-delimiters-depth-2">[</span>in t<span class="org-rainbow-delimiters-depth-2">]</span> <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">loop</span> <span class="org-rainbow-delimiters-depth-3">[]</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">when-let</span> <span class="org-rainbow-delimiters-depth-4">[</span>m <span class="org-rainbow-delimiters-depth-5">(</span>recv! in<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">if</span> <span class="org-rainbow-delimiters-depth-5">(</span>= t <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:type</span> m<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> m <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">recur</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Login for the host: <code>java.net.http</code> POST to <code>/api/login</code> with the JSON
+body, cookie from the <code>set-cookie</code> header (first segment).
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>unknown-token-is-refused</code></td>
+<td class="org-left"><code>buildAsync</code> on a bad token fails (<code>.join</code> throws <code>CompletionException</code>)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>welcome-describes-the-room-and-the-viewer</code></td>
+<td class="org-left">viewer connects → first msg <code>:type "welcome"</code>, <code>:is-host false</code>, <code>:can-control false</code>, <code>:video {:id :title :duration :dash "/dash/&lt;id&gt;/manifest.mpd"}</code>, <code>:state {:playing false :pos 0.0 ...}</code>, <code>:start-kbps 2000</code>, <code>:peers</code> has the viewer's nick</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>nick-is-trimmed-and-clamped</code></td>
+<td class="org-left">nick of 40 <code>a</code> with spaces → peers shows 32 <code>a</code>; empty nick → <code>"guest"</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>admin-session-makes-the-host</code></td>
+<td class="org-left">cookie from login → welcome <code>:is-host true :can-control true</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>viewer-commands-are-ignored-without-co-host-control</code></td>
+<td class="org-left">viewer sends <code>{:type "cmd" :op "play" :pos 0}</code> → no <code>state</code> msg within 1 s at a second viewer; <code>rooms*</code> still paused</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>co-host-control-opens-commands-live</code></td>
+<td class="org-left"><code>rooms/set-control! id true</code> (no reconnect) → the same viewer's <code>cmd play</code> → both sockets get <code>state :op "play"</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-play-reaches-every-viewer</code></td>
+<td class="org-left">host <code>cmd play 3.0</code> → viewer receives <code>state :op "play" :pos 3.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>chat-is-clamped-and-blank-dropped</code></td>
+<td class="org-left">600-char text → received <code>:text</code> has 500 chars, <code>:from</code> nick, numeric <code>:ts</code>; <code>"   "</code> → nothing received within 500 ms</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ping-answers-with-both-clocks</code></td>
+<td class="org-left"><code>{:type "ping" :t 123}</code> → <code>pong</code> with <code>:t 123</code> and numeric <code>:st</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>leaving-updates-the-peer-list</code></td>
+<td class="org-left">two viewers; close one (<code>(.sendClose ws 1000 "")</code>) → the other receives <code>peers</code> with one entry</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>status-is-recorded</code></td>
+<td class="org-left">viewer sends <code>status pos 0 buffering true</code> → within 1 s <code>(get-in @rooms* [id :clients cid :buffering])</code> true (find cid via the single client key)</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org089cb9d" class="outline-3">
+<h3 id="org089cb9d">4 · Transcode pipeline tests</h3>
+<div class="outline-text-3" id="text-org089cb9d">
+<p>
+Add to <code>test/clj/goob_toob/transcode_test.clj</code>, using <code>with-tmp</code>.
+</p>
+</div>
+<div id="outline-container-org1e7dd9e" class="outline-4">
+<h4 id="org1e7dd9e">Fake ffmpeg (no real encode)</h4>
+<div class="outline-text-4" id="text-org1e7dd9e">
+<p>
+A helper writes two executable shell scripts into the tmp dir and sets
+<code>:ffmpeg-path</code> to the <code>ffmpeg</code> one:
+</p>
+<ul class="org-ul">
+<li><code>ffprobe</code>: prints a fixed JSON probe (720p, audio, duration 2.0), exit 0.</li>
+<li><code>ffmpeg</code>: prints <code>out_time_ms=1000000</code> then <code>out_time_ms=2000000</code> to stdout,
+writes <code>manifest.mpd</code> at its last argument, exits with <code>$GOOB_FAKE_EXIT</code>
+(default 0); on non-zero it prints <code>"x264 said no"</code> to stderr.</li>
+</ul>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>process-job-marks-the-video-ready-and-keeps-the-original</code></td>
+<td class="org-left">insert video + original file → <code>(#'transcode/process-job id)</code> → status ready, progress 1.0, duration 2.0, error nil, manifest exists, original still exists</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>process-job-deletes-the-original-when-told</code></td>
+<td class="org-left"><code>:keep-original false</code> → original gone after success</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>process-job-records-ffmpeg-stderr-on-failure</code></td>
+<td class="org-left"><code>GOOB_FAKE_EXIT=1</code> → status failed, <code>:error</code> contains <code>"x264 said no"</code>, original kept</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>process-job-fails-when-the-original-is-missing</code></td>
+<td class="org-left">no file → status failed, error mentions <code>"original file missing"</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>progress-is-written-while-ffmpeg-runs</code></td>
+<td class="org-left">fake ffmpeg sleeps 0.3 s between the two progress lines → poll <code>:progress</code> during the run and see <code>0.5</code> before <code>1.0</code> (or capture <code>set-progress!</code> via <code>with-redefs</code> and assert the sequence <code>[0.5 0.99]</code>; the redefs form is deterministic, prefer it)</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org8fdb211" class="outline-4">
+<h4 id="org8fdb211">Real ffmpeg (the pipeline as shipped)</h4>
+<div class="outline-text-4" id="text-org8fdb211">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>real-ffmpeg-produces-a-dash-ladder</code></td>
+<td class="org-left">generate <code>clip.mkv</code> with <code>ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=2 -f lavfi -i sine=duration=2 -c:v libx264 -preset ultrafast -c:a aac -shortest</code> into <code>uploads/</code>; <code>process-job</code> → ready; <code>manifest.mpd</code> contains two <code>&lt;AdaptationSet</code> and four <code>&lt;Representation</code> (720/480/360 video + audio); at least one <code>.m4s</code> exists under <code>dash/&lt;id&gt;/</code> (not the cwd)</td>
+</tr>
+</tbody>
+</table>
+<p>
+The test <b>fails</b> (does not skip) when <code>ffmpeg</code> is not on PATH: the message
+says to run <code>make test</code> in the container or install ffmpeg. CI gets
+<code>sudo apt-get install -y --no-install-recommends ffmpeg</code> before the test
+step in <code>.github/workflows/ci.yml</code> (Ubuntu's build has libx264).
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf7d45da" class="outline-3">
+<h3 id="orgf7d45da">5 · Fix: login rate limit</h3>
+<div class="outline-text-3" id="text-orgf7d45da">
+<p>
+<code>routes.clj:28-33</code> becomes:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">allow-login?</span> <span class="org-rainbow-delimiters-depth-2">[</span>ip<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>now <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">System</span>/currentTimeMillis<span class="org-rainbow-delimiters-depth-4">)</span>
+        recent <span class="org-rainbow-delimiters-depth-4">(</span>filterv #<span class="org-rainbow-delimiters-depth-5">(</span>&lt; <span class="org-rainbow-delimiters-depth-6">(</span>- now <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-6">)</span> 60000<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span>get @login-attempts ip <span class="org-rainbow-delimiters-depth-6">[]</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+        ok? <span class="org-rainbow-delimiters-depth-4">(</span>&lt; <span class="org-rainbow-delimiters-depth-5">(</span>count recent<span class="org-rainbow-delimiters-depth-5">)</span> 5<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>swap! login-attempts assoc ip <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">if</span> ok? <span class="org-rainbow-delimiters-depth-5">(</span>conj recent now<span class="org-rainbow-delimiters-depth-5">)</span> recent<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    ok?<span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Tests (routes_test): <code>five-failed-logins-per-minute-then-429</code> (five wrong
+passwords → 401 each, the sixth → 429 even with the right password; the
+atom's vector for that ip has five entries) and
+<code>login-attempts-expire-after-a-minute</code> (<code>with-redefs</code> is not possible on
+<code>System/currentTimeMillis</code>; instead pre-seed <code>login-attempts</code> with five
+stamps 61 s old and assert the next attempt is allowed and the vector holds
+only the new stamp).
+</p>
+</div>
+</div>
+<div id="outline-container-org6d54517" class="outline-3">
+<h3 id="org6d54517">6 · Fix: isolate the beat loop and validate command positions</h3>
+<div class="outline-text-3" id="text-org6d54517">
+<ul class="org-ul">
+<li><p>
+~sync.clj= <code>start-beat-loop!</code>: wrap the per-room call:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">doseq</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-rainbow-delimiters-depth-3">[</span>room-id room<span class="org-rainbow-delimiters-depth-3">]</span> @rooms* <span class="org-clojure-keyword">:when</span> <span class="org-rainbow-delimiters-depth-3">(</span>seq <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:clients</span> room<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">try</span> <span class="org-rainbow-delimiters-depth-3">(</span>tick-room! room-id<span class="org-rainbow-delimiters-depth-3">)</span>
+       <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">catch</span> Exception e <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">log</span>/info <span class="org-string">"beat"</span> room-id <span class="org-string">"failed:"</span> <span class="org-rainbow-delimiters-depth-5">(</span>.getMessage e<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div></li>
+<li>~ws.clj= <code>handle-msg</code>: coerce once at the edge.
+<code>(defn- num [x] (when (number? x) (double x)))</code>; <code>cmd</code> passes <code>(num (:pos m))</code>,
+<code>status</code> passes <code>(num (:pos m))</code>. A non-numeric pos becomes nil, which
+<code>host-cmd!</code> already treats as "no position".</li>
+<li>~ws.clj= message loop: wrap <code>handle-msg</code> in <code>try</code>, log and continue, so a
+malformed message can never skip <code>leave!</code>.</li>
+</ul>
+<p>
+Tests: <code>beat-loop-survives-a-broken-room</code> (sync_service_test: put a room with
+<code>:pos "junk"</code> and a client in <code>rooms*</code>, call the loop body once extracted as
+<code>tick-all!</code> (make the <code>doseq</code> a public fn the future calls) → no throw, the
+other room still ticked); <code>non-numeric-positions-are-dropped-at-the-socket</code>
+(ws_test: host sends <code>cmd play</code> with <code>:pos "x"</code> → room playing from its
+previous position, beat keeps arriving); <code>a-malformed-status-does-not-ghost-the-peer</code>
+(ws_test: viewer sends <code>status</code> with <code>:pos "x"</code>, then closes → the other
+viewer's <code>peers</code> shrinks to one).
+</p>
+</div>
+</div>
+<div id="outline-container-org5b2ad14" class="outline-3">
+<h3 id="org5b2ad14">7 · Refactor: extract the start decision to <code>sync_core.cljc</code></h3>
+<div class="outline-text-3" id="text-org5b2ad14">
+<p>
+Pure function, today's behaviour exactly:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">start-action</span>
+  <span class="org-doc">"What the watch page does with a start-related event. trigger is :play
+  (the video element fired play) or :state (a room state arrived; also used
+  on stream-ready and first pong). gesture? is navigator.userActivation.isActive
+  at the :play. Returns :none, :park, :start or :start-room."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>trigger <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-4">[</span>started? gesture? playing? can-control?<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">cond</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>not= trigger <span class="org-clojure-keyword">:play</span><span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">if</span> started? <span class="org-clojure-keyword">:none</span> <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    started?             <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">if</span> playing? <span class="org-clojure-keyword">:none</span> <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>not gesture?<span class="org-rainbow-delimiters-depth-3">)</span>       <span class="org-clojure-keyword">:park</span>
+    playing?             <span class="org-clojure-keyword">:start</span>
+    can-control?         <span class="org-clojure-keyword">:start-room</span>
+    <span class="org-clojure-keyword">:else</span>                <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>watch.cljs</code>: <code>onplay</code> computes <code>(sc/start-action :play {...})</code> and does per
+result: <code>:none</code> nothing; <code>:park</code> <code>park!</code> (and the existing <code>:play-rejected</code>
+log when <code>(and (not started?) (not gesture?))</code>); <code>:start</code> set started,
+log <code>:started</code>, seek to expected; <code>:start-room</code> same plus
+<code>(wsx/send! ... {:type "cmd" :op "play" :pos expected})</code>.
+<code>apply-state-msg!</code> uses <code>(sc/start-action :state {...})</code>: <code>:park</code> → <code>park!</code>,
+<code>:none</code> → the existing op case. No visible change.
+Tests (sync_core_test), one per row:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">inputs → result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>start-action-parks-an-unstarted-viewer-on-state</code></td>
+<td class="org-left"><code>:state</code> started false → <code>:park</code>; started true → <code>:none</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-refuses-a-play-without-a-gesture</code></td>
+<td class="org-left"><code>:play</code> started false gesture false playing true → <code>:park</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-starts-into-a-playing-room</code></td>
+<td class="org-left"><code>:play</code> gesture, playing → <code>:start</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-lets-a-controller-start-the-room</code></td>
+<td class="org-left"><code>:play</code> gesture, paused, can-control → <code>:start-room</code>; without control → <code>:park</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-blocks-solo-play-after-joining</code></td>
+<td class="org-left"><code>:play</code> started true, paused → <code>:park</code>; playing → <code>:none</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="outline-container-orge3e23eb" class="outline-2">
+<h2 id="orge3e23eb">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orge3e23eb">
+<ul class="org-ul">
+<li><b>The websocket test depends on Jetty's ring-websocket support</b> in
+<code>ring/ring 1.15.5</code>. <code>ws/endpoint</code> already runs on it in production, so the
+only unknown is port 0; Jetty honours it and <code>getURI</code> reports the bound
+port.</li>
+<li><b>Timing in the ws tests.</b> Every receive has a 3 s timeout; "nothing
+arrives" assertions wait 500 ms to 1 s. The beat loop is not started in
+tests (<code>start-beat-loop!</code> is never called), so the only traffic is what
+the test sends.</li>
+<li><b>Real ffmpeg in CI</b> adds about 30 s of apt time per run. Accepted; it is
+the one test that would have caught #1 and #3.</li>
+<li><b>The rate-limit fix changes behaviour</b> on the public port: five wrong
+passwords in a minute now lock that IP for the remainder of the minute.
+That is what the UI already claims.</li>
+<li><b>Foreign keys stay off</b> until the playlist plan. No test in this plan
+asserts enforcement either way.</li>
+<li><b>created_at resolution</b> is one second; <code>list-all-is-newest-first</code> sleeps
+1.1 s. Alternative: insert with explicit <code>created_at</code> via a direct
+<code>jdbc/execute!</code> in the test. Implementer's choice; say which.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orge5f48d0" class="outline-2">
+<h2 id="orge5f48d0">Verification</h2>
+<div class="outline-text-2" id="text-orge5f48d0">
+<ol class="org-ol">
+<li><code>make test</code>: expected tail <code>Ran N tests containing M assertions. 0 failures</code>
+with N about 112 (56 + about 56). The number is reported, not guessed.</li>
+<li>Assertion audit, every new test: break the branch it guards (flip the
+comparison, drop the <code>assoc</code>, point the path elsewhere), run the suite,
+confirm that test and only that test fails, restore. Report the list.
+Delete any assertion that cannot be made to fail.</li>
+<li><code>make compile</code>: no new warnings from <code>watch.cljs</code>.</li>
+<li>Manual, once, against <code>make run</code> with two browser tabs: the watch page
+behaves exactly as before the refactor (parked on load, native play
+joins, host play drives, viewer solo-play parks). Six wrong passwords on
+<code>/admin</code> in container mode: the sixth answers 429 and the UI shows the
+"wait a minute" text.</li>
+<li>Container only: <code>server.log</code> shows <code>beat &lt;room&gt; failed:</code> once when a
+<code>cmd</code> with a string pos is injected from devtools, and the next beat
+still arrives (the <code>slow-note</code> / peer list keep updating).</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-21</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-21 Wed 10:52</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

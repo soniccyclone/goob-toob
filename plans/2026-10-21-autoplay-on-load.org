@@ -1,0 +1,248 @@
+#+TITLE: Autoplay on load: viewers join a playing room without pressing play
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-21
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+When a viewer opens a room link and the host is already playing, the video
+starts on its own, in sync, instead of sitting parked behind the native play
+button. The same path runs when the host presses play while a viewer is
+sitting unstarted on the page, and (in the playlist plan) when the room
+moves to the next video. The browser decides whether that start may have
+sound; the page tries audible first, falls back to muted with a visible
+"tap for sound" control, and only parks (today's behaviour) when the browser
+refuses even a muted start. The server does not change.
+
+Depends on the test-lockdown plan (=sc/start-action= exists and is pinned).
+If this ships first, do that plan's step 7 as the first commit here.
+
+* Findings
+** How a viewer starts today
+- ~src/cljs/goob_toob/watch.cljs:186-199~: on =welcome= the dash player is
+  created with =autoplay=false= (~player.cljs:17~) and on =streamInitialized=
+  the page calls =park!= (~watch.cljs:44-53~): pause, seek to the room's
+  expected position with the epsilon nudge so a frame composites.
+- =park!= is called again on every =state= while unstarted
+  (~watch.cljs:100-101~) and on every =pong= while unstarted
+  (~watch.cljs:226~), so the parked frame tracks the room.
+- The =play= event is the join gesture (~watch.cljs:281-303~): with
+  =navigator.userActivation.isActive= it sets =started=, seeks to expected
+  and (if the viewer can control a paused room) sends =cmd play=; without
+  activation it logs =:play-rejected= and re-parks. A programmatic
+  =video.play()= fires the same =play= event, so today an autoplay attempt
+  would be treated as a gesture-less press and parked by our own handler.
+- First-time viewers see the nick prompt; =join!= stores the nick and calls
+  =location.reload()= (~watch.cljs:399-403~). The click on "join the goo"
+  is a user gesture, and the reload throws it away: the new document has no
+  activation.
+- The ready moment has three inputs that arrive in any order: =welcome=
+  (room state), =streamInitialized= (player), first =pong= (clock offset,
+  ~watch.cljs:214-226~). Only after all three is =expected-now= trustworthy.
+- =play!= (~watch.cljs:11-14~) already swallows the rejection of a
+  gesture-less =play()=; nothing inspects why it failed.
+
+** What browsers allow (the constraint this plan is built around)
+- Muted autoplay is allowed everywhere that matters (Chrome, Firefox,
+  Safari incl. iOS with =playsinline=, which is already set at
+  ~watch.cljs:240~). This is the one reliable path.
+- Audible autoplay: Chrome allows it when the document has sticky user
+  activation (any click on this document) or the user has interacted with
+  the origin before (Media Engagement Index, or a click-initiated same-origin
+  navigation such as the lobby link). Firefox allows it with sticky
+  activation on the document. Safari is the strictest: a gesture on the
+  element's own document, and Low Power Mode refuses even muted starts.
+  I am confident about the muted rule and the sticky-activation rule in
+  Chrome and Firefox; the Chrome navigation carry-over is likely but not
+  something to rely on. The design relies on none of it: it tries, reads
+  the rejection, and steps down.
+- =play()= returns a promise. Refusal is =DOMException= name
+  =NotAllowedError=. =AbortError= means a =pause()= or source change
+  interrupted the attempt; =NotSupportedError= is a media failure. Only
+  =NotAllowedError= should trigger the muted retry.
+- A =play()= on a muted element then =muted=false= from a click works
+  everywhere: the click is the activation.
+
+* Plan
+** 1 · =sync_core.cljc=: the decision gains =:autostart=
+#+begin_src clojure
+(defn start-action
+  "What the watch page does with a start-related event. trigger is :play
+  (the element fired play) or :state (room state, stream-ready or first
+  pong). gesture? is navigator.userActivation.isActive at a :play.
+  Returns :none, :park, :start, :start-room or :autostart."
+  [trigger {:keys [started? gesture? playing? can-control?]}]
+  (cond
+    (not= trigger :play) (cond started? :none
+                               playing? :autostart
+                               :else    :park)
+    started?             (if playing? :none :park)
+    (not gesture?)       :park
+    playing?             :start
+    can-control?         :start-room
+    :else                :park))
+#+end_src
+Only the first branch changes. A paused room still parks; a controller
+sitting on a paused room still has to press play (starting the room for
+everyone is a deliberate act).
+
+** 2 · =watch.cljs=: =autostart!= with the step-down ladder
+New state on =st=: ="streamok" false= (set true in the dash on-ready),
+="starting" false= (an attempt is in flight), ="automuted" false=.
+
+#+begin_src clojure
+(defn- ready? [^js st]
+  (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st))))
+
+(defn- begin! [^js st video]
+  (set! (.-started st) true)
+  (set! (.-ourseek st) (ui/perf-now))
+  (set! (.-currentTime video) (expected-now st (.-room st))))
+
+(defn- autostart! [^js st token video unmute]
+  (when (and (ready? st) (not (.-starting st)) (not (.-started st)))
+    (set! (.-starting st) true)
+    (begin! st video)
+    (set! (.-muted video) false)
+    (let [done (fn [muted?]
+                 (set! (.-starting st) false)
+                 (set! (.-automuted st) muted?)
+                 (set! (.-display (.-style unmute)) (if muted? "" "none"))
+                 (log! token :autostart {:muted muted?}))
+          blocked (fn [err]
+                    (set! (.-starting st) false)
+                    (set! (.-started st) false)
+                    (log! token :autostart-blocked {:err (some-> err .-name)})
+                    (park! st video))]
+      (-> (.play video)
+          (.then #(done false))
+          (.catch (fn [err]
+                    (if (= "NotAllowedError" (some-> err .-name))
+                      (do (set! (.-muted video) true)
+                          (-> (.play video)
+                              (.then #(done true))
+                              (.catch blocked)))
+                      (blocked err))))))))
+#+end_src
+=started= is set *before* =play()= so the =play= event the browser fires for
+our own call lands in the "already started, room playing → :none" row of
+=start-action=, and so the policy loop takes over as soon as the first
+frame moves. On refusal it is unset and the page parks exactly as today.
+
+A single dispatcher replaces the three scattered =park!= calls:
+#+begin_src clojure
+(defn- settle! [^js st token video refs]
+  (case (sc/start-action :state {:started? (.-started st) :playing? (:playing (.-room st))
+                                 :can-control? (.-cancontrol st)})
+    :autostart (autostart! st token video (:unmute refs))
+    :park      (park! st video)
+    nil))
+#+end_src
+Called from: the dash on-ready (after =streamok= is set and the res menu is
+built), the =pong= handler while unstarted, and =apply-state-msg!= when
+unstarted (so a host pressing play starts every parked viewer). While
+=started= is false and =ready?= is false it parks as before (the parked
+frame keeps tracking the room until the offset is known).
+
+=onplay= uses =start-action :play= as the lockdown left it. One addition: if
+=(.-starting st)= is true the handler returns immediately (the event is
+ours).
+
+The =pause= follow rule (~watch.cljs:106-109~) stays. =play!= stays for the
+host-driven =play= op when already started; with =automuted= still true
+the element is muted and =play()= succeeds without a gesture, which is the
+point.
+
+** 3 · Unmute control
+In =shell=: =unmute (h :button.btn.unmute {:style "display:none"} "tap for sound")=
+placed inside =stage-wrap= (absolute, bottom-left, above the native bar).
+- =onclick=: =(set! (.-muted video) false)=.
+- =video.onvolumechange=: when =(not (.-muted video))= set =automuted=
+  false and hide the button (the native control's own mute toggle hides
+  it too).
+- ~resources/public/css/theme.css~: =.stage-wrap { position: relative }=
+  (check it is not already), =.unmute { position:absolute; left:12px;
+  bottom:56px; z-index:2 }= using the existing =.btn= look.
+Returned in =refs= as =:unmute=.
+
+** 4 · The nick prompt no longer reloads
+~watch.cljs:385-406~: =page= returns one root =div=. First visit: the root
+holds the overlay; =join!= stores the nick, clears the root, and mounts
+=(shell st)= + =connect!= + the started-poll into it, in place. No
+=location.reload()=. The join click is now sticky activation on this
+document, so the audible attempt succeeds in Chrome and Firefox for every
+first-time viewer. Returning viewers (nick saved) get whatever the
+browser grants; the muted fallback covers the rest.
+
+** 5 · Diagnostics
+Three new =clientlog= events, all already routed to =server.log=:
+=:autostart {:muted false}=, =:autostart {:muted true}=,
+=:autostart-blocked {:err "NotAllowedError"}=. One line per viewer per
+load; enough to see in the field which browsers land where.
+
+** 6 · Tests
+~test/clj/goob_toob/sync_core_test.clj~, replacing
+=start-action-parks-an-unstarted-viewer-on-state=:
+| test                                               | inputs → result                                                     |
+|----------------------------------------------------+---------------------------------------------------------------------|
+| =start-action-autostarts-into-a-playing-room=      | =:state= started false, playing true → =:autostart=                  |
+| =start-action-parks-on-a-paused-room=              | =:state= started false, playing false, can-control true → =:park=    |
+| =start-action-does-nothing-once-started=           | =:state= started true, playing true → =:none=                        |
+The four other =start-action= tests from the lockdown stay and must still
+pass unchanged (the =:play= rows did not move).
+
+No browser automation: the behaviour under test is the browser's own
+autoplay policy, which only a real browser exercises. The manual matrix
+below is the acceptance test; =server.log= is the record.
+
+** 7 · Release
+Every viewer sees it: the merge's last commit carries =Release: minor=.
+
+* Risks and open questions
+- *Muted starts are the common case for returning viewers.* A viewer who
+  opened the link from a chat app, with a saved nick, will likely start
+  muted and see "tap for sound". That is the standard web pattern and one
+  tap; it is still better than a parked frame. If it grates, the fallback
+  is a one-click "join" overlay on every visit, which is what we have
+  today under a different name. Decide after seeing the field log mix.
+- *Audio starts mid-sentence.* Autostart seeks to the room position and
+  plays; there is no fade. Accepted.
+- *Safari Low Power Mode* refuses muted starts: those viewers park and
+  press play, exactly today's path. =:autostart-blocked= in the log says
+  so.
+- *The =play= event from our own =play()= and the =onplay= guard.* Covered
+  by setting =started= first and by the =starting= early return. If a
+  browser ever fires =play= before the promise settles and after a
+  refusal, the =:none= row is harmless (the element is paused anyway).
+- *dash.js and =muted=.* Muting the element does not affect dash.js
+  buffering or ABR; it is an element property. The quality cap and the
+  policy loop are unchanged.
+- *Mount-in-place for the nick prompt* changes =page='s shape slightly;
+  =client.cljs= =page-for= still gets one node. No other caller.
+
+* Verification
+1. =make test=: the three new =start-action= rows plus the four existing
+   ones pass; assertion audit on the new rows (flip =playing?= in the
+   first branch and confirm only =start-action-autostarts-into-a-playing-room=
+   fails).
+2. =make compile=: clean for =watch.cljs=.
+3. =make run=, upload a clip, make a room, host playing. Then in order,
+   watching =server.log= for the =autostart= lines:
+   - Chrome, fresh profile, open the room link directly, type a nick, click
+     "join the goo": video starts with sound within 2 s, drift under 1 s
+     on the host's peer list, no "tap for sound". Log: =autostart {:muted false}=.
+   - Same tab, reload (nick saved): expect =autostart {:muted true}= and the
+     "tap for sound" button; tap it: sound on, button gone, no seek.
+   - Chrome, open the lobby first and click the room's "watch together":
+     record whether the start is audible (Chrome's carry-over). Either
+     result is acceptable; note it in the implementation notes.
+   - Firefox, both paths. Safari or iOS Safari if available: expect muted;
+     with Low Power Mode on, expect =autostart-blocked= and the parked frame
+     with the native play button.
+   - Host pauses: viewers pause at the same frame. Host plays: viewers
+     resume (muted ones stay muted, no new pill). A viewer who loaded while
+     paused is parked; host presses play → that viewer autostarts (muted or
+     not) without touching anything.
+   - A viewer presses native pause then play while the room plays: resumes
+     and catches up, no autostart lines (started stays true).
+4. Ten minutes of playback across the above tabs: no =:seek-unexplained=
+   lines attributable to the start path, no =play-rejected= lines.
