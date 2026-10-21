@@ -87,6 +87,20 @@
   [room now rate]
   (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
 
+(defn start-action
+  "What the watch page does with a start-related event. trigger is :play
+  (the video element fired play) or :state (a room state arrived; also used
+  on stream-ready and first pong). gesture? is navigator.userActivation.isActive
+  at the :play. Returns :none, :park, :start or :start-room."
+  [trigger {:keys [started? gesture? playing? can-control?]}]
+  (cond
+    (not= trigger :play) (if started? :none :park)
+    started?             (if playing? :none :park)
+    (not gesture?)       :park
+    playing?             :start
+    can-control?         :start-room
+    :else                :park))
+
 (def quality-tuning
   {:step-up-ms  60000
    :min-step-ms 10000})

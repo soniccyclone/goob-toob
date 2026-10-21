@@ -123,3 +123,23 @@
   (is (= {:rate 0.97 :for "b"}
          (sc/room-rate 1.0 [{:nick "a" :drift -3.5 :age-ms 0 :behind-ms 0}
                             {:nick "b" :drift -5.0 :age-ms 0 :behind-ms 0}]))))
+
+(deftest start-action-parks-an-unstarted-viewer-on-state
+  (is (= :park (sc/start-action :state {:started? false})))
+  (is (= :none (sc/start-action :state {:started? true}))))
+
+(deftest start-action-refuses-a-play-without-a-gesture
+  (is (= :park (sc/start-action :play {:started? false :gesture? false :playing? true}))))
+
+(deftest start-action-starts-into-a-playing-room
+  (is (= :start (sc/start-action :play {:started? false :gesture? true :playing? true}))))
+
+(deftest start-action-lets-a-controller-start-the-room
+  (is (= :start-room (sc/start-action :play {:started? false :gesture? true :playing? false
+                                             :can-control? true})))
+  (is (= :park (sc/start-action :play {:started? false :gesture? true :playing? false
+                                       :can-control? false}))))
+
+(deftest start-action-blocks-solo-play-after-joining
+  (is (= :park (sc/start-action :play {:started? true :playing? false})))
+  (is (= :none (sc/start-action :play {:started? true :playing? true}))))
