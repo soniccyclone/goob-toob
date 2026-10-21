@@ -43,8 +43,7 @@
         closing (closing-rate series)
         extra {:catch-at catch-at :slow-at slow-at :closing closing :note-named named?
                :drift-start (:drift (first series))
-               :server-rates (vec (keep #(get-in % [:server :rate]) series))
-               :server-drifts (vec (keep #(:drift (api/client (:server %) "viewer")) series))}]
+               :server-rates (vec (distinct (keep #(get-in % [:server :rate]) series)))}]
     (<p! (m/record! info summary series extra))
     (-> (expect closing "drift recovered per second while catching up")
         (.toBeGreaterThanOrEqual (t browser-name :closing-min)))
