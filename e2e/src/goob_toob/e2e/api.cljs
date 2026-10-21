@@ -1,0 +1,68 @@
+(ns goob-toob.e2e.api
+  (:require ["node:fs" :as fs]
+            ["node:path" :as path]))
+
+(defn e2e-dir [^js full-config]
+  (path/dirname (path/dirname (.-configFile full-config))))
+
+(defn fixture-path [dir] (path/join dir ".fixture.json"))
+
+(defn fixture [^js info]
+  (-> (fs/readFileSync (fixture-path (e2e-dir (.-config info))) "utf8")
+      js/JSON.parse
+      (js->clj :keywordize-keys true)))
+
+(defn- parse [^js res]
+  (-> (.text res)
+      (.then (fn [txt]
+               {:status (.-status res)
+                :headers (.-headers res)
+                :data (try (js->clj (js/JSON.parse txt) :keywordize-keys true)
+                           (catch :default _ txt))}))))
+
+(defn req
+  ([base cookie method path] (req base cookie method path nil))
+  ([base cookie method path body]
+   (-> (js/fetch (str base path)
+                 (clj->js (cond-> {:method method :headers (cond-> {}
+                                                              cookie (assoc "Cookie" cookie)
+                                                              body (assoc "Content-Type" "application/json"))}
+                            body (assoc :body (js/JSON.stringify (clj->js body))))))
+       (.then parse))))
+
+(defn login [base password]
+  (-> (req base nil "POST" "/api/login" {:password password})
+      (.then (fn [{:keys [status ^js headers] :as r}]
+               (when-not (= 200 status)
+                 (throw (js/Error. (str "login failed: " (pr-str (dissoc r :headers))))))
+               (let [c (some #(re-find #"^ring-session=[^;]+" %) (array-seq (.getSetCookie headers)))]
+                 (or c (throw (js/Error. "login set no ring-session cookie"))))))))
+
+(defn upload [base cookie file]
+  (let [fd (js/FormData.)]
+    (.append fd "file" (js/Blob. #js [(fs/readFileSync file)]) (path/basename file))
+    (-> (js/fetch (str base "/api/admin/upload")
+                  #js {:method "POST" :headers #js {"Cookie" cookie} :body fd})
+        (.then parse))))
+
+(defn videos [base cookie]
+  (.then (req base cookie "GET" "/api/admin/videos") #(:data %)))
+
+(defn make-room [base cookie video-id]
+  (-> (req base cookie "POST" "/api/admin/rooms" {:video-id video-id})
+      (.then (fn [{:keys [status data]}]
+               (when-not (= 201 status)
+                 (throw (js/Error. (str "make-room failed: " (pr-str data)))))
+               (-> (req base cookie "GET" "/api/admin/rooms")
+                   (.then (fn [{rooms :data}]
+                            (let [row (first (filter #(= (:token data) (:token %)) rooms))]
+                              {:token (:token data) :id (:id row)}))))))))
+
+(defn set-control! [base cookie room-id allow?]
+  (req base cookie "PATCH" (str "/api/admin/rooms/" room-id) {:allow-control allow?}))
+
+(defn live [base cookie room-id]
+  (.then (req base cookie "GET" (str "/api/admin/rooms/" room-id "/live")) #(:data %)))
+
+(defn client [live-view nick]
+  (first (filter #(= nick (:nick %)) (:clients live-view))))

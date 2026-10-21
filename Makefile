@@ -21,7 +21,7 @@ desktop: ## package the Electron desktop app (dir build) -> desktop/dist/
 	$(MAKE) vendor
 	cd desktop && npm install --no-audit --no-fund && npx electron-builder --dir
 
-.PHONY: help image dev run test compile repl clip tunnel tunnel-stop uberjar vendor vendor-linux desktop
+.PHONY: help image dev run test compile repl clip tunnel tunnel-stop uberjar vendor vendor-linux desktop e2e-image e2e
 
 help:
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-12s\033[0m %s\n", $$1, $$2}'
@@ -42,6 +42,20 @@ test: ## run the CLJ test suite in the container
 
 compile: ## shadow-cljs release build of the client
 	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) npx shadow-cljs release client
+
+E2E_IMAGE := $(IMAGE)-e2e
+
+e2e-image: ## build the e2e image (Playwright browsers + Java + Clojure + ffmpeg)
+	podman build -f container/Containerfile.e2e -t $(E2E_IMAGE) .
+
+e2e: ## run the Playwright journeys in the container (metrics in e2e/metrics); E2E_ARGS="--project=firefox -g laggard"
+	mkdir -p e2e/metrics
+	podman run --rm --ipc=host $(MOUNTS) -e GOOB_E2E_STORAGE=/tmp/e2e-storage $(E2E_IMAGE) \
+	  sh -c "mkdir -p /tmp/e2e-storage \
+	    && npm install --prefer-offline --no-audit --no-fund \
+	    && (cd e2e && npm install --prefer-offline --no-audit --no-fund) \
+	    && npx shadow-cljs release client e2e \
+	    && cd e2e && npx playwright test -c out/config.js $(E2E_ARGS)"
 
 repl: ## nREPL in the container
 	podman run --rm -it $(MOUNTS) $(ENV) $(IMAGE) clojure -M:dev:test:repl
