@@ -264,3 +264,26 @@
                   sync/broadcast (fn [room-id msg] (swap! sent conj [room-id (:type msg)]))]
       (is (str/includes? (with-out-str (sync/tick-all!)) "beat broken failed:")))
     (is (some #{["good" "beat"]} @sent))))
+
+(deftest live-view-reports-every-client
+  (run
+    (fn []
+      (let [id (room-id!)]
+        (sync/host-cmd! id "play" 0.0 "host")
+        (at! 11000)
+        (sync/status! id "host" (expected id) true)
+        (report-behind! id 4.0)
+        (let [view (sync/live-view id)
+              by-nick (into {} (map (juxt :nick identity)) (:clients view))
+              lag (by-nick "laggard")]
+          (is (= {:pos 0.0 :t0 1000 :playing true :rate 1.0 :now 11000}
+                 (dissoc view :clients)))
+          (is (= #{"host" "laggard"} (set (keys by-nick))))
+          (is (< (Math/abs (+ 4.0 (:drift lag))) 1e-9))
+          (is (= 0 (:behind-ms lag)))
+          (is (true? (:buffering (by-nick "host")))))
+        (at! 13000)
+        (let [lag (first (filter #(= "laggard" (:nick %)) (:clients (sync/live-view id))))]
+          (is (= 2000 (:behind-ms lag)))
+          (is (= 2000 (:age-ms lag))))
+        (is (nil? (sync/live-view "nope")))))))

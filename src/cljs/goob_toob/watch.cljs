@@ -41,6 +41,14 @@
                     :playing? (:playing room)
                     :rate (:rate room)}))
 
+(defn- bump! [^js st k]
+  (let [c (.-counters st)]
+    (unchecked-set c k (inc (unchecked-get c k)))))
+
+(defn- mark-seek! [^js st]
+  (bump! st "seeks")
+  (set! (.-ourseek st) (ui/perf-now)))
+
 (defn- park! [^js st video]
   ;; Sit paused at the room's position: the native play button is the
   ;; "press me" affordance, and a *real* seek is what makes dash composite
@@ -49,7 +57,7 @@
     (let [e (max 0.0 (expected-now st room))
           e (if (< (sc/abs (- (.-currentTime video) e)) 0.01) (+ e 0.001) e)]
       (.pause video)
-      (set! (.-ourseek st) (ui/perf-now))
+      (mark-seek! st)
       (try (set! (.-currentTime video) e) (catch js/Error _ nil)))))
 
 (defn- buffer-ahead [video]
@@ -68,6 +76,7 @@
                                        (dec (count reps)) (ui/perf-now))]
             (when (not= capped (.-qcap st))
               (set! (.-qcap st) capped)
+              (bump! st "capsteps")
               (let [kbps (sc/cap-kbps capped reps)]
                 (player/set-max-kbps ctx kbps)
                 (log! token :quality-cap {:event ev :cap (:cap capped) :kbps kbps})))))))))
@@ -83,10 +92,11 @@
         (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
       (when (= mode :seek-back)
+        (bump! st "seekbacks")
         (log! token :seek-back {:drift (/ (Math/round (* 10 d)) 10)
                                 :offset (Math/round (.-offset st))
                                 :rate (:rate room)})
-        (set! (.-ourseek st) (ui/perf-now))
+        (mark-seek! st)
         (set! (.-currentTime video) expected))
       (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
         (set! (.-playbackRate video) rate))
@@ -100,14 +110,14 @@
   (case (sc/start-action :state {:started? (boolean (.-started st))})
     :park (park! st video)
     :none (case (:op msg)
-            "play"  (do (set! (.-ourseek st) (ui/perf-now))
+            "play"  (do (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg))
                         (play! video))
             "pause" (do (.pause video)
-                        (set! (.-ourseek st) (ui/perf-now))
+                        (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg))
                         (set! (.-playbackRate video) 1.0))
-            "seek"  (do (set! (.-ourseek st) (ui/perf-now))
+            "seek"  (do (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg)))
             nil)))
 
@@ -262,7 +272,8 @@
                         (wsx/send! (.-ws st) {:type "chat" :text t})
                         (set! (.-value chat-input) ""))))]
     (set! (.-onwaiting video)
-          #(do (when (and (.-started st) (not (.-buffering st)))
+          #(do (bump! st "stalls")
+               (when (and (.-started st) (not (.-buffering st)))
                  (quality-event! st (unchecked-get st "token") :stall))
                (set! (.-buffering st) true)))
     (set! (.-onplaying video) #(set! (.-buffering st) false))
@@ -291,14 +302,15 @@
               (do (set! (.-started st) true)
                   (log! (unchecked-get st "token") :started
                         {:activation (boolean (and act (.-isActive act)))}))
-              (log! (unchecked-get st "token") :play-rejected {})))
+              (do (bump! st "rejected")
+                  (log! (unchecked-get st "token") :play-rejected {}))))
           (case action
             :none       nil
             :park       (park! st video)
-            :start      (do (set! (.-ourseek st) (ui/perf-now))
+            :start      (do (mark-seek! st)
                             (set! (.-currentTime video) (expected-now st room)))
             :start-room (when room
-                          (set! (.-ourseek st) (ui/perf-now))
+                          (mark-seek! st)
                           (set! (.-currentTime video) (expected-now st room))
                           (wsx/send! (.-ws st) {:type "cmd" :op "play"
                                                  :pos (expected-now st room)}))))))
@@ -386,8 +398,24 @@
 (defn page [token]
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none
-                  "auto" true "qcap" nil "ourseek" 0)
+                  "auto" true "qcap" nil "ourseek" 0
+                  "counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0
+                                     "rejected" 0 "capsteps" 0))
         saved-nick (ui/store-get "goob-nick")]
+    (set! (.-goobProbe js/window)
+          (fn []
+            (let [room (.-room st) ^js v (ui/$ "video")]
+              (clj->js {:t (ui/perf-now)
+                        :currentTime (some-> v .-currentTime)
+                        :expected (when room (expected-now st room))
+                        :drift (when (and room v) (sc/drift (.-currentTime v) (expected-now st room)))
+                        :rate (some-> v .-playbackRate) :roomRate (:rate room)
+                        :playing (:playing room) :paused (some-> v .-paused)
+                        :muted (some-> v .-muted) :started (.-started st)
+                        :mode (name (.-mode st)) :buffering (.-buffering st)
+                        :bufferAhead (when v (buffer-ahead v))
+                        :qcap (:cap (.-qcap st)) :offset (.-offset st)
+                        :counters (js->clj (.-counters st))}))))
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
             join-btn (h :button.btn "join the goo")

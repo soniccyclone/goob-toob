@@ -10,6 +10,7 @@
             [goob-toob.repos.storage :as storage]
             [goob-toob.repos.video :as videos]
             [goob-toob.routes :as routes]
+            [goob-toob.services.sync :as sync]
             [goob-toob.test-util :refer [with-tmp]]))
 
 (use-fixtures :each with-tmp)
@@ -213,3 +214,16 @@
                                   :body {:token "abcdefghijk" :msg "hi"})))]
     (is (= 200 (:status @resp)))
     (is (str/includes? out "client abcdefgh : hi"))))
+
+(deftest room-live-is-admin-only
+  (video! "v1")
+  (let [app    (container-app)
+        id     (:id (rooms/create! "v1"))
+        path   (str "/api/admin/rooms/" id "/live")
+        _      (sync/join! id "c1" "viewer")
+        cookie (login! app)
+        resp   (call app :get path :cookie cookie)]
+    (is (= 401 (:status (call app :get path))))
+    (is (= 200 (:status resp)))
+    (is (= ["viewer"] (map :nick (get-in resp [:body :clients]))))
+    (is (= 404 (:status (call app :get "/api/admin/rooms/nope/live" :cookie cookie))))))

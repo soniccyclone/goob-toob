@@ -16,6 +16,7 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
+            [goob-toob.services.sync :as sync]
             [goob-toob.services.transcode :as transcode]
             [goob-toob.ws :as ws])
   (:import [java.io RandomAccessFile]
@@ -91,6 +92,11 @@
 (defn update-room [{:keys [params]}]
   (rooms/set-control! (:id params) (boolean (:allow-control params)))
   (response {:ok true}))
+
+(defn room-live [{:keys [params]}]
+  (if-let [view (sync/live-view (:id params))]
+    (response view)
+    (-> (response {:error "no such room"}) (status 404))))
 
 (defn delete-video [{:keys [params]}]
   (let [id (:id params)]
@@ -239,7 +245,8 @@
                                          :middleware [wrap-multipart-params wrap-keyword-params]}]
                              ["/info" {:get storage-info}]
                              ["/rooms" {:get admin-rooms :post create-room}]
-                             ["/rooms/:id" {:delete delete-room :patch update-room}]]]))
+                             ["/rooms/:id" {:delete delete-room :patch update-room}]
+                             ["/rooms/:id/live" {:get room-live}]]]))
         router
         (ring/router
          (cond-> ["" {:middleware common}
