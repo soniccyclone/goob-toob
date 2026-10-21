@@ -1,0 +1,427 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-21 Wed 10:52 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Autoplay on load: viewers join a playing room without pressing play</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Autoplay on load: viewers join a playing room without pressing play</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb57fbfb">Goal</a></li>
+<li><a href="#org86f5916">Findings</a>
+<ul>
+<li><a href="#org68520d1">How a viewer starts today</a></li>
+<li><a href="#orgb2973d7">What browsers allow (the constraint this plan is built around)</a></li>
+</ul>
+</li>
+<li><a href="#org96054ac">Plan</a>
+<ul>
+<li><a href="#org9f26ca3">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></a></li>
+<li><a href="#org2eeb3f5">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</a></li>
+<li><a href="#org27cd8a6">3 · Unmute control</a></li>
+<li><a href="#orgb80c535">4 · The nick prompt no longer reloads</a></li>
+<li><a href="#orgf9634c5">5 · Diagnostics</a></li>
+<li><a href="#orgf01edfc">6 · Tests</a></li>
+<li><a href="#orgaa447c6">7 · Release</a></li>
+</ul>
+</li>
+<li><a href="#orge3471fd">Risks and open questions</a></li>
+<li><a href="#org885db59">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb57fbfb" class="outline-2">
+<h2 id="orgb57fbfb">Goal</h2>
+<div class="outline-text-2" id="text-orgb57fbfb">
+<p>
+When a viewer opens a room link and the host is already playing, the video
+starts on its own, in sync, instead of sitting parked behind the native play
+button. The same path runs when the host presses play while a viewer is
+sitting unstarted on the page, and (in the playlist plan) when the room
+moves to the next video. The browser decides whether that start may have
+sound; the page tries audible first, falls back to muted with a visible
+"tap for sound" control, and only parks (today's behaviour) when the browser
+refuses even a muted start. The server does not change.
+</p>
+
+<p>
+Depends on the test-lockdown plan (<code>sc/start-action</code> exists and is pinned).
+If this ships first, do that plan's step 7 as the first commit here.
+</p>
+</div>
+</div>
+<div id="outline-container-org86f5916" class="outline-2">
+<h2 id="org86f5916">Findings</h2>
+<div class="outline-text-2" id="text-org86f5916">
+</div>
+<div id="outline-container-org68520d1" class="outline-3">
+<h3 id="org68520d1">How a viewer starts today</h3>
+<div class="outline-text-3" id="text-org68520d1">
+<ul class="org-ul">
+<li><code>src/cljs/goob_toob/watch.cljs:186-199</code>: on <code>welcome</code> the dash player is
+created with <code>autoplay=false</code> (<code>player.cljs:17</code>) and on <code>streamInitialized</code>
+the page calls <code>park!</code> (<code>watch.cljs:44-53</code>): pause, seek to the room's
+expected position with the epsilon nudge so a frame composites.</li>
+<li><code>park!</code> is called again on every <code>state</code> while unstarted
+(<code>watch.cljs:100-101</code>) and on every <code>pong</code> while unstarted
+(<code>watch.cljs:226</code>), so the parked frame tracks the room.</li>
+<li>The <code>play</code> event is the join gesture (<code>watch.cljs:281-303</code>): with
+<code>navigator.userActivation.isActive</code> it sets <code>started</code>, seeks to expected
+and (if the viewer can control a paused room) sends <code>cmd play</code>; without
+activation it logs <code>:play-rejected</code> and re-parks. A programmatic
+<code>video.play()</code> fires the same <code>play</code> event, so today an autoplay attempt
+would be treated as a gesture-less press and parked by our own handler.</li>
+<li>First-time viewers see the nick prompt; <code>join!</code> stores the nick and calls
+<code>location.reload()</code> (<code>watch.cljs:399-403</code>). The click on "join the goo"
+is a user gesture, and the reload throws it away: the new document has no
+activation.</li>
+<li>The ready moment has three inputs that arrive in any order: <code>welcome</code>
+(room state), <code>streamInitialized</code> (player), first <code>pong</code> (clock offset,
+<code>watch.cljs:214-226</code>). Only after all three is <code>expected-now</code> trustworthy.</li>
+<li><code>play!</code> (<code>watch.cljs:11-14</code>) already swallows the rejection of a
+gesture-less <code>play()</code>; nothing inspects why it failed.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb2973d7" class="outline-3">
+<h3 id="orgb2973d7">What browsers allow (the constraint this plan is built around)</h3>
+<div class="outline-text-3" id="text-orgb2973d7">
+<ul class="org-ul">
+<li>Muted autoplay is allowed everywhere that matters (Chrome, Firefox,
+Safari incl. iOS with <code>playsinline</code>, which is already set at
+<code>watch.cljs:240</code>). This is the one reliable path.</li>
+<li>Audible autoplay: Chrome allows it when the document has sticky user
+activation (any click on this document) or the user has interacted with
+the origin before (Media Engagement Index, or a click-initiated same-origin
+navigation such as the lobby link). Firefox allows it with sticky
+activation on the document. Safari is the strictest: a gesture on the
+element's own document, and Low Power Mode refuses even muted starts.
+I am confident about the muted rule and the sticky-activation rule in
+Chrome and Firefox; the Chrome navigation carry-over is likely but not
+something to rely on. The design relies on none of it: it tries, reads
+the rejection, and steps down.</li>
+<li><code>play()</code> returns a promise. Refusal is <code>DOMException</code> name
+<code>NotAllowedError</code>. <code>AbortError</code> means a <code>pause()</code> or source change
+interrupted the attempt; <code>NotSupportedError</code> is a media failure. Only
+<code>NotAllowedError</code> should trigger the muted retry.</li>
+<li>A <code>play()</code> on a muted element then <code>muted=false</code> from a click works
+everywhere: the click is the activation.</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-org96054ac" class="outline-2">
+<h2 id="org96054ac">Plan</h2>
+<div class="outline-text-2" id="text-org96054ac">
+</div>
+<div id="outline-container-org9f26ca3" class="outline-3">
+<h3 id="org9f26ca3">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></h3>
+<div class="outline-text-3" id="text-org9f26ca3">
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">start-action</span>
+  <span class="org-doc">"What the watch page does with a start-related event. trigger is :play
+  (the element fired play) or :state (room state, stream-ready or first
+  pong). gesture? is navigator.userActivation.isActive at a :play.
+  Returns :none, :park, :start, :start-room or :autostart."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>trigger <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-4">[</span>started? gesture? playing? can-control?<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">cond</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>not= trigger <span class="org-clojure-keyword">:play</span><span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">cond</span> started? <span class="org-clojure-keyword">:none</span>
+                               playing? <span class="org-clojure-keyword">:autostart</span>
+                               <span class="org-clojure-keyword">:else</span>    <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    started?             <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">if</span> playing? <span class="org-clojure-keyword">:none</span> <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>not gesture?<span class="org-rainbow-delimiters-depth-3">)</span>       <span class="org-clojure-keyword">:park</span>
+    playing?             <span class="org-clojure-keyword">:start</span>
+    can-control?         <span class="org-clojure-keyword">:start-room</span>
+    <span class="org-clojure-keyword">:else</span>                <span class="org-clojure-keyword">:park</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Only the first branch changes. A paused room still parks; a controller
+sitting on a paused room still has to press play (starting the room for
+everyone is a deliberate act).
+</p>
+</div>
+</div>
+<div id="outline-container-org2eeb3f5" class="outline-3">
+<h3 id="org2eeb3f5">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</h3>
+<div class="outline-text-3" id="text-org2eeb3f5">
+<p>
+New state on <code>st</code>: <code>"streamok" false</code> (set true in the dash on-ready),
+<code>"starting" false</code> (an attempt is in flight), <code>"automuted" false</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">ready?</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-default">^</span><span class="org-type">js</span> st<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-room st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-player st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-streamok st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span>seq <span class="org-rainbow-delimiters-depth-4">(</span>.-samples st<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">begin!</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-default">^</span><span class="org-type">js</span> st video<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-started st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-ourseek st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">ui</span>/perf-now<span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-currentTime video<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-rainbow-delimiters-depth-3">(</span>expected-now st <span class="org-rainbow-delimiters-depth-4">(</span>.-room st<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">autostart!</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-default">^</span><span class="org-type">js</span> st token video unmute<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-4">(</span>ready? st<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span>not <span class="org-rainbow-delimiters-depth-5">(</span>.-starting st<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span>not <span class="org-rainbow-delimiters-depth-5">(</span>.-started st<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-4">(</span>.-starting st<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>begin! st video<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-4">(</span>.-muted video<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-4">[</span>done <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-6">[</span>muted?<span class="org-rainbow-delimiters-depth-6">]</span>
+                 <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-starting st<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                 <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-automuted st<span class="org-rainbow-delimiters-depth-7">)</span> muted?<span class="org-rainbow-delimiters-depth-6">)</span>
+                 <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-display <span class="org-rainbow-delimiters-depth-8">(</span>.-style unmute<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">if</span> muted? <span class="org-string">""</span> <span class="org-string">"none"</span><span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                 <span class="org-rainbow-delimiters-depth-6">(</span>log! token <span class="org-clojure-keyword">:autostart</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:muted</span> muted?<span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+          blocked <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-6">[</span>err<span class="org-rainbow-delimiters-depth-6">]</span>
+                    <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-starting st<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-started st<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-rainbow-delimiters-depth-6">(</span>log! token <span class="org-clojure-keyword">:autostart-blocked</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:err</span> <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-keyword">some-&gt;</span> err .-name<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-rainbow-delimiters-depth-6">(</span>park! st video<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">]</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">-&gt;</span> <span class="org-rainbow-delimiters-depth-5">(</span>.play video<span class="org-rainbow-delimiters-depth-5">)</span>
+          <span class="org-rainbow-delimiters-depth-5">(</span>.then #<span class="org-rainbow-delimiters-depth-6">(</span>done <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+          <span class="org-rainbow-delimiters-depth-5">(</span>.catch <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-7">[</span>err<span class="org-rainbow-delimiters-depth-7">]</span>
+                    <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">if</span> <span class="org-rainbow-delimiters-depth-8">(</span>= <span class="org-string">"NotAllowedError"</span> <span class="org-rainbow-delimiters-depth-9">(</span><span class="org-keyword">some-&gt;</span> err .-name<span class="org-rainbow-delimiters-depth-9">)</span><span class="org-rainbow-delimiters-depth-8">)</span>
+                      <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-keyword">do</span> <span class="org-rainbow-delimiters-depth-9">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-1">(</span>.-muted video<span class="org-rainbow-delimiters-depth-1">)</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-9">)</span>
+                          <span class="org-rainbow-delimiters-depth-9">(</span><span class="org-keyword">-&gt;</span> <span class="org-rainbow-delimiters-depth-1">(</span>.play video<span class="org-rainbow-delimiters-depth-1">)</span>
+                              <span class="org-rainbow-delimiters-depth-1">(</span>.then #<span class="org-rainbow-delimiters-depth-2">(</span>done <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+                              <span class="org-rainbow-delimiters-depth-1">(</span>.catch blocked<span class="org-rainbow-delimiters-depth-1">)</span><span class="org-rainbow-delimiters-depth-9">)</span><span class="org-rainbow-delimiters-depth-8">)</span>
+                      <span class="org-rainbow-delimiters-depth-8">(</span>blocked err<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>started</code> is set <b>before</b> <code>play()</code> so the <code>play</code> event the browser fires for
+our own call lands in the "already started, room playing → :none" row of
+<code>start-action</code>, and so the policy loop takes over as soon as the first
+frame moves. On refusal it is unset and the page parks exactly as today.
+</p>
+
+<p>
+A single dispatcher replaces the three scattered <code>park!</code> calls:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">settle!</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-default">^</span><span class="org-type">js</span> st token video refs<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">case</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">sc</span>/start-action <span class="org-clojure-keyword">:state</span> <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:started?</span> <span class="org-rainbow-delimiters-depth-5">(</span>.-started st<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-clojure-keyword">:playing?</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:playing</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-room st<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                                 <span class="org-clojure-keyword">:can-control?</span> <span class="org-rainbow-delimiters-depth-5">(</span>.-cancontrol st<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-clojure-keyword">:autostart</span> <span class="org-rainbow-delimiters-depth-3">(</span>autostart! st token video <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:unmute</span> refs<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-clojure-keyword">:park</span>      <span class="org-rainbow-delimiters-depth-3">(</span>park! st video<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Called from: the dash on-ready (after <code>streamok</code> is set and the res menu is
+built), the <code>pong</code> handler while unstarted, and <code>apply-state-msg!</code> when
+unstarted (so a host pressing play starts every parked viewer). While
+<code>started</code> is false and <code>ready?</code> is false it parks as before (the parked
+frame keeps tracking the room until the offset is known).
+</p>
+
+<p>
+<code>onplay</code> uses <code>start-action :play</code> as the lockdown left it. One addition: if
+<code>(.-starting st)</code> is true the handler returns immediately (the event is
+ours).
+</p>
+
+<p>
+The <code>pause</code> follow rule (<code>watch.cljs:106-109</code>) stays. <code>play!</code> stays for the
+host-driven <code>play</code> op when already started; with <code>automuted</code> still true
+the element is muted and <code>play()</code> succeeds without a gesture, which is the
+point.
+</p>
+</div>
+</div>
+<div id="outline-container-org27cd8a6" class="outline-3">
+<h3 id="org27cd8a6">3 · Unmute control</h3>
+<div class="outline-text-3" id="text-org27cd8a6">
+<p>
+In <code>shell</code>: <code>unmute (h :button.btn.unmute {:style "display:none"} "tap for sound")</code>
+placed inside <code>stage-wrap</code> (absolute, bottom-left, above the native bar).
+</p>
+<ul class="org-ul">
+<li><code>onclick</code>: <code>(set! (.-muted video) false)</code>.</li>
+<li><code>video.onvolumechange</code>: when <code>(not (.-muted video))</code> set <code>automuted</code>
+false and hide the button (the native control's own mute toggle hides
+it too).</li>
+<li><code>resources/public/css/theme.css</code>: <code>.stage-wrap { position: relative }</code>
+(check it is not already), <code>.unmute { position:absolute; left:12px;
+  bottom:56px; z-index:2 }</code> using the existing <code>.btn</code> look.</li>
+</ul>
+<p>
+Returned in <code>refs</code> as <code>:unmute</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-orgb80c535" class="outline-3">
+<h3 id="orgb80c535">4 · The nick prompt no longer reloads</h3>
+<div class="outline-text-3" id="text-orgb80c535">
+<p>
+<code>watch.cljs:385-406</code>: <code>page</code> returns one root <code>div</code>. First visit: the root
+holds the overlay; <code>join!</code> stores the nick, clears the root, and mounts
+<code>(shell st)</code> + <code>connect!</code> + the started-poll into it, in place. No
+<code>location.reload()</code>. The join click is now sticky activation on this
+document, so the audible attempt succeeds in Chrome and Firefox for every
+first-time viewer. Returning viewers (nick saved) get whatever the
+browser grants; the muted fallback covers the rest.
+</p>
+</div>
+</div>
+<div id="outline-container-orgf9634c5" class="outline-3">
+<h3 id="orgf9634c5">5 · Diagnostics</h3>
+<div class="outline-text-3" id="text-orgf9634c5">
+<p>
+Three new <code>clientlog</code> events, all already routed to <code>server.log</code>:
+<code>:autostart {:muted false}</code>, <code>:autostart {:muted true}</code>,
+<code>:autostart-blocked {:err "NotAllowedError"}</code>. One line per viewer per
+load; enough to see in the field which browsers land where.
+</p>
+</div>
+</div>
+<div id="outline-container-orgf01edfc" class="outline-3">
+<h3 id="orgf01edfc">6 · Tests</h3>
+<div class="outline-text-3" id="text-orgf01edfc">
+<p>
+<code>test/clj/goob_toob/sync_core_test.clj</code>, replacing
+<code>start-action-parks-an-unstarted-viewer-on-state</code>:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">inputs → result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>start-action-autostarts-into-a-playing-room</code></td>
+<td class="org-left"><code>:state</code> started false, playing true → <code>:autostart</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-parks-on-a-paused-room</code></td>
+<td class="org-left"><code>:state</code> started false, playing false, can-control true → <code>:park</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>start-action-does-nothing-once-started</code></td>
+<td class="org-left"><code>:state</code> started true, playing true → <code>:none</code></td>
+</tr>
+</tbody>
+</table>
+<p>
+The four other <code>start-action</code> tests from the lockdown stay and must still
+pass unchanged (the <code>:play</code> rows did not move).
+</p>
+
+<p>
+No browser automation: the behaviour under test is the browser's own
+autoplay policy, which only a real browser exercises. The manual matrix
+below is the acceptance test; <code>server.log</code> is the record.
+</p>
+</div>
+</div>
+<div id="outline-container-orgaa447c6" class="outline-3">
+<h3 id="orgaa447c6">7 · Release</h3>
+<div class="outline-text-3" id="text-orgaa447c6">
+<p>
+Every viewer sees it: the merge's last commit carries <code>Release: minor</code>.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orge3471fd" class="outline-2">
+<h2 id="orge3471fd">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orge3471fd">
+<ul class="org-ul">
+<li><b>Muted starts are the common case for returning viewers.</b> A viewer who
+opened the link from a chat app, with a saved nick, will likely start
+muted and see "tap for sound". That is the standard web pattern and one
+tap; it is still better than a parked frame. If it grates, the fallback
+is a one-click "join" overlay on every visit, which is what we have
+today under a different name. Decide after seeing the field log mix.</li>
+<li><b>Audio starts mid-sentence.</b> Autostart seeks to the room position and
+plays; there is no fade. Accepted.</li>
+<li><b>Safari Low Power Mode</b> refuses muted starts: those viewers park and
+press play, exactly today's path. <code>:autostart-blocked</code> in the log says
+so.</li>
+<li><b>The <code>play</code> event from our own <code>play()</code> and the <code>onplay</code> guard.</b> Covered
+by setting <code>started</code> first and by the <code>starting</code> early return. If a
+browser ever fires <code>play</code> before the promise settles and after a
+refusal, the <code>:none</code> row is harmless (the element is paused anyway).</li>
+<li><b>dash.js and <code>muted</code>.</b> Muting the element does not affect dash.js
+buffering or ABR; it is an element property. The quality cap and the
+policy loop are unchanged.</li>
+<li><b>Mount-in-place for the nick prompt</b> changes <code>page</code>'s shape slightly;
+<code>client.cljs</code> <code>page-for</code> still gets one node. No other caller.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org885db59" class="outline-2">
+<h2 id="org885db59">Verification</h2>
+<div class="outline-text-2" id="text-org885db59">
+<ol class="org-ol">
+<li><code>make test</code>: the three new <code>start-action</code> rows plus the four existing
+ones pass; assertion audit on the new rows (flip <code>playing?</code> in the
+first branch and confirm only <code>start-action-autostarts-into-a-playing-room</code>
+fails).</li>
+<li><code>make compile</code>: clean for <code>watch.cljs</code>.</li>
+<li><code>make run</code>, upload a clip, make a room, host playing. Then in order,
+watching <code>server.log</code> for the <code>autostart</code> lines:
+<ul class="org-ul">
+<li>Chrome, fresh profile, open the room link directly, type a nick, click
+"join the goo": video starts with sound within 2 s, drift under 1 s
+on the host's peer list, no "tap for sound". Log: <code>autostart {:muted false}</code>.</li>
+<li>Same tab, reload (nick saved): expect <code>autostart {:muted true}</code> and the
+"tap for sound" button; tap it: sound on, button gone, no seek.</li>
+<li>Chrome, open the lobby first and click the room's "watch together":
+record whether the start is audible (Chrome's carry-over). Either
+result is acceptable; note it in the implementation notes.</li>
+<li>Firefox, both paths. Safari or iOS Safari if available: expect muted;
+with Low Power Mode on, expect <code>autostart-blocked</code> and the parked frame
+with the native play button.</li>
+<li>Host pauses: viewers pause at the same frame. Host plays: viewers
+resume (muted ones stay muted, no new pill). A viewer who loaded while
+paused is parked; host presses play → that viewer autostarts (muted or
+not) without touching anything.</li>
+<li>A viewer presses native pause then play while the room plays: resumes
+and catches up, no autostart lines (started stays true).</li>
+</ul></li>
+<li>Ten minutes of playback across the above tabs: no <code>:seek-unexplained</code>
+lines attributable to the start path, no <code>play-rejected</code> lines.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-21</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-21 Wed 10:52</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

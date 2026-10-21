@@ -1,0 +1,379 @@
+#+TITLE: Test lockdown: pin the stable system before autoplay and playlists
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-21
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+v0.4.x is working and stable. Two feature plans follow this one (autoplay on
+load, room playlists) and both cut through the watch page, the websocket
+protocol, the room model and the rooms table. Before they land, every
+behaviour we rely on today gets a test that fails when it breaks. The audit
+below says what is covered, what is not, and found two real bugs in
+untested code plus one false assumption about the database. This plan adds
+the missing tests, fixes the two bugs, and extracts one piece of client
+logic into =sync_core.cljc= so the JVM suite can pin it. Nothing else
+changes behaviour.
+
+Baseline on =main= (2ea31c4): =make test= runs 56 tests, 116 assertions,
+0 failures. The CLJS client has no tests at all and no test build.
+
+* Findings
+** What is covered today
+| area                         | tests | verdict                                                                   |
+|------------------------------+-------+---------------------------------------------------------------------------|
+| =sync_core.cljc= (pure math) |    21 | good: policy, room-rate, reanchor, ntp, quality-cap, start-kbps all pinned |
+| =services/sync.clj=          |     8 | good on rate control; nothing on join/leave, broadcast scoping, beat payload |
+| =services/transcode.clj=     |     9 | good on =ffmpeg-cmd= and =ladder-for=; the pipeline itself never runs     |
+| =routes.clj=                 |     4 | the two-port invariant only; no login flow, upload, delete, range, limits  |
+| =repos/*=                    |     4 | lifecycle + tokens + traversal; no requeue, no error clearing, no rooms join |
+| =db.clj=                     |     2 | classpath + schema; not idempotence, not the missing-migration guard      |
+| =ws.clj=                     |     0 | the control gate (viewer =cmd= ignored unless co-host) is untested          |
+| =config.clj=, =log.clj=      |     2 | fine for their size                                                        |
+| client (=src/cljs=)          |     0 | no test build; the join gesture, park, follow rule, quality cap wiring are unpinned |
+
+** Bugs found in untested code
+*** Login rate limit never fires
+~src/clj/goob_toob/routes.clj:28-33~. Two independent faults:
+- =(get @login-attempts [])= looks up the key =[]= (a literal empty
+  vector), not =ip=. It is always nil, so =recent= is always empty and
+  =ok?= is always true.
+- The filter keeps attempts *older* than 60 s (=(> (- now %) 60000)=), the
+  inverse of "recent".
+Verified in the container: eight rapid =allow-login?= calls from one IP
+return =[true true true true true true true true]= and the atom holds a
+single timestamp. The admin UI's "too many tries, wait a minute" text
+describes a limit that does not exist. Container mode exposes =/api/login=
+on the public port, so this is the only brute-force defence and it is off.
+
+*** One bad host command kills the beat loop for every room
+~src/clj/goob_toob/services/sync.clj:111-118~ is a =future= running a bare
+loop with no exception handling. ~ws.clj:29-30~ passes =(:pos m)= from the
+JSON straight into =host-cmd!=, and ~sync.clj:61-64~ stores it unchecked.
+A =cmd= with =pos= as a string (any co-host with the link, or an admin
+typo in devtools) lands in =rooms*=; the next =tick-room!= calls
+=sc/reanchor= / =expected-pos=, throws =ClassCastException=, and the
+future ends. No room beats again until the process restarts, and the log
+says nothing. The same lack of a =try= in the per-socket loop
+(~ws.clj:64-71~) means a =status= with a non-numeric =pos= throws inside
+=status!=, the go block dies, and ~ws.clj:73-75~ (=leave!=) never runs:
+a ghost peer stays in the list forever.
+
+** False assumption: foreign keys are not enforced
+~src/clj/goob_toob/db.clj:47~ runs =PRAGMA foreign_keys=ON= once on the
+datasource. That pragma is per connection, and next.jdbc opens a fresh
+connection for every =execute!= on a datasource, so every real query runs
+with foreign keys off. Verified in the container: =PRAGMA foreign_keys=
+reads 0 on a fresh =execute!= and inside =with-transaction=, and an
+=INSERT INTO rooms= with a bogus =video_id= is accepted. The code already
+compensates by hand (~repos/room.clj:16-17~ checks the video exists,
+~repos/video.clj:62~ deletes rooms before the video), which is why nothing
+has broken. Not fixed here: flipping it on is a schema-touching change and
+belongs to the playlist plan, which adds the next migration anyway. The
+lockdown must not assert either way.
+
+** Client logic worth pinning on the JVM
+The start trigger in ~src/cljs/goob_toob/watch.cljs:281-303~ and the
+unstarted branch of ~watch.cljs:98-101~ decide, from five booleans, whether
+a viewer starts, starts the room, parks or does nothing. That table is the
+exact thing the autoplay plan changes. It is pure; it just lives inside DOM
+handlers. Extracting it to =sync_core.cljc= (as =policy= and =quality-cap=
+already are) makes it testable here and lets the autoplay plan change one
+function with a test table instead of a handler.
+
+** What a real integration test needs
+- JDK 11+ ships =java.net.http.HttpClient= with a WebSocket client, so a
+  test can start Jetty on an ephemeral port with =routes/app=, log in over
+  HTTP, pass the session cookie on the upgrade and drive =ws/endpoint= for
+  real. No new dependency.
+- The container image has ffmpeg 8.1 with libx264 (~container/Containerfile:7-10~),
+  so the transcode pipeline can run end to end on a two-second =lavfi=
+  clip inside =make test=. CI (~.github/workflows/ci.yml:9-33~) has no
+  ffmpeg; it needs one =apt-get= line.
+- =transcode/submit!= is a no-op while =control= is nil (~transcode.clj:160-162~),
+  so route tests can upload without a worker.
+
+* Plan
+Six commits, in this order. Tests first (no behaviour change), then the two
+fixes, then the refactor. Every new =deftest= name below is final; every
+assertion must fail alone (see Verification).
+
+** 1 · Shared fixture
+New ~test/clj/goob_toob/test_util.clj~:
+#+begin_src clojure
+(ns goob-toob.test-util
+  (:require [clojure.java.io :as io]
+            [goob-toob.config :as config]
+            [goob-toob.db :as db]
+            [goob-toob.services.sync :as sync]))
+
+(defn tmp-dir []
+  (str (java.nio.file.Files/createTempDirectory
+         "goob-test" (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn with-tmp
+  "Fresh storage dir + db + empty sync state around f. Sets admin-pass so
+  container-mode routes can log in."
+  [f]
+  (let [dir (tmp-dir)]
+    (swap! config/config merge {:storage-dir dir :ladder config/default-ladder
+                                :keep-original true :workers 1
+                                :admin-pass "pw" :ffmpeg-path "ffmpeg"})
+    (db/init! (str dir "/test.db"))
+    (reset! sync/rooms* {})
+    (reset! sync/conns* {})
+    (f)
+    (reset! sync/rooms* {})
+    (reset! sync/conns* {})
+    (run! #(.delete ^java.io.File %) (reverse (file-seq (io/file dir))))))
+#+end_src
+=repos_test= and =sync_service_test= switch to it (delete their local copies).
+
+** 2 · Pure and repo-level tests (no code change)
+*** ~test/clj/goob_toob/sync_core_test.clj~ (add)
+| test                                   | asserts                                                                                 |
+|----------------------------------------+-----------------------------------------------------------------------------------------|
+| =expected-pos-honours-the-room-rate=   | =(expected-pos {:pos 10 :t0 0 :now 10000 :playing? true :rate 0.97})= is =19.7=          |
+| =drift-is-local-minus-expected=        | =(drift 9.5 10.0)= is =-0.5=                                                              |
+| =room-rate-picks-the-worst-laggard=    | prev 1.0, drifts -3.5 (nick "a") and -5.0 (nick "b") → =:for "b"=                         |
+*** ~test/clj/goob_toob/sync_service_test.clj~ (add; use the existing =run= harness)
+| test                                              | asserts                                                                                                              |
+|---------------------------------------------------+----------------------------------------------------------------------------------------------------------------------|
+| =room-for-loads-a-room-from-the-db-once=          | after =rooms/create!=, =(room-for id)= is =:pos 0.0 :playing? false :rate 1.0 :clients {}= and carries =:video-id=; a second call returns the same map without touching the db (=with-redefs rooms/get-by-id= to throw) |
+| =room-for-is-nil-for-an-unknown-room=             | =(room-for "nope")= is nil and =rooms*= stays empty                                                                    |
+| =join-and-leave-maintain-the-client-map=          | join two cids → =peers-list= has both nicks with =:lag 0.0 :buffering false=; leave one → only the other                 |
+| =broadcast-reaches-only-the-rooms-clients=        | two rooms, one client each, =conns*= =:send= fns capturing; =broadcast= to room A → only A's fn called, with the JSON of the msg |
+| =send-to-swallows-a-dead-socket=                  | =:send= that throws → =(send-to cid {...})= returns nil, no exception                                                   |
+| =host-play-without-a-position-resumes-where-it-was= | pause at 10.0 then =(host-cmd! id "play" nil "h")= → =:pos 10.0 :playing? true=                                    |
+| =host-seek-without-a-position-goes-to-zero=       | =(host-cmd! id "seek" nil "h")= → =:pos 0.0=                                                                           |
+| =host-command-broadcasts-state-with-the-op=       | after =play 5.0=: exactly one captured msg with =:type "state" :op "play" :pos 5.0 :playing true :rate 1.0= and numeric =:t0= and =:now= |
+| =unknown-op-leaves-the-room-alone=                | =(host-cmd! id "dance" 1.0 "h")= → room unchanged except =:rate 1.0=; one broadcast                                    |
+| =beat-carries-peers-and-the-slow-note=            | playing, laggard 4 s behind, tick → the =beat= msg has =:peers= with the laggard's =:lag= about -4.0 and =:slow-for "laggard"=; after recovery =:slow-for nil= |
+| =status-ignores-a-room-that-is-not-live=          | =(status! "nope" "c" 1.0 false)= is nil and =rooms*= unchanged                                                         |
+*** ~test/clj/goob_toob/repos_test.clj~ (add)
+| test                                                | asserts                                                                                        |
+|-----------------------------------------------------+------------------------------------------------------------------------------------------------|
+| =requeue-stuck-returns-only-mid-flight-videos=      | insert four videos with statuses uploaded, transcoding, ready, failed → =(requeue-stuck)= is exactly the first two ids |
+| =set-status-ready-clears-a-previous-error=          | =set-status! "failed" :error "boom"= then =set-status! "ready" :error nil= → =:error= nil, =:progress= kept via coalesce |
+| =list-all-is-newest-first=                          | insert a, then b (=Thread/sleep 1100= between, =created_at= has second resolution) → =(map :id (list-all))= is =["b" "a"]= |
+| =rooms-list-all-joins-the-video-title-and-status=   | room on a video titled "T" status "uploaded" → row has =:title "T" :status "uploaded" :allow-control 0=              |
+| =set-control-flips-the-flag=                        | =set-control! id true= → =:allow-control 1=; false → 0                                                              |
+| =deleting-a-video-closes-its-rooms=                 | room on v → =videos/delete! v= → =rooms/list-all= empty                                                             |
+| =save-upload-moves-the-file-under-uploads=          | spit a tmp file, =save-upload!= → dest at =uploads/<id>.mkv=, tmp gone, =find-original= finds it                     |
+| =save-upload-rejects-an-id-that-escapes-the-root=   | =(save-upload! tmp "../../x" "mkv")= throws                                                                        |
+| =delete-video-files-removes-dash-and-original=      | create =dash/<id>/a.m4s= and an original → =delete-video-files!= → neither exists, uploads dir still exists           |
+*** ~test/clj/goob_toob/db_test.clj~ (add)
+| test                                        | asserts                                                                                                    |
+|---------------------------------------------+------------------------------------------------------------------------------------------------------------|
+| =init-is-idempotent=                        | =init!= twice on the same path → =schema_migrations= has exactly =(count db/migrations)= rows; second run logs no "migrated" line (=with-out-str= empty) |
+| =a-listed-migration-missing-from-the-classpath-fails-fast= | =with-redefs [db/migrations ["999-nope.sql"]]= → =init!= throws =ExceptionInfo= whose message names =999-nope.sql= |
+*** ~test/clj/goob_toob/transcode_test.clj~ (add)
+| test                                           | asserts                                                                                                |
+|------------------------------------------------+--------------------------------------------------------------------------------------------------------|
+| =probe-media-reads-height-audio-and-duration=  | =(#'transcode/probe-media {:streams [{:codec_type "video" :height 696} {:codec_type "audio"}] :format {:duration "12.5"}})= is ={:height 696 :audio? true :duration 12.5}= |
+| =probe-media-defaults-when-fields-are-missing= | video stream without =:height=, no audio, no duration → ={:height 1080 :audio? false :duration 1.0}=      |
+| =probe-media-refuses-a-file-without-video=     | audio-only probe → throws                                                                               |
+| =ffprobe-sits-next-to-a-vendored-ffmpeg=       | =:ffmpeg-path "/opt/g/ffmpeg/ffmpeg.exe"= → =(#'transcode/ffprobe-bin)= is ="/opt/g/ffmpeg/ffprobe.exe"=; path ="ffmpeg"= → ="ffprobe"= |
+| =ffmpeg-cmd-omits-audio-when-the-source-has-none= | ={:audio? false}= → no ="0:a:0"=, no ="-c:a"=, adaptation sets ="id=0,streams=v"=                       |
+*** ~test/clj/goob_toob/routes_test.clj~ (add; these need the fixture, so add =use-fixtures :each with-tmp=)
+Helper: =(defn- call [app method path & {:keys [body cookie headers]}])= that
+JSON-encodes =body= into a =ByteArrayInputStream= with
+="Content-Type" "application/json"=, adds a ="cookie"= header when given, and
+returns the response with =:body= parsed when it is a JSON string.
+Session cookie: read =(get-in resp [:headers "Set-Cookie"])=, take the
+first element up to =;=.
+| test                                              | asserts                                                                                                              |
+|---------------------------------------------------+----------------------------------------------------------------------------------------------------------------------|
+| =login-sets-a-session-that-admin-routes-accept=   | container app; =POST /api/login {:password "pw"}= → 200 with a Set-Cookie; =GET /api/me= with it → =:admin true=; =GET /api/admin/videos= with it → 200; =POST /api/logout= with it → =GET /api/me= =:admin false= |
+| =wrong-password-is-401=                           | =POST /api/login {:password "no"}= → 401, no Set-Cookie granting admin (=GET /api/me= with any returned cookie → false) |
+| =parse-range-forms=                               | =(#'routes/parse-range "bytes=0-99" 1000)= is =[0 99]=; ="bytes=900-" → [900 999]=; ="bytes=-100" → [900 999]=; ="bytes=0-5000" → [0 999]=; ="bytes=5-2"= nil; ="junk"= nil; ="bytes=-0"= nil |
+| =dash-files-serve-whole-and-ranged=               | write =dash/v1/manifest.mpd= ("hello world") → =GET /dash/v1/manifest.mpd= 200, =Content-Type application/dash+xml=, =Content-Length 11=; with =Range: bytes=6-10= → 206, body ="world"=, =Content-Range bytes 6-10/11= |
+| =dash-files-outside-the-dir-are-404=              | =GET /dash/v1/../../test.db= → 404; unknown file → 404                                                               |
+| =public-rooms-lists-only-ready-videos=            | rooms on a ready and an uploaded video → =GET /api/rooms= has one entry with =:token= and =:title= only                |
+| =create-room-returns-a-watch-url=                 | admin session; =POST /api/admin/rooms {:video-id v}= → 201, =:url= is ="/watch/<token>"=; unknown video → 400          |
+| =update-room-flips-co-host-control=               | =PATCH /api/admin/rooms/:id {:allow-control true}= → =rooms/get-by-id= has =:allow-control 1=                           |
+| =upload-stores-the-file-and-queues-it=            | multipart-free path: call =routes/upload= directly with =:params {:file {:tempfile f :filename "My.Show.S01E01.MKV" :size 12}}= → 202, =:status "queued"=, video row titled ="My.Show.S01E01"= with status uploaded, file at =uploads/<id>.mkv= |
+| =upload-without-a-file-is-400=                    | =:params {}= → 400                                                                                                   |
+| =delete-video-removes-rows-and-files=             | admin session; video with a room and a dash file → =DELETE /api/admin/videos/:id= → 200, =get-by-id= nil, room gone, dash dir gone |
+| =watch-pages-are-public=                          | public app: =GET /watch/anything= → 200 html; =GET /= → 200                                                          |
+| =clientlog-is-rate-limited-per-token=             | =(#'routes/clientlog-allow? "t" 0)= 120 times → all true; 121st (still at ms 0) false; at ms 60000 → true again        |
+| =clientlog-clips-and-logs=                        | =POST /api/clientlog {:token "abcdefghijk" :msg "hi"}= → 200 and =with-out-str= contains ="client abcdefgh : hi"=      |
+
+** 3 · WebSocket integration test
+New ~test/clj/goob_toob/ws_test.clj~. Starts =(run-jetty (routes/app {:admin? true :login? true}) {:port 0 :join? false})=
+in a =:once= fixture, reads the port from =(.getPort (.getURI server))=, stops
+it after. Client helper:
+#+begin_src clojure
+(defn- ws-client
+  "Opens a socket; returns {:ws ws :in chan}. Every complete text frame is
+  parsed and put on :in."
+  [port token nick cookie]
+  (let [in (a/chan 64)
+        buf (StringBuilder.)
+        listener (reify java.net.http.WebSocket$Listener
+                   (onOpen [_ ws] (.request ws 1))
+                   (onText [_ ws data last?]
+                     (.append buf data)
+                     (when last?
+                       (a/put! in (json/parse-string (str buf) true))
+                       (.setLength buf 0))
+                     (.request ws 1)
+                     nil))
+        b (cond-> (.newWebSocketBuilder (java.net.http.HttpClient/newHttpClient))
+            cookie (.header "Cookie" cookie))
+        ws (.join (.buildAsync b (java.net.URI. (str "ws://127.0.0.1:" port "/ws/room/" token "?nick=" nick)) listener))]
+    {:ws ws :in in}))
+
+(defn- send! [ws m] (.join (.sendText ws (json/generate-string m) true)))
+(defn- recv! [in] (let [[v _] (a/alts!! [in (a/timeout 3000)])] v))
+(defn- recv-type! [in t] (loop [] (when-let [m (recv! in)] (if (= t (:type m)) m (recur)))))
+#+end_src
+Login for the host: =java.net.http= POST to =/api/login= with the JSON
+body, cookie from the =set-cookie= header (first segment).
+| test                                              | asserts                                                                                                                  |
+|---------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------|
+| =unknown-token-is-refused=                        | =buildAsync= on a bad token fails (=.join= throws =CompletionException=)                                                   |
+| =welcome-describes-the-room-and-the-viewer=       | viewer connects → first msg =:type "welcome"=, =:is-host false=, =:can-control false=, =:video {:id :title :duration :dash "/dash/<id>/manifest.mpd"}=, =:state {:playing false :pos 0.0 ...}=, =:start-kbps 2000=, =:peers= has the viewer's nick |
+| =nick-is-trimmed-and-clamped=                     | nick of 40 =a= with spaces → peers shows 32 =a=; empty nick → ="guest"=                                                    |
+| =admin-session-makes-the-host=                    | cookie from login → welcome =:is-host true :can-control true=                                                             |
+| =viewer-commands-are-ignored-without-co-host-control= | viewer sends ={:type "cmd" :op "play" :pos 0}= → no =state= msg within 1 s at a second viewer; =rooms*= still paused   |
+| =co-host-control-opens-commands-live=             | =rooms/set-control! id true= (no reconnect) → the same viewer's =cmd play= → both sockets get =state :op "play"=           |
+| =host-play-reaches-every-viewer=                  | host =cmd play 3.0= → viewer receives =state :op "play" :pos 3.0=                                                        |
+| =chat-is-clamped-and-blank-dropped=               | 600-char text → received =:text= has 500 chars, =:from= nick, numeric =:ts=; ="   "= → nothing received within 500 ms     |
+| =ping-answers-with-both-clocks=                   | ={:type "ping" :t 123}= → =pong= with =:t 123= and numeric =:st=                                                          |
+| =leaving-updates-the-peer-list=                   | two viewers; close one (=(.sendClose ws 1000 "")=) → the other receives =peers= with one entry                              |
+| =status-is-recorded=                              | viewer sends =status pos 0 buffering true= → within 1 s =(get-in @rooms* [id :clients cid :buffering])= true (find cid via the single client key) |
+
+** 4 · Transcode pipeline tests
+Add to ~test/clj/goob_toob/transcode_test.clj~, using =with-tmp=.
+*** Fake ffmpeg (no real encode)
+A helper writes two executable shell scripts into the tmp dir and sets
+=:ffmpeg-path= to the =ffmpeg= one:
+- =ffprobe=: prints a fixed JSON probe (720p, audio, duration 2.0), exit 0.
+- =ffmpeg=: prints =out_time_ms=1000000= then =out_time_ms=2000000= to stdout,
+  writes =manifest.mpd= at its last argument, exits with =$GOOB_FAKE_EXIT=
+  (default 0); on non-zero it prints ="x264 said no"= to stderr.
+| test                                                 | asserts                                                                                                       |
+|------------------------------------------------------+---------------------------------------------------------------------------------------------------------------|
+| =process-job-marks-the-video-ready-and-keeps-the-original= | insert video + original file → =(#'transcode/process-job id)= → status ready, progress 1.0, duration 2.0, error nil, manifest exists, original still exists |
+| =process-job-deletes-the-original-when-told=         | =:keep-original false= → original gone after success                                                          |
+| =process-job-records-ffmpeg-stderr-on-failure=       | =GOOB_FAKE_EXIT=1= → status failed, =:error= contains ="x264 said no"=, original kept                           |
+| =process-job-fails-when-the-original-is-missing=     | no file → status failed, error mentions ="original file missing"=                                              |
+| =progress-is-written-while-ffmpeg-runs=              | fake ffmpeg sleeps 0.3 s between the two progress lines → poll =:progress= during the run and see =0.5= before =1.0= (or capture =set-progress!= via =with-redefs= and assert the sequence =[0.5 0.99]=; the redefs form is deterministic, prefer it) |
+*** Real ffmpeg (the pipeline as shipped)
+| test                                            | asserts                                                                                                                                    |
+|-------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------|
+| =real-ffmpeg-produces-a-dash-ladder=            | generate =clip.mkv= with =ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=2 -f lavfi -i sine=duration=2 -c:v libx264 -preset ultrafast -c:a aac -shortest= into =uploads/=; =process-job= → ready; =manifest.mpd= contains two =<AdaptationSet= and four =<Representation= (720/480/360 video + audio); at least one =.m4s= exists under =dash/<id>/= (not the cwd) |
+The test *fails* (does not skip) when =ffmpeg= is not on PATH: the message
+says to run =make test= in the container or install ffmpeg. CI gets
+=sudo apt-get install -y --no-install-recommends ffmpeg= before the test
+step in ~.github/workflows/ci.yml~ (Ubuntu's build has libx264).
+
+** 5 · Fix: login rate limit
+~routes.clj:28-33~ becomes:
+#+begin_src clojure
+(defn- allow-login? [ip]
+  (let [now (System/currentTimeMillis)
+        recent (filterv #(< (- now %) 60000) (get @login-attempts ip []))
+        ok? (< (count recent) 5)]
+    (swap! login-attempts assoc ip (if ok? (conj recent now) recent))
+    ok?))
+#+end_src
+Tests (routes_test): =five-failed-logins-per-minute-then-429= (five wrong
+passwords → 401 each, the sixth → 429 even with the right password; the
+atom's vector for that ip has five entries) and
+=login-attempts-expire-after-a-minute= (=with-redefs= is not possible on
+=System/currentTimeMillis=; instead pre-seed =login-attempts= with five
+stamps 61 s old and assert the next attempt is allowed and the vector holds
+only the new stamp).
+
+** 6 · Fix: isolate the beat loop and validate command positions
+- ~sync.clj= =start-beat-loop!=: wrap the per-room call:
+  #+begin_src clojure
+  (doseq [[room-id room] @rooms* :when (seq (:clients room))]
+    (try (tick-room! room-id)
+         (catch Exception e (log/info "beat" room-id "failed:" (.getMessage e)))))
+  #+end_src
+- ~ws.clj= =handle-msg=: coerce once at the edge.
+  =(defn- num [x] (when (number? x) (double x)))=; =cmd= passes =(num (:pos m))=,
+  =status= passes =(num (:pos m))=. A non-numeric pos becomes nil, which
+  =host-cmd!= already treats as "no position".
+- ~ws.clj= message loop: wrap =handle-msg= in =try=, log and continue, so a
+  malformed message can never skip =leave!=.
+Tests: =beat-loop-survives-a-broken-room= (sync_service_test: put a room with
+=:pos "junk"= and a client in =rooms*=, call the loop body once extracted as
+=tick-all!= (make the =doseq= a public fn the future calls) → no throw, the
+other room still ticked); =non-numeric-positions-are-dropped-at-the-socket=
+(ws_test: host sends =cmd play= with =:pos "x"= → room playing from its
+previous position, beat keeps arriving); =a-malformed-status-does-not-ghost-the-peer=
+(ws_test: viewer sends =status= with =:pos "x"=, then closes → the other
+viewer's =peers= shrinks to one).
+
+** 7 · Refactor: extract the start decision to =sync_core.cljc=
+Pure function, today's behaviour exactly:
+#+begin_src clojure
+(defn start-action
+  "What the watch page does with a start-related event. trigger is :play
+  (the video element fired play) or :state (a room state arrived; also used
+  on stream-ready and first pong). gesture? is navigator.userActivation.isActive
+  at the :play. Returns :none, :park, :start or :start-room."
+  [trigger {:keys [started? gesture? playing? can-control?]}]
+  (cond
+    (not= trigger :play) (if started? :none :park)
+    started?             (if playing? :none :park)
+    (not gesture?)       :park
+    playing?             :start
+    can-control?         :start-room
+    :else                :park))
+#+end_src
+~watch.cljs~: =onplay= computes =(sc/start-action :play {...})= and does per
+result: =:none= nothing; =:park= =park!= (and the existing =:play-rejected=
+log when =(and (not started?) (not gesture?))=); =:start= set started,
+log =:started=, seek to expected; =:start-room= same plus
+=(wsx/send! ... {:type "cmd" :op "play" :pos expected})=.
+=apply-state-msg!= uses =(sc/start-action :state {...})=: =:park= → =park!=,
+=:none= → the existing op case. No visible change.
+Tests (sync_core_test), one per row:
+| test                                         | inputs → result                                                                 |
+|----------------------------------------------+---------------------------------------------------------------------------------|
+| =start-action-parks-an-unstarted-viewer-on-state= | =:state= started false → =:park=; started true → =:none=                       |
+| =start-action-refuses-a-play-without-a-gesture=   | =:play= started false gesture false playing true → =:park=                      |
+| =start-action-starts-into-a-playing-room=         | =:play= gesture, playing → =:start=                                             |
+| =start-action-lets-a-controller-start-the-room=   | =:play= gesture, paused, can-control → =:start-room=; without control → =:park= |
+| =start-action-blocks-solo-play-after-joining=     | =:play= started true, paused → =:park=; playing → =:none=                       |
+
+* Risks and open questions
+- *The websocket test depends on Jetty's ring-websocket support* in
+  =ring/ring 1.15.5=. =ws/endpoint= already runs on it in production, so the
+  only unknown is port 0; Jetty honours it and =getURI= reports the bound
+  port.
+- *Timing in the ws tests.* Every receive has a 3 s timeout; "nothing
+  arrives" assertions wait 500 ms to 1 s. The beat loop is not started in
+  tests (=start-beat-loop!= is never called), so the only traffic is what
+  the test sends.
+- *Real ffmpeg in CI* adds about 30 s of apt time per run. Accepted; it is
+  the one test that would have caught #1 and #3.
+- *The rate-limit fix changes behaviour* on the public port: five wrong
+  passwords in a minute now lock that IP for the remainder of the minute.
+  That is what the UI already claims.
+- *Foreign keys stay off* until the playlist plan. No test in this plan
+  asserts enforcement either way.
+- *created_at resolution* is one second; =list-all-is-newest-first= sleeps
+  1.1 s. Alternative: insert with explicit =created_at= via a direct
+  =jdbc/execute!= in the test. Implementer's choice; say which.
+
+* Verification
+1. =make test=: expected tail =Ran N tests containing M assertions. 0 failures=
+   with N about 112 (56 + about 56). The number is reported, not guessed.
+2. Assertion audit, every new test: break the branch it guards (flip the
+   comparison, drop the =assoc=, point the path elsewhere), run the suite,
+   confirm that test and only that test fails, restore. Report the list.
+   Delete any assertion that cannot be made to fail.
+3. =make compile=: no new warnings from =watch.cljs=.
+4. Manual, once, against =make run= with two browser tabs: the watch page
+   behaves exactly as before the refactor (parked on load, native play
+   joins, host play drives, viewer solo-play parks). Six wrong passwords on
+   =/admin= in container mode: the sixth answers 429 and the UI shows the
+   "wait a minute" text.
+5. Container only: =server.log= shows =beat <room> failed:= once when a
+   =cmd= with a string pos is injected from devtools, and the next beat
+   still arrives (the =slow-note= / peer list keep updating).

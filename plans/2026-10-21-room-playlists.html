@@ -1,0 +1,1192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-21 Wed 10:52 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Room playlists: queue up the library, binge together</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Room playlists: queue up the library, binge together</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgaaebe10">Goal</a></li>
+<li><a href="#orgc2a8f10">Decisions</a></li>
+<li><a href="#org0fd4fdf">Findings</a></li>
+<li><a href="#orgf7be0c3">Data model</a>
+<ul>
+<li><a href="#org4fd374e">Migration <code>resources/migrations/003-room-items.sql</code></a></li>
+<li><a href="#org3f81bac"><code>db.clj</code>: foreign keys on every connection, off during migrations</a></li>
+<li><a href="#org829e9df">Shape of a queue on the wire</a></li>
+</ul>
+</li>
+<li><a href="#orga580551">Server</a>
+<ul>
+<li><a href="#org7fbc2a3"><code>repos/room.clj</code></a></li>
+<li><a href="#org8f57d76"><code>sync_core.cljc</code> (pure)</a></li>
+<li><a href="#org4f522bd"><code>services/sync.clj</code></a></li>
+<li><a href="#orgb25d49e"><code>ws.clj</code></a></li>
+<li><a href="#org1db97a5"><code>routes.clj</code></a></li>
+</ul>
+</li>
+<li><a href="#org2b13930">Client</a>
+<ul>
+<li><a href="#orgfd249ed"><code>player.cljs</code></a></li>
+<li><a href="#org41af353"><code>watch.cljs</code></a></li>
+<li><a href="#orgfd54d67"><code>lobby.cljs</code></a></li>
+<li><a href="#orgd6f9641"><code>admin.cljs</code></a></li>
+</ul>
+</li>
+<li><a href="#orgfbb1da5">Flow</a></li>
+<li><a href="#org1b6b51e">Tests</a>
+<ul>
+<li><a href="#org47b380e"><code>db_test.clj</code></a></li>
+<li><a href="#orgc847965"><code>repos_test.clj</code></a></li>
+<li><a href="#org14da55e"><code>sync_core_test.clj</code></a></li>
+<li><a href="#org0db48ca"><code>sync_service_test.clj</code> (using <code>run</code>)</a></li>
+<li><a href="#orgcab9d3c"><code>routes_test.clj</code></a></li>
+<li><a href="#orga0eaf08"><code>ws_test.clj</code></a></li>
+</ul>
+</li>
+<li><a href="#org9aa15a9">Risks and open questions</a></li>
+<li><a href="#orgc4697fd">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgaaebe10" class="outline-2">
+<h2 id="orgaaebe10">Goal</h2>
+<div class="outline-text-2" id="text-orgaaebe10">
+<p>
+A room stops being "one video" and becomes an ordered queue of the host's
+uploaded videos with a current item. The host builds and edits the queue
+from the admin console, including while the party is running. When the
+room's clock passes the end of the current video the server moves everyone
+to the next one and keeps playing; the host or a co-host can skip ahead,
+go back or jump to any item from the watch page. Viewers see the queue and
+what is up next. Late joiners land on the right video. Existing rooms
+migrate to one-item queues and keep their links.
+</p>
+
+<p>
+Depends on the test-lockdown plan (tests, fixture, <code>start-action</code>) and the
+autoplay plan (<code>autostart!</code> / <code>settle!</code>, which the item switch reuses so a
+viewer who already pressed play follows into the next video without
+touching anything).
+</p>
+</div>
+</div>
+<div id="outline-container-orgc2a8f10" class="outline-2">
+<h2 id="orgc2a8f10">Decisions</h2>
+<div class="outline-text-2" id="text-orgc2a8f10">
+<p>
+Each with the evidence; Nathan flips what he disagrees with before
+approval.
+</p>
+<ul class="org-ul">
+<li><b>The room is the playlist.</b> No separate playlists table or CRUD. The ask
+is "build up a playlist of the videos they have uploaded" for a room;
+reusable named playlists would add a screen and an entity nobody asked
+for. If that need appears, <code>room_items</code> copies cleanly into
+<code>playlist_items</code> later.</li>
+<li><b><code>rooms.video_id</code> becomes "the current video".</b> It already exists, is
+<code>NOT NULL</code>, and <code>sync.clj:20</code> already loads it into the live room. SQLite
+cannot <code>DROP COLUMN</code> a column that carries a <code>REFERENCES</code> clause, so
+keeping it as the current pointer avoids a table rebuild. Consequence: a
+room always has a current video, so a queue is never empty; the last item
+cannot be removed (close the room instead).</li>
+<li><b>No duplicate videos in a queue.</b> <code>PRIMARY KEY (room_id, video_id)</code>. It
+lets the video id identify an item, so the wire protocol and the jump
+command carry <code>video-id</code>, not an item id. Binge-watching the same episode
+twice is not a use case.</li>
+<li><b>Foreign keys go on for real.</b> The lockdown audit found every connection
+runs with <code>foreign_keys=0</code> (the PRAGMA is per connection; next.jdbc opens
+one per <code>execute!</code>). This plan touches the schema, so it also sets the
+pragma through the driver property on every connection and runs
+migrations with it off, as the SQLite docs prescribe for schema changes.
+Existing manual guards stay.</li>
+<li><b>Deleting a video that sits in a queue is refused</b> (409 naming the
+rooms). Today the video's rooms are silently closed
+(<code>repos/video.clj:62</code>). With queues, silently editing a running party's
+list from the library page is worse than a clear error. The admin removes
+it from the queue (or closes the room) first.</li>
+<li><b>The current item cannot be removed from the queue</b> (409). Skip first.
+Keeps the in-memory room and the DB pointer from disagreeing mid-edit.</li>
+<li><b>Skipping is playback control.</b> <code>next</code>, <code>prev</code>, <code>jump</code> travel over the
+websocket as <code>cmd</code> ops and obey the same gate as play/pause/seek
+(<code>ws.clj:29-30</code>): host, or anyone when "co-hosts can drive" is on. Queue
+<b>editing</b> is admin-only HTTP.</li>
+<li><b>A skip or an auto-advance always starts the next item playing at 0.</b>
+Netflix behaviour. The host pauses if they want a break. End of queue:
+the room pauses at the end of the last video and says so.</li>
+<li><b>Auto-advance is server-side, from the room clock.</b> The server knows
+<code>duration</code> (videos table) and the authoritative position; it does not
+wait for clients to report <code>ended</code> (they lag, stall or lie). A laggard 3 s
+behind gets cut off 3 s early; accepted.</li>
+<li><b>Position within the current video stays in memory only</b>, as today; the
+current item persists. A restart lands everyone at 0 of the current
+video, paused, instead of 0 of the first video.</li>
+<li><b>Rooms get a title.</b> Nullable <code>rooms.title</code>, defaulting to the first
+video's title at creation, editable from the admin row. The lobby card
+otherwise reads "S01E01" while the party is on E05.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org0fd4fdf" class="outline-2">
+<h2 id="org0fd4fdf">Findings</h2>
+<div class="outline-text-2" id="text-org0fd4fdf">
+<ul class="org-ul">
+<li><b>Room model.</b> <code>resources/migrations/001-init.sql</code>: <code>rooms(id, token,
+  video_id NOT NULL REFERENCES videos, created_at)</code>; <code>002</code> adds
+<code>allow_control</code>. <code>repos/room.clj</code> exposes <code>create!</code> (checks the video
+exists by hand), <code>get-by-token</code>, <code>get-by-id</code>, <code>list-all</code> (joins the
+video's title and status), <code>set-control!</code>, <code>delete!</code>. Nothing about
+ordering or multiple videos.</li>
+<li><b>Live room.</b> <code>services/sync.clj:17-23</code> <code>room-for</code> lazily builds
+<code>{:video-id :pos :t0 :playing? :rate :clients}</code> from the row. <code>state-msg</code>
+(<code>sync.clj:25-27</code>) carries no video id. <code>tick-room!</code> (<code>sync.clj:98-109</code>)
+runs every 2 s per room with clients and only does rate control; it has
+no notion of the video ending. <code>host-cmd!</code> (<code>sync.clj:54-67</code>) knows
+<code>play</code>, <code>pause</code>, <code>seek</code>.</li>
+<li><b>Wire.</b> <code>welcome</code> (<code>ws.clj:55-62</code>) sends <code>:video {:id :title :duration
+  :dash}</code> once. The client creates the dash player on it
+(<code>watch.cljs:192-199</code>) and never attaches another source; the title is
+set once (<code>watch.cljs:185</code>). On reconnect, <code>welcome</code> arrives again but
+<code>(when-not (.-player st) ...)</code> skips player setup, so a video change
+during a blip would be missed.</li>
+<li><b>dash.js can switch streams in place.</b> <code>MediaPlayer.attachSource(url)</code>
+(<code>node_modules/dashjs/dist/dash.all.debug.js</code>, function <code>attachSource</code>)
+resets the playback controllers when a stream was initialised and
+re-runs <code>_initializePlayback</code>; <code>streamInitialized</code> fires again, so the
+existing on-ready callback (res menu rebuild, settle) re-runs. Player
+settings (<code>maxBitrate</code>, <code>autoSwitchBitrate</code>) persist across the switch;
+the per-stream quality lock is re-applied by <code>res-menu</code> from
+<code>localStorage</code> (<code>watch.cljs:155-156</code>).</li>
+<li><b>Lobby and admin.</b> <code>lobby.cljs:6-15</code> shows <code>:title</code> per room from
+<code>/api/rooms</code> (<code>routes.clj:74-76</code>, ready videos only).
+<code>admin.cljs:89-117</code> renders one row per room (title, link, co-host
+checkbox, copy, delete); <code>admin.cljs:84-86</code> "make room" per library row
+posts <code>/api/admin/rooms {:video-id}</code>.</li>
+<li><b>Migration runner.</b> <code>db.clj:24-41</code> splits on <code>;\n</code>, runs each file in a
+transaction, records it in <code>schema_migrations</code>. <code>PRAGMA foreign_keys</code>
+inside a transaction is a no-op, so an FK-off window for schema changes
+needs a dedicated connection set before <code>BEGIN</code>.</li>
+<li><b>Video deletion.</b> <code>routes.clj:95-100</code> → <code>repos/video.clj:61-63</code> deletes
+rooms then the video, then files.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgf7be0c3" class="outline-2">
+<h2 id="orgf7be0c3">Data model</h2>
+<div class="outline-text-2" id="text-orgf7be0c3">
+</div>
+<div id="outline-container-org4fd374e" class="outline-3">
+<h3 id="org4fd374e">Migration <code>resources/migrations/003-room-items.sql</code></h3>
+<div class="outline-text-3" id="text-org4fd374e">
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">ALTER</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">rooms</span> <span class="org-keyword">ADD</span> <span class="org-keyword">COLUMN</span> title TEXT;
+<span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> IF <span class="org-keyword">NOT</span> <span class="org-keyword">EXISTS</span> <span class="org-function-name">room_items</span> <span class="org-rainbow-delimiters-depth-1">(</span>
+  room_id  TEXT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">REFERENCES</span> rooms<span class="org-rainbow-delimiters-depth-2">(</span>id<span class="org-rainbow-delimiters-depth-2">)</span> <span class="org-keyword">ON</span> <span class="org-keyword">DELETE</span> <span class="org-keyword">CASCADE</span>,
+  video_id TEXT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">REFERENCES</span> videos<span class="org-rainbow-delimiters-depth-2">(</span>id<span class="org-rainbow-delimiters-depth-2">)</span> <span class="org-keyword">ON</span> <span class="org-keyword">DELETE</span> <span class="org-keyword">CASCADE</span>,
+  <span class="org-keyword">position</span> <span class="org-type">INTEGER</span> <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span>,
+  <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span> <span class="org-rainbow-delimiters-depth-2">(</span>room_id, video_id<span class="org-rainbow-delimiters-depth-2">)</span>
+<span class="org-rainbow-delimiters-depth-1">)</span>;
+<span class="org-keyword">DELETE</span> <span class="org-keyword">FROM</span> rooms <span class="org-keyword">WHERE</span> video_id <span class="org-keyword">NOT</span> <span class="org-keyword">IN</span> <span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">SELECT</span> id <span class="org-keyword">FROM</span> videos<span class="org-rainbow-delimiters-depth-1">)</span>;
+<span class="org-keyword">INSERT</span> <span class="org-keyword">INTO</span> room_items <span class="org-rainbow-delimiters-depth-1">(</span>room_id, video_id, <span class="org-keyword">position</span><span class="org-rainbow-delimiters-depth-1">)</span>
+  <span class="org-keyword">SELECT</span> id, video_id, 0 <span class="org-keyword">FROM</span> rooms;
+</pre>
+</div>
+<p>
+The <code>DELETE</code> clears any orphan rows that the FK-off era let through, so the
+<code>foreign_key_check</code> below passes on old databases. Add the file name to
+<code>db/migrations</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org3f81bac" class="outline-3">
+<h3 id="org3f81bac"><code>db.clj</code>: foreign keys on every connection, off during migrations</h3>
+<div class="outline-text-3" id="text-org3f81bac">
+<ul class="org-ul">
+<li><code>init!</code>: datasource spec becomes <code>{:dbtype "sqlite" :dbname db-path :foreign_keys true}</code>.
+next.jdbc forwards unknown keys as driver properties; sqlite-jdbc reads
+<code>foreign_keys</code> as the pragma. Drop the standalone <code>PRAGMA foreign_keys=ON</code>.</li>
+<li><p>
+<code>migrate!</code> takes one connection for its whole run:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">with-open</span> <span class="org-rainbow-delimiters-depth-2">[</span>conn <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">jdbc</span>/get-connection db<span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">jdbc</span>/execute! conn <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-string">"PRAGMA foreign_keys=OFF"</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">doseq</span> <span class="org-rainbow-delimiters-depth-3">[</span>name migrations <span class="org-clojure-keyword">:when</span> <span class="org-rainbow-delimiters-depth-4">(</span>not <span class="org-rainbow-delimiters-depth-5">(</span>applied name<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    ... <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">jdbc</span>/with-transaction <span class="org-rainbow-delimiters-depth-4">[</span>tx conn<span class="org-rainbow-delimiters-depth-4">]</span> ...<span class="org-rainbow-delimiters-depth-3">)</span> ...<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">when-let</span> <span class="org-rainbow-delimiters-depth-3">[</span>bad <span class="org-rainbow-delimiters-depth-4">(</span>seq <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">jdbc</span>/execute! conn <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-string">"PRAGMA foreign_key_check"</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">throw</span> <span class="org-rainbow-delimiters-depth-4">(</span>ex-info <span class="org-string">"foreign key violations after migration"</span> <span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:rows</span> bad<span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Fail fast: a violation here is a bug in a migration, not a condition to
+limp through.
+</p></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org829e9df" class="outline-3">
+<h3 id="org829e9df">Shape of a queue on the wire</h3>
+<div class="outline-text-3" id="text-org829e9df">
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-comment-delimiter">;; </span><span class="org-comment">one item
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:video-id</span> <span class="org-string">"..."</span> <span class="org-clojure-keyword">:title</span> <span class="org-string">"S01E02"</span> <span class="org-clojure-keyword">:duration</span> 1321.4 <span class="org-clojure-keyword">:status</span> <span class="org-string">"ready"</span> <span class="org-clojure-keyword">:position</span> 1<span class="org-rainbow-delimiters-depth-1">}</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">welcome gains
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:queue</span> <span class="org-rainbow-delimiters-depth-2">[</span>item ...<span class="org-rainbow-delimiters-depth-2">]</span> <span class="org-clojure-keyword">:video-id</span> <span class="org-string">"&lt;current&gt;"</span><span class="org-rainbow-delimiters-depth-1">}</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">state and beat gain
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:video-id</span> <span class="org-string">"&lt;current&gt;"</span><span class="org-rainbow-delimiters-depth-1">}</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">new state op, broadcast on every item change
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:type</span> <span class="org-string">"state"</span> <span class="org-clojure-keyword">:op</span> <span class="org-string">"item"</span> <span class="org-clojure-keyword">:video</span> <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:id</span> <span class="org-clojure-keyword">:title</span> <span class="org-clojure-keyword">:duration</span> <span class="org-clojure-keyword">:dash</span><span class="org-rainbow-delimiters-depth-2">}</span> <span class="org-clojure-keyword">:video-id</span> id
+ <span class="org-clojure-keyword">:pos</span> 0.0 <span class="org-clojure-keyword">:t0</span> now <span class="org-clojure-keyword">:playing</span> <span class="org-constant">true</span> <span class="org-clojure-keyword">:rate</span> 1.0 <span class="org-clojure-keyword">:now</span> now <span class="org-clojure-keyword">:ended</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-1">}</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">end of queue: a pause with a flag
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:type</span> <span class="org-string">"state"</span> <span class="org-clojure-keyword">:op</span> <span class="org-string">"pause"</span> <span class="org-clojure-keyword">:pos</span> &lt;duration&gt; ... <span class="org-clojure-keyword">:ended</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-1">}</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">queue edited (admin HTTP) &#8594; room broadcast
+</span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:type</span> <span class="org-string">"queue"</span> <span class="org-clojure-keyword">:queue</span> <span class="org-rainbow-delimiters-depth-2">[</span>item ...<span class="org-rainbow-delimiters-depth-2">]</span> <span class="org-clojure-keyword">:video-id</span> <span class="org-string">"&lt;current&gt;"</span><span class="org-rainbow-delimiters-depth-1">}</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orga580551" class="outline-2">
+<h2 id="orga580551">Server</h2>
+<div class="outline-text-2" id="text-orga580551">
+</div>
+<div id="outline-container-org7fbc2a3" class="outline-3">
+<h3 id="org7fbc2a3"><code>repos/room.clj</code></h3>
+<div class="outline-text-3" id="text-org7fbc2a3">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">fn</th>
+<th scope="col" class="org-left">behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>create! video-id &amp; {:keys [title]}</code></td>
+<td class="org-left">insert room (<code>video_id</code> = first item, <code>title</code> or the video's title) and its <code>room_items</code> row at position 0, in one <code>with-transaction</code>; still throws <code>no such video</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>queue room-id</code></td>
+<td class="org-left">ordered vector of items: <code>room_items</code> joined to <code>videos</code> (<code>title</code>, <code>duration</code>, <code>status</code>), <code>order-by position</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>add-item! room-id video-id</code></td>
+<td class="org-left">throws <code>ex-info "no such video"</code> / <code>"already queued"</code> (<code>:type :conflict</code>); position = count</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>remove-item! room-id video-id</code></td>
+<td class="org-left">throws <code>:conflict</code> <code>"that's the current video; skip first"</code> when it is <code>rooms.video_id</code>; else delete + renumber remaining positions 0..</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>reorder! room-id order</code></td>
+<td class="org-left"><code>order</code> must be a permutation of the queue's ids (else <code>ex-info</code> <code>:type :bad-request</code>); rewrite positions in one transaction</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>set-current! room-id video-id</code></td>
+<td class="org-left"><code>UPDATE rooms SET video_id</code> (video must be in the queue, else throw)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>set-title! room-id title</code></td>
+<td class="org-left"><code>UPDATE rooms SET title</code>; blank → NULL</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>list-all</code></td>
+<td class="org-left">per room: <code>:id :token :allow-control :title</code> (room title or current video's), <code>:video-id</code>, <code>:status</code> (current video's), <code>:items</code> (count)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rooms-using video-id</code></td>
+<td class="org-left">titles of rooms whose queue contains the video (for the 409)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>delete!</code></td>
+<td class="org-left">unchanged (items cascade)</td>
+</tr>
+</tbody>
+</table>
+<p>
+<code>repos/video.clj</code> <code>delete!</code>: throw <code>ex-info</code> <code>:type :conflict</code> with the
+room titles when <code>rooms-using</code> is non-empty; drop the manual <code>DELETE FROM
+rooms</code> (it would now silently close rooms; the refusal replaces it).
+</p>
+</div>
+</div>
+<div id="outline-container-org8f57d76" class="outline-3">
+<h3 id="org8f57d76"><code>sync_core.cljc</code> (pure)</h3>
+<div class="outline-text-3" id="text-org8f57d76">
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">neighbour</span>
+  <span class="org-doc">"ids is the queue's video ids in order. Returns the id after (:next) or
+  before (:prev) current, nil at either end or if current is not queued."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>ids current dir<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>i <span class="org-rainbow-delimiters-depth-4">(</span>.indexOf <span class="org-rainbow-delimiters-depth-5">(</span>vec ids<span class="org-rainbow-delimiters-depth-5">)</span> current<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-4">(</span>&lt;= 0 i<span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>get <span class="org-rainbow-delimiters-depth-5">(</span>vec ids<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">case</span> dir <span class="org-clojure-keyword">:next</span> <span class="org-rainbow-delimiters-depth-6">(</span>inc i<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:prev</span> <span class="org-rainbow-delimiters-depth-6">(</span>dec i<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">ended?</span>
+  <span class="org-doc">"A playing room whose clock has reached the current video's duration."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-4">[</span>playing? duration<span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-clojure-keyword">:as</span> room<span class="org-rainbow-delimiters-depth-3">}</span> now<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>boolean <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">and</span> playing? duration <span class="org-rainbow-delimiters-depth-4">(</span>&gt;= <span class="org-rainbow-delimiters-depth-5">(</span>expected-pos <span class="org-rainbow-delimiters-depth-6">(</span>assoc room <span class="org-clojure-keyword">:now</span> now<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> duration<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org4f522bd" class="outline-3">
+<h3 id="org4f522bd"><code>services/sync.clj</code></h3>
+<div class="outline-text-3" id="text-org4f522bd">
+<ul class="org-ul">
+<li>Live room gains <code>:duration</code> (from the video row) and keeps <code>:video-id</code>.
+<code>room-for</code> reads both via <code>videos/get-by-id</code>.</li>
+<li><code>state-msg</code> adds <code>:video-id</code>.</li>
+<li><p>
+New:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">video-descriptor</span> <span class="org-rainbow-delimiters-depth-2">[</span>v<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:id</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-clojure-keyword">:id</span> v<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-clojure-keyword">:title</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-clojure-keyword">:title</span> v<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-clojure-keyword">:duration</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-clojure-keyword">:duration</span> v<span class="org-rainbow-delimiters-depth-3">)</span>
+   <span class="org-clojure-keyword">:dash</span> <span class="org-rainbow-delimiters-depth-3">(</span>str <span class="org-string">"/dash/"</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:id</span> v<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-string">"/manifest.mpd"</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">set-item!</span>
+  <span class="org-doc">"Move the room to video-id (must be queued), position 0, playing.
+  Persists the pointer, broadcasts the item state."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>room-id video-id<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>v <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">videos</span>/get-by-id video-id<span class="org-rainbow-delimiters-depth-4">)</span>
+        now <span class="org-rainbow-delimiters-depth-4">(</span>mono-ms<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">rooms</span>/set-current! room-id video-id<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>swap! rooms* update room-id assoc <span class="org-clojure-keyword">:video-id</span> video-id <span class="org-clojure-keyword">:duration</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:duration</span> v<span class="org-rainbow-delimiters-depth-4">)</span>
+           <span class="org-clojure-keyword">:pos</span> 0.0 <span class="org-clojure-keyword">:t0</span> now <span class="org-clojure-keyword">:playing?</span> <span class="org-constant">true</span> <span class="org-clojure-keyword">:rate</span> 1.0<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">log</span>/info <span class="org-string">"room"</span> room-id <span class="org-string">"item"</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:title</span> v<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>broadcast room-id <span class="org-rainbow-delimiters-depth-4">(</span>assoc <span class="org-rainbow-delimiters-depth-5">(</span>state-msg <span class="org-rainbow-delimiters-depth-6">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                              <span class="org-clojure-keyword">:op</span> <span class="org-string">"item"</span> <span class="org-clojure-keyword">:video</span> <span class="org-rainbow-delimiters-depth-5">(</span>video-descriptor v<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-clojure-keyword">:ended</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">end-queue!</span> <span class="org-rainbow-delimiters-depth-2">[</span>room-id<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>now <span class="org-rainbow-delimiters-depth-4">(</span>mono-ms<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>swap! rooms* update room-id #<span class="org-rainbow-delimiters-depth-4">(</span>assoc <span class="org-variable-name">%</span> <span class="org-clojure-keyword">:pos</span> <span class="org-rainbow-delimiters-depth-5">(</span>double <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-clojure-keyword">:duration</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-7">)</span> 0<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-clojure-keyword">:t0</span> now
+                                          <span class="org-clojure-keyword">:playing?</span> <span class="org-constant">false</span> <span class="org-clojure-keyword">:rate</span> 1.0<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-type">log</span>/info <span class="org-string">"room"</span> room-id <span class="org-string">"reached the end of the queue"</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>broadcast room-id <span class="org-rainbow-delimiters-depth-4">(</span>assoc <span class="org-rainbow-delimiters-depth-5">(</span>state-msg <span class="org-rainbow-delimiters-depth-6">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-clojure-keyword">:op</span> <span class="org-string">"pause"</span> <span class="org-clojure-keyword">:ended</span> <span class="org-constant">true</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">item-cmd!</span> <span class="org-rainbow-delimiters-depth-2">[</span>room-id op video-id nick<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">log</span>/info <span class="org-string">"room"</span> room-id op <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">or</span> video-id <span class="org-string">"-"</span><span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-string">"by"</span> nick<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>ids <span class="org-rainbow-delimiters-depth-4">(</span>map <span class="org-clojure-keyword">:video-id</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">rooms</span>/queue room-id<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+        cur <span class="org-rainbow-delimiters-depth-4">(</span>get-in @rooms* <span class="org-rainbow-delimiters-depth-5">[</span>room-id <span class="org-clojure-keyword">:video-id</span><span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">)</span>
+        target <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">case</span> op
+                 <span class="org-string">"next"</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">sc</span>/neighbour ids cur <span class="org-clojure-keyword">:next</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                 <span class="org-string">"prev"</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">sc</span>/neighbour ids cur <span class="org-clojure-keyword">:prev</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                 <span class="org-string">"jump"</span> <span class="org-rainbow-delimiters-depth-5">(</span>some #<span class="org-rainbow-delimiters-depth-6">{</span>video-id<span class="org-rainbow-delimiters-depth-6">}</span> ids<span class="org-rainbow-delimiters-depth-5">)</span>
+                 <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">if</span> target <span class="org-rainbow-delimiters-depth-4">(</span>set-item! room-id target<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-5">(</span>= op <span class="org-string">"next"</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span>end-queue! room-id<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">queue-changed!</span> <span class="org-rainbow-delimiters-depth-2">[</span>room-id<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-3">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span>broadcast room-id <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:type</span> <span class="org-string">"queue"</span> <span class="org-clojure-keyword">:queue</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">rooms</span>/queue room-id<span class="org-rainbow-delimiters-depth-5">)</span>
+                        <span class="org-clojure-keyword">:video-id</span> <span class="org-rainbow-delimiters-depth-5">(</span>get-in @rooms* <span class="org-rainbow-delimiters-depth-6">[</span>room-id <span class="org-clojure-keyword">:video-id</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div></li>
+<li><code>tick-room!</code>: first thing, <code>(when (sc/ended? room now) ...)</code>: if
+<code>neighbour :next</code> exists → <code>set-item!</code>, else <code>end-queue!</code>; then return
+(the item broadcast is this tick's message; the beat resumes next tick).</li>
+<li><code>host-cmd!</code> unchanged. <code>prev</code> at the first item is a no-op (not a
+restart; <code>seek 0</code> does that).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb25d49e" class="outline-3">
+<h3 id="orgb25d49e"><code>ws.clj</code></h3>
+<div class="outline-text-3" id="text-orgb25d49e">
+<ul class="org-ul">
+<li><code>handle-msg</code> <code>cmd</code>: ops <code>next</code> / <code>prev</code> / <code>jump</code> go to
+<code>(sync/item-cmd! room-id op (:video m) nick)</code>; others to <code>host-cmd!</code> as
+today. Same gate.</li>
+<li><code>endpoint</code> <code>welcome</code>: <code>:video</code> is the <b>current</b> video's descriptor (looked
+up from the live room's <code>:video-id</code>, not the row's, so a reconnect during
+an item change is right), plus <code>:queue</code> and <code>:video-id</code>.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org1db97a5" class="outline-3">
+<h3 id="org1db97a5"><code>routes.clj</code></h3>
+<div class="outline-text-3" id="text-org1db97a5">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">route</th>
+<th scope="col" class="org-left">handler</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>GET /api/rooms</code> (public)</td>
+<td class="org-left"><code>{:token :title :now &lt;current video title&gt; :items n}</code> for rooms whose current video is ready</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>GET /api/admin/rooms</code></td>
+<td class="org-left"><code>list-all</code> rows each with <code>:queue (rooms/queue id)</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>POST /api/admin/rooms {:video-id :title?}</code></td>
+<td class="org-left">as today, title passed through</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>PATCH /api/admin/rooms/:id {:allow-control? :title?}</code></td>
+<td class="org-left">each key optional; <code>set-title!</code> when <code>:title</code> present</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>POST /api/admin/rooms/:id/items {:video-id}</code></td>
+<td class="org-left"><code>add-item!</code> → 201 with the new queue; then <code>sync/queue-changed!</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>DELETE /api/admin/rooms/:id/items/:video-id</code></td>
+<td class="org-left"><code>remove-item!</code> → 200 with the queue; <code>queue-changed!</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>PUT /api/admin/rooms/:id/items {:order [...]}</code></td>
+<td class="org-left"><code>reorder!</code> → 200 with the queue; <code>queue-changed!</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>DELETE /api/admin/videos/:id</code></td>
+<td class="org-left">409 <code>{:error "queued in: A, B"}</code> when <code>rooms-using</code> is non-empty</td>
+</tr>
+</tbody>
+</table>
+<p>
+One <code>wrap-conflicts</code> middleware on the admin group maps <code>ex-info</code> <code>:type
+:conflict</code> → 409 and <code>:bad-request</code> → 400 with <code>:error</code> the message, so the
+handlers stay two lines.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-org2b13930" class="outline-2">
+<h2 id="org2b13930">Client</h2>
+<div class="outline-text-2" id="text-org2b13930">
+</div>
+<div id="outline-container-orgfd249ed" class="outline-3">
+<h3 id="orgfd249ed"><code>player.cljs</code></h3>
+<div class="outline-text-3" id="text-orgfd249ed">
+<p>
+<code>(defn attach! [ctx url] (.attachSource ctx url))</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org41af353" class="outline-3">
+<h3 id="org41af353"><code>watch.cljs</code></h3>
+<div class="outline-text-3" id="text-org41af353">
+<ul class="org-ul">
+<li><code>st</code> gains <code>"queue" [] "vid" nil "ended" false</code>.</li>
+<li><code>welcome</code>: set <code>queue</code>, <code>vid</code>, title. If the player exists and
+<code>(:video-id msg)</code> differs from <code>(.-vid st)</code> (reconnect across a change)
+→ <code>switch-item!</code>.</li>
+<li><p>
+New:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">switch-item!</span> <span class="org-rainbow-delimiters-depth-2">[</span><span class="org-default">^</span><span class="org-type">js</span> st token video refs <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-4">[</span>id title dash<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-vid st<span class="org-rainbow-delimiters-depth-3">)</span> id<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-ended st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-mode st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-clojure-keyword">:none</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-qcap st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-buffering st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-streamok st<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-constant">false</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-3">(</span>.-textContent <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:title-el</span> refs<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span> title<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">player</span>/set-max-kbps <span class="org-rainbow-delimiters-depth-3">(</span>.-player st<span class="org-rainbow-delimiters-depth-3">)</span> -1<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>log! token <span class="org-clojure-keyword">:item</span> <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:id</span> id<span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">player</span>/attach! <span class="org-rainbow-delimiters-depth-3">(</span>.-player st<span class="org-rainbow-delimiters-depth-3">)</span> dash<span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>render-queue! st refs<span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>switch-item!</code> also sets <code>(.-started st)</code> to false. The dash on-ready
+(already: <code>streamok</code> true, res menu, <code>settle!</code>) then runs
+<code>start-action :state</code> on the new stream: the room is playing, so every
+viewer takes the <code>:autostart</code> path. A viewer who pressed play earlier
+has sticky activation on the document, so that start is audible; one
+who never pressed play gets the muted start or the parked frame exactly
+as on first load. The autoplay plan's <code>begin!</code> re-seeks to the room
+position, so nobody starts at 0 if the switch was late.
+</p></li>
+<li><code>apply-state-msg!</code>: new op <code>item</code> → <code>switch-item!</code> with <code>(:video msg)</code>
+before the room map is applied; <code>pause</code> with <code>:ended true</code> sets
+<code>(.-ended st)</code> and the lag hint reads "that's the end of the queue".</li>
+<li><code>beat</code> / <code>state</code>: when <code>(:video-id msg)</code> is non-nil and differs from
+<code>(.-vid st)</code> (a missed <code>item</code> broadcast) → fetch nothing, just
+<code>switch-item!</code> using the entry from <code>st.queue</code> (title) and the
+<code>/dash/&lt;id&gt;/manifest.mpd</code> convention.</li>
+<li><code>queue</code> message: replace <code>st.queue</code>, <code>render-queue!</code>.</li>
+<li><code>render-queue!</code>: a card "up next" under "watching with": one row per
+item, current row class <code>.now</code>, rows after it in order; items with
+<code>:status</code> not ready are muted with the status text. When <code>cancontrol</code>,
+rows are clickable → <code>cmd jump :video id</code>; host row gains "prev" and
+"next" buttons → <code>cmd prev</code> / <code>cmd next</code>.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgfd54d67" class="outline-3">
+<h3 id="orgfd54d67"><code>lobby.cljs</code></h3>
+<div class="outline-text-3" id="text-orgfd54d67">
+<p>
+Card: <code>:title</code>, then a muted line <code>now: &lt;:now&gt; · &lt;:items&gt; in the queue</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-orgd6f9641" class="outline-3">
+<h3 id="orgd6f9641"><code>admin.cljs</code></h3>
+<div class="outline-text-3" id="text-orgd6f9641">
+<ul class="org-ul">
+<li>Rooms table: title cell becomes an inline editable text (<code>onchange</code> →
+<code>PATCH {:title}</code>), a new "queue" cell showing <code>n items</code>, and the row gets
+a <code>details</code> block below it with:
+<ul class="org-ul">
+<li>the queue, one line per item: position, title, status, buttons
+"up" "down" "remove" (<code>PUT</code> with the reordered ids / <code>DELETE</code>); the
+current item is marked and has no remove button.</li>
+<li>a <code>select</code> of ready library videos not yet queued + "add" (<code>POST</code>).</li>
+<li>after every call, re-render the row from the response's <code>:queue</code>.</li>
+</ul></li>
+<li>Library "del" shows the 409 message in the toast instead of refreshing.</li>
+<li>"make room" unchanged (one-item room). Optional title prompt: no; rename
+from the row.</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-orgfbb1da5" class="outline-2">
+<h2 id="orgfbb1da5">Flow</h2>
+<div class="outline-text-2" id="text-orgfbb1da5">
+<p>
+Step through with the arrows. Cards show what each store holds after the
+highlighted hop.
+</p>
+
+<style>
+.opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
+.opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opseq button{font:inherit;padding:4px 10px;border:1px solid #999;border-radius:4px;background:#f6f6f6;cursor:pointer;color:inherit}
+.opseq button:hover{background:#e9e9e9}
+.opseq .where{font-weight:600;margin-left:6px}
+.opseq .legend{margin-left:auto;display:flex;gap:10px}
+.opseq .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.opseq .svgwrap{overflow:auto;max-height:70vh;border:1px solid #ddd;background:#fff}
+.opseq svg{display:block}
+.opseq .lane rect{fill:#f3f4f6;stroke:#9aa0a6}
+.opseq .lane text{font-weight:600;font-size:13px;fill:#1b1f23}
+.opseq .lane .sub{font-weight:400;font-size:11px;fill:#555}
+.opseq .lifeline{stroke:#c4c8cc;stroke-dasharray:4 4}
+.opseq .phase rect{fill:#fafbfc}
+.opseq .phase text{font-size:12px;font-weight:700;fill:#333}
+.opseq .phase .ptag{font-weight:400;fill:#666}
+.opseq .step{cursor:pointer}
+.opseq .step .line{fill:none;stroke-width:1.6}
+.opseq .step text{font-size:11.5px;fill:#222}
+.opseq .step .num{font-weight:700;fill:#fff;font-size:10px}
+.opseq .step.future{opacity:.28}
+.opseq .step.past{opacity:.75}
+.opseq .halo{fill:none}
+.opseq .step.active .halo{fill:#fff3b0;opacity:.9}
+.opseq .note{margin-top:10px;padding:8px 10px;border-left:3px solid #999;background:#f7f7f9}
+.opseq .note b{margin-right:6px}
+.opseq .note span{color:#444}
+.opseq .state{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.opseq .card{border:1px solid #ddd;border-radius:6px;padding:8px 10px;background:#fcfcfd;min-height:96px}
+.opseq .card h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+.opseq .card.changed{border-color:#d98a00;background:#fff8e6}
+.opseq .card pre{margin:0;white-space:pre-wrap;font:12px/1.4 Menlo,Consolas,monospace;background:none;border:0;padding:0;box-shadow:none}
+</style>
+<script>
+window.orgPlanSequence = function (rootId, spec) {
+  var TAGS = Object.assign({built: '#2e8b57', spec: '#d98a00', browser: '#777', external: '#635bff', async: '#1f78b4'}, spec.tags || {});
+  var lanes = spec.lanes, steps = spec.steps, phases = spec.phases || {}, stores = spec.stores || [], init = spec.init || {};
+  var L = spec.laneWidth || 190, X0 = 110, TOP = 70, ROW = 46, PH = 34, NS = 'http://www.w3.org/2000/svg';
+  var W = X0 + (lanes.length - 1) * L + 120, xs = {};
+  lanes.forEach(function (l, i) { xs[l.id] = X0 + i * L; });
+
+  var root = document.getElementById(rootId);
+  root.className += ' opseq';
+  root.innerHTML = '<div class="bar"><button data-go="first">|&lt;</button><button data-go="prev">&larr; Prev</button>'
+    + '<button data-go="next">Next &rarr;</button><button data-go="last">&gt;|</button><button data-go="play">Play</button>'
+    + '<span class="where"></span><span class="legend"></span></div>'
+    + '<div class="svgwrap"><svg xmlns="' + NS + '"></svg></div><div class="note"></div><div class="state"></div>';
+  var svg = root.querySelector('svg');
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  function txt(x, y, s, a, p) { var t = el('text', Object.assign({x: x, y: y}, a || {}), p); t.textContent = s; return t; }
+  function color(tag) { return TAGS[tag] || '#555'; }
+
+  var y = TOP + 30, lastPh = null, bands = [];
+  steps.forEach(function (s) {
+    if (s.ph !== lastPh) { bands.push({phase: s.ph, y: y}); y += PH + 10; lastPh = s.ph; }
+    var lines = s.label.split('|'); s.y = y; s.h = ROW + (lines.length - 1) * 13; y += s.h;
+  });
+  var H = y + 20;
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  bands.forEach(function (b) {
+    var p = phases[b.phase] || {label: b.phase}, g = el('g', {class: 'phase'});
+    el('rect', {x: 0, y: b.y, width: W, height: PH - 4}, g);
+    txt(16, b.y + 15, p.label, {}, g);
+    if (p.tag) txt(16, b.y + 27, p.tag, {class: 'ptag'}, g);
+  });
+  lanes.forEach(function (l) {
+    var x = xs[l.id], g = el('g', {class: 'lane'});
+    el('line', {x1: x, y1: TOP, x2: x, y2: H, class: 'lifeline'});
+    var bw = Math.min(160, L - 16);
+    el('rect', {x: x - bw / 2, y: 16, width: bw, height: TOP - 24, rx: 5}, g);
+    txt(x, l.sub ? 38 : 46, l.label, {'text-anchor': 'middle'}, g);
+    if (l.sub) txt(x, 54, l.sub, {'text-anchor': 'middle', class: 'sub'}, g);
+  });
+
+  var gs = steps.map(function (s, i) {
+    var c = color(s.tag), g = el('g', {class: 'step'}), x1 = xs[s.from], x2 = xs[s.to], yy = s.y + 18, lines = s.label.split('|');
+    el('rect', {x: 0, y: s.y + 2, width: W, height: s.h - 4, class: 'halo'}, g);
+    if (s.from === s.to) {
+      el('path', {d: 'M' + x1 + ' ' + yy + ' h40 v16 h-34', class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + (x1 + 6) + ' ' + (yy + 16) + ' l8 -5 v10 z', fill: c}, g);
+      lines.forEach(function (t, k) { txt(x1 + 48, yy + 4 + k * 13, t, {}, g); });
+    } else {
+      var d = x2 > x1 ? 1 : -1;
+      el('line', {x1: x1, y1: yy, x2: x2 - d * 6, y2: yy, class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + x2 + ' ' + yy + ' l' + (-d * 9) + ' -5 v10 z', fill: c}, g);
+      var est = Math.max.apply(null, lines.map(function (t) { return t.length; })) * 6.2;
+      var cx = Math.min(Math.max((x1 + x2) / 2, 46 + est / 2), W - 10 - est / 2);
+      lines.forEach(function (t, k) { txt(cx, yy - 6 - (lines.length - 1 - k) * 13, t, {'text-anchor': 'middle'}, g); });
+    }
+    el('circle', {cx: 28, cy: yy, r: 9, fill: c}, g);
+    txt(28, yy + 3.5, String(i + 1), {'text-anchor': 'middle', class: 'num'}, g);
+    g.addEventListener('click', function () { go(i); });
+    return g;
+  });
+
+  var legend = root.querySelector('.legend');
+  Object.keys(TAGS).filter(function (t) { return steps.some(function (s) { return s.tag === t; }); })
+    .forEach(function (t) { var s = document.createElement('span'); s.innerHTML = '<i style="background:' + TAGS[t] + '"></i>' + t; legend.appendChild(s); });
+  var state = root.querySelector('.state');
+  stores.forEach(function (st) {
+    var c = document.createElement('div'); c.className = 'card'; c.dataset.store = st.id;
+    c.innerHTML = '<h5></h5><pre></pre>'; c.querySelector('h5').textContent = st.label; state.appendChild(c);
+  });
+
+  var cur = -1, timer = null, playBtn = root.querySelector('[data-go=play]');
+  function stateAt(i) {
+    var st = Object.assign({}, init), ch = {};
+    for (var k = 0; k <= i; k++) { var s = steps[k].state; if (s) for (var key in s) { st[key] = s[key]; ch[key] = (k === i); } }
+    return {st: st, ch: ch};
+  }
+  function go(i) {
+    cur = Math.max(-1, Math.min(steps.length - 1, i));
+    gs.forEach(function (g, k) { g.setAttribute('class', 'step ' + (k < cur ? 'past' : k === cur ? 'active' : 'future')); });
+    var r = stateAt(cur);
+    stores.forEach(function (st) {
+      var c = state.querySelector('[data-store="' + st.id + '"]');
+      c.querySelector('pre').textContent = r.st[st.id] || ''; c.className = 'card' + (r.ch[st.id] ? ' changed' : '');
+    });
+    var where = root.querySelector('.where'), note = root.querySelector('.note');
+    if (cur < 0) { where.textContent = spec.startLabel || 'Start'; note.innerHTML = '<b>Start.</b> Next, the right arrow key, or click a message.'; return; }
+    var s = steps[cur], p = phases[s.ph] || {label: s.ph};
+    where.textContent = 'Step ' + (cur + 1) + ' of ' + steps.length + ' · ' + p.label;
+    note.innerHTML = '<b>' + (cur + 1) + '.</b> ' + s.label.split('|').join(' ') + (s.note ? '<br><span>' + s.note + '</span>' : '');
+    note.style.borderLeftColor = color(s.tag);
+    var wrap = svg.parentNode, top = s.y - wrap.clientHeight / 2;
+    if (Math.abs(wrap.scrollTop - top) > wrap.clientHeight / 3) wrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+  }
+  function play() {
+    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = 'Play'; return; }
+    playBtn.textContent = 'Pause';
+    timer = setInterval(function () { if (cur >= steps.length - 1) play(); else go(cur + 1); }, spec.playMs || 1400);
+  }
+  root.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    ({first: function () { go(-1); }, prev: function () { go(cur - 1); }, next: function () { go(cur + 1); },
+      last: function () { go(steps.length - 1); }, play: play})[b.dataset.go]();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (root.offsetParent === null || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
+  });
+  go(spec.start == null ? -1 : spec.start);
+};
+</script>
+<div id="binge">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('binge', {
+  lanes: [
+    {id: 'admin', label: 'Admin console', sub: 'host browser'},
+    {id: 'watch', label: 'Watch page', sub: 'host + viewers'},
+    {id: 'srv', label: 'Server', sub: 'routes · ws · sync'},
+    {id: 'db', label: 'SQLite'}
+  ],
+  phases: {
+    build:   {label: '1 · Build the queue', tag: 'spec · admin HTTP'},
+    play:    {label: '2 · Play and auto-advance', tag: 'spec · beat loop'},
+    late:    {label: '3 · Late joiner', tag: 'built + spec · ws welcome'},
+    end:     {label: '4 · End of queue', tag: 'spec'}
+  },
+  stores: [
+    {id: 'db', label: 'SQLite'},
+    {id: 'mem', label: 'rooms* (memory)'},
+    {id: 'ui', label: 'Viewers'}
+  ],
+  init: {db: 'rooms: R (video_id E1, title "Season 1")\nroom_items: (R,E1,0)',
+         mem: 'R: not loaded', ui: 'nobody connected'},
+  startLabel: 'After "make room" on E1',
+  steps: [
+    {ph: 'build', from: 'admin', to: 'srv', tag: 'spec', label: 'POST /api/admin/rooms/R/items {video-id: E2}',
+     note: 'routes.clj wrap-conflicts: duplicate → 409.'},
+    {ph: 'build', from: 'srv', to: 'db', tag: 'spec', label: 'INSERT room_items (R, E2, 1)',
+     state: {db: 'rooms: R (E1)\nroom_items: (R,E1,0) (R,E2,1)'}},
+    {ph: 'build', from: 'srv', to: 'watch', tag: 'spec', label: '{type: queue, queue: [E1,E2], video-id: E1}|only if the room is live',
+     note: 'sync/queue-changed!: no-op while rooms* has no entry.'},
+    {ph: 'build', from: 'srv', to: 'admin', tag: 'spec', label: '201 {queue: [E1, E2]}', state: {ui: 'admin row shows 2 items'}},
+    {ph: 'play', from: 'watch', to: 'srv', tag: 'built', label: 'ws connect, welcome {video: E1, queue, video-id: E1}',
+     note: 'ws.clj endpoint; room-for loads :video-id E1 :duration 1321 from the row.',
+     state: {mem: 'R: E1 pos 0 paused dur 1321\nclients: host', ui: 'host parked on E1'}},
+    {ph: 'play', from: 'watch', to: 'srv', tag: 'built', label: 'cmd play 0', note: 'sync.clj host-cmd!, unchanged.',
+     state: {mem: 'R: E1 playing, t0 = now'}},
+    {ph: 'play', from: 'srv', to: 'srv', tag: 'spec', label: 'beat every 2 s: sc/ended? room now|expected-pos ≥ 1321 → advance',
+     note: 'tick-room! first branch. 22 minutes later.'},
+    {ph: 'play', from: 'srv', to: 'db', tag: 'spec', label: 'UPDATE rooms SET video_id = E2', state: {db: 'rooms: R (E2)\nroom_items unchanged'}},
+    {ph: 'play', from: 'srv', to: 'watch', tag: 'spec', label: '{type: state, op: item, video: E2, pos 0, playing true}',
+     note: 'set-item!. Clients: switch-item! → attachSource → streamInitialized → settle! → autostart (started viewers) or park.',
+     state: {mem: 'R: E2 pos 0 playing t0 = now', ui: 'everyone on E2 from 0, started viewers playing'}},
+    {ph: 'late', from: 'watch', to: 'srv', tag: 'built', label: 'new viewer: ws connect',
+     note: 'welcome reads the live room, not the row: video is E2 even mid-switch.'},
+    {ph: 'late', from: 'srv', to: 'watch', tag: 'spec', label: 'welcome {video: E2, queue: [E1,E2], video-id: E2, state: playing}',
+     state: {ui: 'late viewer autostarts into E2 at the room position'}},
+    {ph: 'end', from: 'srv', to: 'srv', tag: 'spec', label: 'ended? again, neighbour :next = nil', note: 'tick-room! → end-queue!.'},
+    {ph: 'end', from: 'srv', to: 'watch', tag: 'spec', label: '{type: state, op: pause, pos 1298, ended: true}',
+     state: {mem: 'R: E2 pos 1298 paused', ui: 'paused on the last frame, hint: end of the queue'}}
+  ]
+});
+</script>
+</div>
+</div>
+<div id="outline-container-org1b6b51e" class="outline-2">
+<h2 id="org1b6b51e">Tests</h2>
+<div class="outline-text-2" id="text-org1b6b51e">
+<p>
+All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
+</p>
+</div>
+<div id="outline-container-org47b380e" class="outline-3">
+<h3 id="org47b380e"><code>db_test.clj</code></h3>
+<div class="outline-text-3" id="text-org47b380e">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>foreign-keys-are-enforced-on-every-connection</code></td>
+<td class="org-left"><code>PRAGMA foreign_keys</code> reads 1 on <code>(db/db)</code>; inserting a room with a bogus <code>video_id</code> throws</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>migration-003-turns-existing-rooms-into-queues</code></td>
+<td class="org-left"><code>with-redefs [db/migrations ["001-init.sql" "002-room-control.sql"]]</code> → <code>init!</code>; insert a video and a room by hand; restore migrations, <code>init!</code> again → <code>room_items</code> has <code>(R, v, 0)</code>, <code>rooms.title</code> column exists (null)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>migration-003-drops-orphan-rooms</code></td>
+<td class="org-left">same setup with a room whose <code>video_id</code> has no video → after 003 that room is gone and <code>init!</code> did not throw</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orgc847965" class="outline-3">
+<h3 id="orgc847965"><code>repos_test.clj</code></h3>
+<div class="outline-text-3" id="text-orgc847965">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>create-room-queues-its-first-video</code></td>
+<td class="org-left"><code>queue</code> is one item at position 0; <code>list-all</code> row <code>:title</code> equals the video title, <code>:items 1</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>create-room-takes-a-title</code></td>
+<td class="org-left"><code>:title "Season 1"</code> → row title "Season 1"</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>add-item-appends-in-order</code></td>
+<td class="org-left">add v2, v3 → positions 0 1 2 with the right ids</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>add-item-refuses-a-duplicate</code></td>
+<td class="org-left">throws with <code>:type :conflict</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>remove-item-refuses-the-current-video</code></td>
+<td class="org-left">throws <code>:conflict</code>; queue unchanged</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>remove-item-renumbers</code></td>
+<td class="org-left">queue v1 v2 v3, remove v2 → v1 at 0, v3 at 1</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>reorder-rewrites-positions</code></td>
+<td class="org-left"><code>reorder! [v3 v1 v2]</code> → positions follow; non-permutation throws <code>:bad-request</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>set-current-requires-a-queued-video</code></td>
+<td class="org-left">unqueued id throws; queued id updates <code>rooms.video_id</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>deleting-a-queued-video-is-refused</code></td>
+<td class="org-left"><code>videos/delete!</code> throws <code>:conflict</code> naming the room title; video and room still exist</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rooms-using-names-the-rooms</code></td>
+<td class="org-left">two rooms queue v → both titles</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org14da55e" class="outline-3">
+<h3 id="org14da55e"><code>sync_core_test.clj</code></h3>
+<div class="outline-text-3" id="text-org14da55e">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>neighbour-walks-the-queue</code></td>
+<td class="org-left"><code>[a b c]</code>: <code>(neighbour ids "b" :next)</code> c, <code>:prev</code> a; <code>"c" :next</code> nil; <code>"a" :prev</code> nil; <code>"x" :next</code> nil</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ended-needs-a-playing-room-past-its-duration</code></td>
+<td class="org-left">playing, dur 10, pos 0, t0 0, now 10000 → true; now 9999 → false; paused at 10 → false; no duration → false</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org0db48ca" class="outline-3">
+<h3 id="org0db48ca"><code>sync_service_test.clj</code> (using <code>run</code>)</h3>
+<div class="outline-text-3" id="text-org0db48ca">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>room-for-carries-the-current-video-and-duration</code></td>
+<td class="org-left">video duration 42.0 → live room <code>:video-id</code> and <code>:duration 42.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>tick-advances-at-the-end-of-the-video</code></td>
+<td class="org-left">queue v1 (dur 10) v2; play 0 at t=0; tick at 10000 → <code>:video-id v2 :pos 0.0 :playing? true</code>, <code>rooms/get-by-id</code> <code>:video-id v2</code>, exactly one broadcast with <code>:op "item"</code> and <code>:video {:id v2 ...}</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>tick-ends-the-queue-after-the-last-video</code></td>
+<td class="org-left">single-item queue, tick past the end → <code>:playing? false</code>, <code>:pos</code> equals duration, one <code>:op "pause" :ended true</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>tick-does-not-advance-a-paused-room</code></td>
+<td class="org-left">paused at pos ≥ duration → no change, no item broadcast</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>next-and-prev-move-and-start-playing</code></td>
+<td class="org-left"><code>item-cmd! "next"</code> → v2 playing at 0; <code>"prev"</code> → v1 playing at 0; <code>"prev"</code> at v1 → unchanged, no broadcast</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>jump-refuses-an-unqueued-video</code></td>
+<td class="org-left"><code>item-cmd! "jump" "nope"</code> → unchanged, no broadcast</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>queue-changed-broadcasts-only-to-a-live-room</code></td>
+<td class="org-left">not loaded → nothing; loaded with a client → one <code>:type "queue"</code> with the items and <code>:video-id</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orgcab9d3c" class="outline-3">
+<h3 id="orgcab9d3c"><code>routes_test.clj</code></h3>
+<div class="outline-text-3" id="text-orgcab9d3c">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>queue-endpoints-add-remove-reorder</code></td>
+<td class="org-left">POST item → 201 with 2-item queue; PUT order reversed → 200 reversed; DELETE the non-current → 200 one item</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>queue-conflicts-are-409</code></td>
+<td class="org-left">duplicate add → 409 with <code>:error</code>; removing the current → 409</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>deleting-a-queued-video-is-409</code></td>
+<td class="org-left"><code>DELETE /api/admin/videos/:id</code> → 409, <code>:error</code> names the room; video still listed</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>public-rooms-show-the-current-video-and-count</code></td>
+<td class="org-left">room titled "Season 1" on ready v1 plus queued v2 → <code>{:title "Season 1" :now "&lt;v1 title&gt;" :items 2}</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>patch-room-title</code></td>
+<td class="org-left"><code>PATCH {:title "Night 2"}</code> → list shows it; <code>PATCH {:allow-control true}</code> alone leaves the title</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orga0eaf08" class="outline-3">
+<h3 id="orga0eaf08"><code>ws_test.clj</code></h3>
+<div class="outline-text-3" id="text-orga0eaf08">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>welcome-carries-the-queue-and-current-video</code></td>
+<td class="org-left">two-item room → <code>:queue</code> of 2 with <code>:title</code>, <code>:video-id</code> the first, <code>:video</code> describes the first</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-next-switches-every-viewer</code></td>
+<td class="org-left">host <code>cmd next</code> → viewer receives <code>state :op "item"</code> with <code>:video :id</code> v2; a fresh connect's welcome says <code>:video-id</code> v2</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>viewer-next-is-ignored-without-control</code></td>
+<td class="org-left">viewer <code>cmd next</code> → no <code>item</code> within 1 s</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>queue-edit-reaches-the-room</code></td>
+<td class="org-left">HTTP POST item while a viewer is connected → viewer receives <code>:type "queue"</code> with 2 items</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="outline-container-org9aa15a9" class="outline-2">
+<h2 id="org9aa15a9">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org9aa15a9">
+<ul class="org-ul">
+<li><b>FK on for real is the riskiest line in the plan.</b> It could reject writes
+that silently succeeded before. Mitigations: migration 003 deletes
+orphan rooms; <code>foreign_key_check</code> fails loudly at startup; the manual
+guards in <code>create!</code> and the 409 on video delete remain. If an existing
+install hits a violation 003 does not cover, startup fails with the rows
+in the log, which is the intended behaviour (fix the data, not hide it).
+Verify the <code>:foreign_keys true</code> property path with the db test before
+anything else; if next.jdbc does not forward it, fall back to
+<code>(jdbc/get-datasource {... :dbname (str path "?foreign_keys=on")})</code> or a
+<code>SQLiteDataSource</code> with <code>setEnforceForeignKeys</code>.</li>
+<li><b>A missed <code>item</code> broadcast.</b> A viewer in a reconnect blip gets a fresh
+<code>welcome</code> (handled) and every beat carries <code>:video-id</code> (handled by the
+mismatch check). Two belts.</li>
+<li><b>attachSource and the element.</b> dash.js resets its controllers and the
+element's source; <code>currentTime</code> resets to 0 and <code>duration</code> changes.
+The seek slider's <code>max</code> follows <code>video.duration</code> on its 1 s tick. The
+quality cap resets. If a browser leaves the old frame visible until the
+new stream's first segment, that is a sub-second flash; accepted.</li>
+<li><b>Auto-advance cuts laggards.</b> The clock passing <code>duration</code> moves
+everyone. A viewer 3 s behind loses 3 s of credits. The alternative
+(wait for the slowest) holds the whole room for a stalled tab. Decided:
+clock wins.</li>
+<li><b>Duration drift.</b> ffprobe's <code>format.duration</code> and the DASH presentation
+duration differ by up to a segment's rounding. Advance fires at the
+probe value; the element may have reached <code>ended</code> a fraction earlier
+(last frame held, harmless) or have a fraction left (cut, harmless).</li>
+<li><b>Admin UI size.</b> The queue editor is the largest client change. Plain
+DOM as the rest of <code>admin.cljs</code>; no state beyond re-rendering a row from
+the response. If it balloons, split a <code>queue-editor</code> fn into its own
+ns.</li>
+<li><b>Co-host skipping.</b> Anyone with the link can skip when "co-hosts can
+drive" is on. Same trust level as pausing the room; the checkbox is the
+control.</li>
+<li><b>Deleting a video in a queue is now refused.</b> Behaviour change on the
+library page; the toast explains. Nathan may prefer the old silent
+close; it is one branch to flip.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgc4697fd" class="outline-2">
+<h2 id="orgc4697fd">Verification</h2>
+<div class="outline-text-2" id="text-orgc4697fd">
+<ol class="org-ol">
+<li><code>make test</code>: all lockdown and autoplay tests still pass; the new tests
+above pass; assertion audit on each new test (break the branch, confirm
+it fails alone, restore); report the table and the final count.</li>
+<li><code>make compile</code>: clean for <code>watch.cljs</code>, <code>lobby.cljs</code>, <code>admin.cljs</code>,
+<code>player.cljs</code>.</li>
+<li>Migration on a real database: copy a pre-003 <code>goob-toob.db</code> from a
+running install (or build one with the 001+002 test path), start the
+app on it: log shows <code>migrated 003-room-items.sql</code>, every old room has
+one queued item, links still open.</li>
+<li><code>make run</code>; upload three short clips (use <code>make clip</code> three times with
+different durations, 20 s is fine); in admin: make a room on clip A,
+add B and C, reorder to C B A, rename the room. Open the lobby: card
+shows the title, "now: C", "3 in the queue".</li>
+<li>Host tab plays C from 0. Two viewer tabs autostart into C (autoplay
+plan). At C's end (20 s) everyone moves to B at 0 and keeps playing:
+<code>server.log</code> <code>room &lt;id&gt; item B</code>, one <code>:item</code> client log per tab, drift
+under 1 s within 5 s. Host presses "next": A starts. Host "prev": B
+again. A viewer clicks C in the queue with co-host off: nothing; turn
+co-host on, click: C starts for everyone.</li>
+<li>Mid-play, admin removes B (not current): every watch tab's queue
+updates without reload. Admin tries to remove the current video: toast
+with the 409 text. Library "del" on a queued clip: toast names the
+room.</li>
+<li>Let the last video run out: everyone pauses on the last frame, hint
+reads end of the queue, host "next" does nothing, host seeks back and
+plays: it plays.</li>
+<li>Kill a viewer tab's network for 10 s across a "next", restore: the
+reconnect's welcome lands it on the new video at the room position.</li>
+<li>Restart the server mid-party: on reconnect every tab is on the same
+(current) video at 0, paused, as the model says.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-21</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-21 Wed 10:52</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

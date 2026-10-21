@@ -1,0 +1,511 @@
+#+TITLE: Room playlists: queue up the library, binge together
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-21
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+
+* Goal
+A room stops being "one video" and becomes an ordered queue of the host's
+uploaded videos with a current item. The host builds and edits the queue
+from the admin console, including while the party is running. When the
+room's clock passes the end of the current video the server moves everyone
+to the next one and keeps playing; the host or a co-host can skip ahead,
+go back or jump to any item from the watch page. Viewers see the queue and
+what is up next. Late joiners land on the right video. Existing rooms
+migrate to one-item queues and keep their links.
+
+Depends on the test-lockdown plan (tests, fixture, =start-action=) and the
+autoplay plan (=autostart!= / =settle!=, which the item switch reuses so a
+viewer who already pressed play follows into the next video without
+touching anything).
+
+* Decisions
+Each with the evidence; Nathan flips what he disagrees with before
+approval.
+- *The room is the playlist.* No separate playlists table or CRUD. The ask
+  is "build up a playlist of the videos they have uploaded" for a room;
+  reusable named playlists would add a screen and an entity nobody asked
+  for. If that need appears, =room_items= copies cleanly into
+  =playlist_items= later.
+- *=rooms.video_id= becomes "the current video".* It already exists, is
+  =NOT NULL=, and ~sync.clj:20~ already loads it into the live room. SQLite
+  cannot =DROP COLUMN= a column that carries a =REFERENCES= clause, so
+  keeping it as the current pointer avoids a table rebuild. Consequence: a
+  room always has a current video, so a queue is never empty; the last item
+  cannot be removed (close the room instead).
+- *No duplicate videos in a queue.* =PRIMARY KEY (room_id, video_id)=. It
+  lets the video id identify an item, so the wire protocol and the jump
+  command carry =video-id=, not an item id. Binge-watching the same episode
+  twice is not a use case.
+- *Foreign keys go on for real.* The lockdown audit found every connection
+  runs with =foreign_keys=0= (the PRAGMA is per connection; next.jdbc opens
+  one per =execute!=). This plan touches the schema, so it also sets the
+  pragma through the driver property on every connection and runs
+  migrations with it off, as the SQLite docs prescribe for schema changes.
+  Existing manual guards stay.
+- *Deleting a video that sits in a queue is refused* (409 naming the
+  rooms). Today the video's rooms are silently closed
+  (~repos/video.clj:62~). With queues, silently editing a running party's
+  list from the library page is worse than a clear error. The admin removes
+  it from the queue (or closes the room) first.
+- *The current item cannot be removed from the queue* (409). Skip first.
+  Keeps the in-memory room and the DB pointer from disagreeing mid-edit.
+- *Skipping is playback control.* =next=, =prev=, =jump= travel over the
+  websocket as =cmd= ops and obey the same gate as play/pause/seek
+  (~ws.clj:29-30~): host, or anyone when "co-hosts can drive" is on. Queue
+  *editing* is admin-only HTTP.
+- *A skip or an auto-advance always starts the next item playing at 0.*
+  Netflix behaviour. The host pauses if they want a break. End of queue:
+  the room pauses at the end of the last video and says so.
+- *Auto-advance is server-side, from the room clock.* The server knows
+  =duration= (videos table) and the authoritative position; it does not
+  wait for clients to report =ended= (they lag, stall or lie). A laggard 3 s
+  behind gets cut off 3 s early; accepted.
+- *Position within the current video stays in memory only*, as today; the
+  current item persists. A restart lands everyone at 0 of the current
+  video, paused, instead of 0 of the first video.
+- *Rooms get a title.* Nullable =rooms.title=, defaulting to the first
+  video's title at creation, editable from the admin row. The lobby card
+  otherwise reads "S01E01" while the party is on E05.
+
+* Findings
+- *Room model.* ~resources/migrations/001-init.sql~: =rooms(id, token,
+  video_id NOT NULL REFERENCES videos, created_at)=; =002= adds
+  =allow_control=. ~repos/room.clj~ exposes =create!= (checks the video
+  exists by hand), =get-by-token=, =get-by-id=, =list-all= (joins the
+  video's title and status), =set-control!=, =delete!=. Nothing about
+  ordering or multiple videos.
+- *Live room.* ~services/sync.clj:17-23~ =room-for= lazily builds
+  ={:video-id :pos :t0 :playing? :rate :clients}= from the row. =state-msg=
+  (~sync.clj:25-27~) carries no video id. =tick-room!= (~sync.clj:98-109~)
+  runs every 2 s per room with clients and only does rate control; it has
+  no notion of the video ending. =host-cmd!= (~sync.clj:54-67~) knows
+  =play=, =pause=, =seek=.
+- *Wire.* =welcome= (~ws.clj:55-62~) sends =:video {:id :title :duration
+  :dash}= once. The client creates the dash player on it
+  (~watch.cljs:192-199~) and never attaches another source; the title is
+  set once (~watch.cljs:185~). On reconnect, =welcome= arrives again but
+  =(when-not (.-player st) ...)= skips player setup, so a video change
+  during a blip would be missed.
+- *dash.js can switch streams in place.* =MediaPlayer.attachSource(url)=
+  (~node_modules/dashjs/dist/dash.all.debug.js~, function =attachSource=)
+  resets the playback controllers when a stream was initialised and
+  re-runs =_initializePlayback=; =streamInitialized= fires again, so the
+  existing on-ready callback (res menu rebuild, settle) re-runs. Player
+  settings (=maxBitrate=, =autoSwitchBitrate=) persist across the switch;
+  the per-stream quality lock is re-applied by =res-menu= from
+  =localStorage= (~watch.cljs:155-156~).
+- *Lobby and admin.* ~lobby.cljs:6-15~ shows =:title= per room from
+  =/api/rooms= (~routes.clj:74-76~, ready videos only).
+  ~admin.cljs:89-117~ renders one row per room (title, link, co-host
+  checkbox, copy, delete); ~admin.cljs:84-86~ "make room" per library row
+  posts =/api/admin/rooms {:video-id}=.
+- *Migration runner.* ~db.clj:24-41~ splits on =;\n=, runs each file in a
+  transaction, records it in =schema_migrations=. =PRAGMA foreign_keys=
+  inside a transaction is a no-op, so an FK-off window for schema changes
+  needs a dedicated connection set before =BEGIN=.
+- *Video deletion.* ~routes.clj:95-100~ → ~repos/video.clj:61-63~ deletes
+  rooms then the video, then files.
+
+* Data model
+** Migration ~resources/migrations/003-room-items.sql~
+#+begin_src sql
+ALTER TABLE rooms ADD COLUMN title TEXT;
+CREATE TABLE IF NOT EXISTS room_items (
+  room_id  TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (room_id, video_id)
+);
+DELETE FROM rooms WHERE video_id NOT IN (SELECT id FROM videos);
+INSERT INTO room_items (room_id, video_id, position)
+  SELECT id, video_id, 0 FROM rooms;
+#+end_src
+The =DELETE= clears any orphan rows that the FK-off era let through, so the
+=foreign_key_check= below passes on old databases. Add the file name to
+=db/migrations=.
+
+** ~db.clj~: foreign keys on every connection, off during migrations
+- =init!=: datasource spec becomes ={:dbtype "sqlite" :dbname db-path :foreign_keys true}=.
+  next.jdbc forwards unknown keys as driver properties; sqlite-jdbc reads
+  =foreign_keys= as the pragma. Drop the standalone =PRAGMA foreign_keys=ON=.
+- =migrate!= takes one connection for its whole run:
+  #+begin_src clojure
+  (with-open [conn (jdbc/get-connection db)]
+    (jdbc/execute! conn ["PRAGMA foreign_keys=OFF"])
+    (doseq [name migrations :when (not (applied name))]
+      ... (jdbc/with-transaction [tx conn] ...) ...)
+    (when-let [bad (seq (jdbc/execute! conn ["PRAGMA foreign_key_check"]))]
+      (throw (ex-info "foreign key violations after migration" {:rows bad}))))
+  #+end_src
+  Fail fast: a violation here is a bug in a migration, not a condition to
+  limp through.
+
+** Shape of a queue on the wire
+#+begin_src clojure
+;; one item
+{:video-id "..." :title "S01E02" :duration 1321.4 :status "ready" :position 1}
+;; welcome gains
+{:queue [item ...] :video-id "<current>"}
+;; state and beat gain
+{:video-id "<current>"}
+;; new state op, broadcast on every item change
+{:type "state" :op "item" :video {:id :title :duration :dash} :video-id id
+ :pos 0.0 :t0 now :playing true :rate 1.0 :now now :ended false}
+;; end of queue: a pause with a flag
+{:type "state" :op "pause" :pos <duration> ... :ended true}
+;; queue edited (admin HTTP) → room broadcast
+{:type "queue" :queue [item ...] :video-id "<current>"}
+#+end_src
+
+* Server
+** ~repos/room.clj~
+| fn                                   | behaviour                                                                                                    |
+|--------------------------------------+--------------------------------------------------------------------------------------------------------------|
+| =create! video-id & {:keys [title]}= | insert room (=video_id= = first item, =title= or the video's title) and its =room_items= row at position 0, in one =with-transaction=; still throws =no such video= |
+| =queue room-id=                      | ordered vector of items: =room_items= joined to =videos= (=title=, =duration=, =status=), =order-by position= |
+| =add-item! room-id video-id=         | throws =ex-info "no such video"= / ="already queued"= (=:type :conflict=); position = count                   |
+| =remove-item! room-id video-id=      | throws =:conflict= ="that's the current video; skip first"= when it is =rooms.video_id=; else delete + renumber remaining positions 0.. |
+| =reorder! room-id order=             | =order= must be a permutation of the queue's ids (else =ex-info= =:type :bad-request=); rewrite positions in one transaction |
+| =set-current! room-id video-id=      | =UPDATE rooms SET video_id= (video must be in the queue, else throw)                                            |
+| =set-title! room-id title=           | =UPDATE rooms SET title=; blank → NULL                                                                        |
+| =list-all=                           | per room: =:id :token :allow-control :title= (room title or current video's), =:video-id=, =:status= (current video's), =:items= (count) |
+| =rooms-using video-id=               | titles of rooms whose queue contains the video (for the 409)                                                  |
+| =delete!=                            | unchanged (items cascade)                                                                                   |
+~repos/video.clj~ =delete!=: throw =ex-info= =:type :conflict= with the
+room titles when =rooms-using= is non-empty; drop the manual =DELETE FROM
+rooms= (it would now silently close rooms; the refusal replaces it).
+
+** ~sync_core.cljc~ (pure)
+#+begin_src clojure
+(defn neighbour
+  "ids is the queue's video ids in order. Returns the id after (:next) or
+  before (:prev) current, nil at either end or if current is not queued."
+  [ids current dir]
+  (let [i (.indexOf (vec ids) current)]
+    (when (<= 0 i)
+      (get (vec ids) (case dir :next (inc i) :prev (dec i))))))
+
+(defn ended?
+  "A playing room whose clock has reached the current video's duration."
+  [{:keys [playing? duration] :as room} now]
+  (boolean (and playing? duration (>= (expected-pos (assoc room :now now)) duration))))
+#+end_src
+
+** ~services/sync.clj~
+- Live room gains =:duration= (from the video row) and keeps =:video-id=.
+  =room-for= reads both via =videos/get-by-id=.
+- =state-msg= adds =:video-id=.
+- New:
+  #+begin_src clojure
+  (defn- video-descriptor [v]
+    {:id (:id v) :title (:title v) :duration (:duration v)
+     :dash (str "/dash/" (:id v) "/manifest.mpd")})
+
+  (defn set-item!
+    "Move the room to video-id (must be queued), position 0, playing.
+    Persists the pointer, broadcasts the item state."
+    [room-id video-id]
+    (let [v (videos/get-by-id video-id)
+          now (mono-ms)]
+      (rooms/set-current! room-id video-id)
+      (swap! rooms* update room-id assoc :video-id video-id :duration (:duration v)
+             :pos 0.0 :t0 now :playing? true :rate 1.0)
+      (log/info "room" room-id "item" (:title v))
+      (broadcast room-id (assoc (state-msg (get @rooms* room-id))
+                                :op "item" :video (video-descriptor v) :ended false))))
+
+  (defn end-queue! [room-id]
+    (let [now (mono-ms)]
+      (swap! rooms* update room-id #(assoc % :pos (double (or (:duration %) 0)) :t0 now
+                                            :playing? false :rate 1.0))
+      (log/info "room" room-id "reached the end of the queue")
+      (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "pause" :ended true))))
+
+  (defn item-cmd! [room-id op video-id nick]
+    (log/info "room" room-id op (or video-id "-") "by" nick)
+    (let [ids (map :video-id (rooms/queue room-id))
+          cur (get-in @rooms* [room-id :video-id])
+          target (case op
+                   "next" (sc/neighbour ids cur :next)
+                   "prev" (sc/neighbour ids cur :prev)
+                   "jump" (some #{video-id} ids)
+                   nil)]
+      (if target (set-item! room-id target) (when (= op "next") (end-queue! room-id)))))
+
+  (defn queue-changed! [room-id]
+    (when (get @rooms* room-id)
+      (broadcast room-id {:type "queue" :queue (rooms/queue room-id)
+                          :video-id (get-in @rooms* [room-id :video-id])})))
+  #+end_src
+- =tick-room!=: first thing, =(when (sc/ended? room now) ...)=: if
+  =neighbour :next= exists → =set-item!=, else =end-queue!=; then return
+  (the item broadcast is this tick's message; the beat resumes next tick).
+- =host-cmd!= unchanged. =prev= at the first item is a no-op (not a
+  restart; =seek 0= does that).
+
+** ~ws.clj~
+- =handle-msg= =cmd=: ops =next= / =prev= / =jump= go to
+  =(sync/item-cmd! room-id op (:video m) nick)=; others to =host-cmd!= as
+  today. Same gate.
+- =endpoint= =welcome=: =:video= is the *current* video's descriptor (looked
+  up from the live room's =:video-id=, not the row's, so a reconnect during
+  an item change is right), plus =:queue= and =:video-id=.
+
+** ~routes.clj~
+| route                                          | handler                                                                              |
+|------------------------------------------------+--------------------------------------------------------------------------------------|
+| =GET /api/rooms= (public)                       | ={:token :title :now <current video title> :items n}= for rooms whose current video is ready |
+| =GET /api/admin/rooms=                          | =list-all= rows each with =:queue (rooms/queue id)=                                   |
+| =POST /api/admin/rooms {:video-id :title?}=     | as today, title passed through                                                       |
+| =PATCH /api/admin/rooms/:id {:allow-control? :title?}= | each key optional; =set-title!= when =:title= present                          |
+| =POST /api/admin/rooms/:id/items {:video-id}=   | =add-item!= → 201 with the new queue; then =sync/queue-changed!=                      |
+| =DELETE /api/admin/rooms/:id/items/:video-id=   | =remove-item!= → 200 with the queue; =queue-changed!=                                 |
+| =PUT /api/admin/rooms/:id/items {:order [...]}= | =reorder!= → 200 with the queue; =queue-changed!=                                     |
+| =DELETE /api/admin/videos/:id=                  | 409 ={:error "queued in: A, B"}= when =rooms-using= is non-empty                       |
+One =wrap-conflicts= middleware on the admin group maps =ex-info= =:type
+:conflict= → 409 and =:bad-request= → 400 with =:error= the message, so the
+handlers stay two lines.
+
+* Client
+** ~player.cljs~
+=(defn attach! [ctx url] (.attachSource ctx url))=.
+
+** ~watch.cljs~
+- =st= gains ="queue" [] "vid" nil "ended" false=.
+- =welcome=: set =queue=, =vid=, title. If the player exists and
+  =(:video-id msg)= differs from =(.-vid st)= (reconnect across a change)
+  → =switch-item!=.
+- New:
+  #+begin_src clojure
+  (defn- switch-item! [^js st token video refs {:keys [id title dash]}]
+    (set! (.-vid st) id)
+    (set! (.-ended st) false)
+    (set! (.-mode st) :none)
+    (set! (.-qcap st) nil)
+    (set! (.-buffering st) false)
+    (set! (.-streamok st) false)
+    (set! (.-textContent (:title-el refs)) title)
+    (player/set-max-kbps (.-player st) -1)
+    (log! token :item {:id id})
+    (player/attach! (.-player st) dash)
+    (render-queue! st refs))
+  #+end_src
+  =switch-item!= also sets =(.-started st)= to false. The dash on-ready
+  (already: =streamok= true, res menu, =settle!=) then runs
+  =start-action :state= on the new stream: the room is playing, so every
+  viewer takes the =:autostart= path. A viewer who pressed play earlier
+  has sticky activation on the document, so that start is audible; one
+  who never pressed play gets the muted start or the parked frame exactly
+  as on first load. The autoplay plan's =begin!= re-seeks to the room
+  position, so nobody starts at 0 if the switch was late.
+- =apply-state-msg!=: new op =item= → =switch-item!= with =(:video msg)=
+  before the room map is applied; =pause= with =:ended true= sets
+  =(.-ended st)= and the lag hint reads "that's the end of the queue".
+- =beat= / =state=: when =(:video-id msg)= is non-nil and differs from
+  =(.-vid st)= (a missed =item= broadcast) → fetch nothing, just
+  =switch-item!= using the entry from =st.queue= (title) and the
+  =/dash/<id>/manifest.mpd= convention.
+- =queue= message: replace =st.queue=, =render-queue!=.
+- =render-queue!=: a card "up next" under "watching with": one row per
+  item, current row class =.now=, rows after it in order; items with
+  =:status= not ready are muted with the status text. When =cancontrol=,
+  rows are clickable → =cmd jump :video id=; host row gains "prev" and
+  "next" buttons → =cmd prev= / =cmd next=.
+
+** ~lobby.cljs~
+Card: =:title=, then a muted line =now: <:now> · <:items> in the queue=.
+
+** ~admin.cljs~
+- Rooms table: title cell becomes an inline editable text (=onchange= →
+  =PATCH {:title}=), a new "queue" cell showing =n items=, and the row gets
+  a =details= block below it with:
+  - the queue, one line per item: position, title, status, buttons
+    "up" "down" "remove" (=PUT= with the reordered ids / =DELETE=); the
+    current item is marked and has no remove button.
+  - a =select= of ready library videos not yet queued + "add" (=POST=).
+  - after every call, re-render the row from the response's =:queue=.
+- Library "del" shows the 409 message in the toast instead of refreshing.
+- "make room" unchanged (one-item room). Optional title prompt: no; rename
+  from the row.
+
+* Flow
+Step through with the arrows. Cards show what each store holds after the
+highlighted hop.
+
+#+INCLUDE: "~/.config/opencode/skills/org-plan/diagrams/sequence.html" export html
+#+BEGIN_EXPORT html
+<div id="binge">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('binge', {
+  lanes: [
+    {id: 'admin', label: 'Admin console', sub: 'host browser'},
+    {id: 'watch', label: 'Watch page', sub: 'host + viewers'},
+    {id: 'srv', label: 'Server', sub: 'routes · ws · sync'},
+    {id: 'db', label: 'SQLite'}
+  ],
+  phases: {
+    build:   {label: '1 · Build the queue', tag: 'spec · admin HTTP'},
+    play:    {label: '2 · Play and auto-advance', tag: 'spec · beat loop'},
+    late:    {label: '3 · Late joiner', tag: 'built + spec · ws welcome'},
+    end:     {label: '4 · End of queue', tag: 'spec'}
+  },
+  stores: [
+    {id: 'db', label: 'SQLite'},
+    {id: 'mem', label: 'rooms* (memory)'},
+    {id: 'ui', label: 'Viewers'}
+  ],
+  init: {db: 'rooms: R (video_id E1, title "Season 1")\nroom_items: (R,E1,0)',
+         mem: 'R: not loaded', ui: 'nobody connected'},
+  startLabel: 'After "make room" on E1',
+  steps: [
+    {ph: 'build', from: 'admin', to: 'srv', tag: 'spec', label: 'POST /api/admin/rooms/R/items {video-id: E2}',
+     note: 'routes.clj wrap-conflicts: duplicate → 409.'},
+    {ph: 'build', from: 'srv', to: 'db', tag: 'spec', label: 'INSERT room_items (R, E2, 1)',
+     state: {db: 'rooms: R (E1)\nroom_items: (R,E1,0) (R,E2,1)'}},
+    {ph: 'build', from: 'srv', to: 'watch', tag: 'spec', label: '{type: queue, queue: [E1,E2], video-id: E1}|only if the room is live',
+     note: 'sync/queue-changed!: no-op while rooms* has no entry.'},
+    {ph: 'build', from: 'srv', to: 'admin', tag: 'spec', label: '201 {queue: [E1, E2]}', state: {ui: 'admin row shows 2 items'}},
+    {ph: 'play', from: 'watch', to: 'srv', tag: 'built', label: 'ws connect, welcome {video: E1, queue, video-id: E1}',
+     note: 'ws.clj endpoint; room-for loads :video-id E1 :duration 1321 from the row.',
+     state: {mem: 'R: E1 pos 0 paused dur 1321\nclients: host', ui: 'host parked on E1'}},
+    {ph: 'play', from: 'watch', to: 'srv', tag: 'built', label: 'cmd play 0', note: 'sync.clj host-cmd!, unchanged.',
+     state: {mem: 'R: E1 playing, t0 = now'}},
+    {ph: 'play', from: 'srv', to: 'srv', tag: 'spec', label: 'beat every 2 s: sc/ended? room now|expected-pos ≥ 1321 → advance',
+     note: 'tick-room! first branch. 22 minutes later.'},
+    {ph: 'play', from: 'srv', to: 'db', tag: 'spec', label: 'UPDATE rooms SET video_id = E2', state: {db: 'rooms: R (E2)\nroom_items unchanged'}},
+    {ph: 'play', from: 'srv', to: 'watch', tag: 'spec', label: '{type: state, op: item, video: E2, pos 0, playing true}',
+     note: 'set-item!. Clients: switch-item! → attachSource → streamInitialized → settle! → autostart (started viewers) or park.',
+     state: {mem: 'R: E2 pos 0 playing t0 = now', ui: 'everyone on E2 from 0, started viewers playing'}},
+    {ph: 'late', from: 'watch', to: 'srv', tag: 'built', label: 'new viewer: ws connect',
+     note: 'welcome reads the live room, not the row: video is E2 even mid-switch.'},
+    {ph: 'late', from: 'srv', to: 'watch', tag: 'spec', label: 'welcome {video: E2, queue: [E1,E2], video-id: E2, state: playing}',
+     state: {ui: 'late viewer autostarts into E2 at the room position'}},
+    {ph: 'end', from: 'srv', to: 'srv', tag: 'spec', label: 'ended? again, neighbour :next = nil', note: 'tick-room! → end-queue!.'},
+    {ph: 'end', from: 'srv', to: 'watch', tag: 'spec', label: '{type: state, op: pause, pos 1298, ended: true}',
+     state: {mem: 'R: E2 pos 1298 paused', ui: 'paused on the last frame, hint: end of the queue'}}
+  ]
+});
+</script>
+#+END_EXPORT
+
+* Tests
+All in the existing files unless noted; =with-tmp= from the lockdown.
+** ~db_test.clj~
+| test                                              | asserts                                                                                         |
+|---------------------------------------------------+-------------------------------------------------------------------------------------------------|
+| =foreign-keys-are-enforced-on-every-connection=   | =PRAGMA foreign_keys= reads 1 on =(db/db)=; inserting a room with a bogus =video_id= throws       |
+| =migration-003-turns-existing-rooms-into-queues=  | =with-redefs [db/migrations ["001-init.sql" "002-room-control.sql"]]= → =init!=; insert a video and a room by hand; restore migrations, =init!= again → =room_items= has =(R, v, 0)=, =rooms.title= column exists (null) |
+| =migration-003-drops-orphan-rooms=                | same setup with a room whose =video_id= has no video → after 003 that room is gone and =init!= did not throw |
+** ~repos_test.clj~
+| test                                              | asserts                                                                                   |
+|---------------------------------------------------+-------------------------------------------------------------------------------------------|
+| =create-room-queues-its-first-video=              | =queue= is one item at position 0; =list-all= row =:title= equals the video title, =:items 1= |
+| =create-room-takes-a-title=                       | =:title "Season 1"= → row title "Season 1"                                               |
+| =add-item-appends-in-order=                       | add v2, v3 → positions 0 1 2 with the right ids                                           |
+| =add-item-refuses-a-duplicate=                    | throws with =:type :conflict=                                                              |
+| =remove-item-refuses-the-current-video=           | throws =:conflict=; queue unchanged                                                       |
+| =remove-item-renumbers=                           | queue v1 v2 v3, remove v2 → v1 at 0, v3 at 1                                              |
+| =reorder-rewrites-positions=                      | =reorder! [v3 v1 v2]= → positions follow; non-permutation throws =:bad-request=            |
+| =set-current-requires-a-queued-video=             | unqueued id throws; queued id updates =rooms.video_id=                                     |
+| =deleting-a-queued-video-is-refused=              | =videos/delete!= throws =:conflict= naming the room title; video and room still exist       |
+| =rooms-using-names-the-rooms=                     | two rooms queue v → both titles                                                           |
+** ~sync_core_test.clj~
+| test                                     | asserts                                                                                  |
+|------------------------------------------+------------------------------------------------------------------------------------------|
+| =neighbour-walks-the-queue=              | =[a b c]=: =(neighbour ids "b" :next)= c, =:prev= a; ="c" :next= nil; ="a" :prev= nil; ="x" :next= nil |
+| =ended-needs-a-playing-room-past-its-duration= | playing, dur 10, pos 0, t0 0, now 10000 → true; now 9999 → false; paused at 10 → false; no duration → false |
+** ~sync_service_test.clj~ (using =run=)
+| test                                              | asserts                                                                                              |
+|---------------------------------------------------+------------------------------------------------------------------------------------------------------|
+| =room-for-carries-the-current-video-and-duration= | video duration 42.0 → live room =:video-id= and =:duration 42.0=                                       |
+| =tick-advances-at-the-end-of-the-video=           | queue v1 (dur 10) v2; play 0 at t=0; tick at 10000 → =:video-id v2 :pos 0.0 :playing? true=, =rooms/get-by-id= =:video-id v2=, exactly one broadcast with =:op "item"= and =:video {:id v2 ...}= |
+| =tick-ends-the-queue-after-the-last-video=        | single-item queue, tick past the end → =:playing? false=, =:pos= equals duration, one =:op "pause" :ended true= |
+| =tick-does-not-advance-a-paused-room=             | paused at pos ≥ duration → no change, no item broadcast                                               |
+| =next-and-prev-move-and-start-playing=            | =item-cmd! "next"= → v2 playing at 0; ="prev"= → v1 playing at 0; ="prev"= at v1 → unchanged, no broadcast |
+| =jump-refuses-an-unqueued-video=                  | =item-cmd! "jump" "nope"= → unchanged, no broadcast                                                   |
+| =queue-changed-broadcasts-only-to-a-live-room=    | not loaded → nothing; loaded with a client → one =:type "queue"= with the items and =:video-id=        |
+** ~routes_test.clj~
+| test                                                 | asserts                                                                                   |
+|------------------------------------------------------+-------------------------------------------------------------------------------------------|
+| =queue-endpoints-add-remove-reorder=                 | POST item → 201 with 2-item queue; PUT order reversed → 200 reversed; DELETE the non-current → 200 one item |
+| =queue-conflicts-are-409=                            | duplicate add → 409 with =:error=; removing the current → 409                               |
+| =deleting-a-queued-video-is-409=                     | =DELETE /api/admin/videos/:id= → 409, =:error= names the room; video still listed            |
+| =public-rooms-show-the-current-video-and-count=      | room titled "Season 1" on ready v1 plus queued v2 → ={:title "Season 1" :now "<v1 title>" :items 2}= |
+| =patch-room-title=                                   | =PATCH {:title "Night 2"}= → list shows it; =PATCH {:allow-control true}= alone leaves the title |
+** ~ws_test.clj~
+| test                                              | asserts                                                                                        |
+|---------------------------------------------------+------------------------------------------------------------------------------------------------|
+| =welcome-carries-the-queue-and-current-video=     | two-item room → =:queue= of 2 with =:title=, =:video-id= the first, =:video= describes the first |
+| =host-next-switches-every-viewer=                 | host =cmd next= → viewer receives =state :op "item"= with =:video :id= v2; a fresh connect's welcome says =:video-id= v2 |
+| =viewer-next-is-ignored-without-control=          | viewer =cmd next= → no =item= within 1 s                                                        |
+| =queue-edit-reaches-the-room=                     | HTTP POST item while a viewer is connected → viewer receives =:type "queue"= with 2 items          |
+
+* Risks and open questions
+- *FK on for real is the riskiest line in the plan.* It could reject writes
+  that silently succeeded before. Mitigations: migration 003 deletes
+  orphan rooms; =foreign_key_check= fails loudly at startup; the manual
+  guards in =create!= and the 409 on video delete remain. If an existing
+  install hits a violation 003 does not cover, startup fails with the rows
+  in the log, which is the intended behaviour (fix the data, not hide it).
+  Verify the =:foreign_keys true= property path with the db test before
+  anything else; if next.jdbc does not forward it, fall back to
+  =(jdbc/get-datasource {... :dbname (str path "?foreign_keys=on")})= or a
+  =SQLiteDataSource= with =setEnforceForeignKeys=.
+- *A missed =item= broadcast.* A viewer in a reconnect blip gets a fresh
+  =welcome= (handled) and every beat carries =:video-id= (handled by the
+  mismatch check). Two belts.
+- *attachSource and the element.* dash.js resets its controllers and the
+  element's source; =currentTime= resets to 0 and =duration= changes.
+  The seek slider's =max= follows =video.duration= on its 1 s tick. The
+  quality cap resets. If a browser leaves the old frame visible until the
+  new stream's first segment, that is a sub-second flash; accepted.
+- *Auto-advance cuts laggards.* The clock passing =duration= moves
+  everyone. A viewer 3 s behind loses 3 s of credits. The alternative
+  (wait for the slowest) holds the whole room for a stalled tab. Decided:
+  clock wins.
+- *Duration drift.* ffprobe's =format.duration= and the DASH presentation
+  duration differ by up to a segment's rounding. Advance fires at the
+  probe value; the element may have reached =ended= a fraction earlier
+  (last frame held, harmless) or have a fraction left (cut, harmless).
+- *Admin UI size.* The queue editor is the largest client change. Plain
+  DOM as the rest of =admin.cljs=; no state beyond re-rendering a row from
+  the response. If it balloons, split a =queue-editor= fn into its own
+  ns.
+- *Co-host skipping.* Anyone with the link can skip when "co-hosts can
+  drive" is on. Same trust level as pausing the room; the checkbox is the
+  control.
+- *Deleting a video in a queue is now refused.* Behaviour change on the
+  library page; the toast explains. Nathan may prefer the old silent
+  close; it is one branch to flip.
+
+* Verification
+1. =make test=: all lockdown and autoplay tests still pass; the new tests
+   above pass; assertion audit on each new test (break the branch, confirm
+   it fails alone, restore); report the table and the final count.
+2. =make compile=: clean for =watch.cljs=, =lobby.cljs=, =admin.cljs=,
+   =player.cljs=.
+3. Migration on a real database: copy a pre-003 =goob-toob.db= from a
+   running install (or build one with the 001+002 test path), start the
+   app on it: log shows =migrated 003-room-items.sql=, every old room has
+   one queued item, links still open.
+4. =make run=; upload three short clips (use =make clip= three times with
+   different durations, 20 s is fine); in admin: make a room on clip A,
+   add B and C, reorder to C B A, rename the room. Open the lobby: card
+   shows the title, "now: C", "3 in the queue".
+5. Host tab plays C from 0. Two viewer tabs autostart into C (autoplay
+   plan). At C's end (20 s) everyone moves to B at 0 and keeps playing:
+   =server.log= =room <id> item B=, one =:item= client log per tab, drift
+   under 1 s within 5 s. Host presses "next": A starts. Host "prev": B
+   again. A viewer clicks C in the queue with co-host off: nothing; turn
+   co-host on, click: C starts for everyone.
+6. Mid-play, admin removes B (not current): every watch tab's queue
+   updates without reload. Admin tries to remove the current video: toast
+   with the 409 text. Library "del" on a queued clip: toast names the
+   room.
+7. Let the last video run out: everyone pauses on the last frame, hint
+   reads end of the queue, host "next" does nothing, host seeks back and
+   plays: it plays.
+8. Kill a viewer tab's network for 10 s across a "next", restore: the
+   reconnect's welcome lands it on the new video at the room position.
+9. Restart the server mid-party: on reconnect every tab is on the same
+   (current) video at 0, paused, as the model says.
