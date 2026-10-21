@@ -144,9 +144,11 @@ unstarted (so a host pressing play starts every parked viewer). While
 =started= is false and =ready?= is false it parks as before (the parked
 frame keeps tracking the room until the offset is known).
 
-=onplay= uses =start-action :play= as the lockdown left it. One addition: if
-=(.-starting st)= is true the handler returns immediately (the event is
-ours).
+=onplay= uses =start-action :play= as the lockdown left it: "joined" (a
+gesture on an unstarted viewer sets =started= and logs =:started=) is
+decided in the handler, separately from the =start-action= result that
+says what the video does. One addition: if =(.-starting st)= is true the
+handler returns immediately (the event is ours).
 
 The =pause= follow rule (~watch.cljs:106-109~) stays. =play!= stays for the
 host-driven =play= op when already started; with =automuted= still true
