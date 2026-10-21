@@ -201,3 +201,10 @@
            (loop []
              (when-let [m (recv-type! (:in v2) "peers")]
                (if (= 1 (count (:peers m))) (map :nick (:peers m)) (recur))))))))
+
+(deftest a-non-object-frame-does-not-kill-the-socket
+  (let [{:keys [ws in]} (connect! (room!) "ann")]
+    (.join (.sendText ^WebSocket ws "5" true))
+    (.join (.sendText ^WebSocket ws "\"abc\"" true))
+    (send! ws {:type "ping" :t 7})
+    (is (= 7 (:t (recv-type! in "pong"))))))
