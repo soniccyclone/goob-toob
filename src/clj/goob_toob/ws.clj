@@ -6,17 +6,21 @@
   ring-websocket-async channel directions (from the listener source):
   `in` receives frames from the client, `out` is what we send to the client;
   closing `out` closes the socket."
+  (:refer-clojure :exclude [num])
   (:require [ring.websocket.async :as wa]
             [clojure.core.async :as a]
             [cheshire.core :as json]
             [clojure.string :as str]
             [goob-toob.config :as config]
+            [goob-toob.log :as log]
             [goob-toob.services.sync :as sync]
             [goob-toob.sync-core :as sc]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.video :as videos]))
 
 (defn- clamp-text [s n] (when (string? s) (apply str (take n s))))
+
+(defn- num [x] (when (number? x) (double x)))
 
 (defn- control-allowed?
   ;; re-read per cmd so an admin flipping the room checkbox applies live
@@ -27,12 +31,12 @@
   (case (:type m)
     "ping"   (send! {:type "pong" :t (:t m) :st (sync/mono-ms)})
     "cmd"    (when (or admin? (control-allowed? room-id))
-               (sync/host-cmd! room-id (:op m) (:pos m) (:nick m)))
+               (sync/host-cmd! room-id (:op m) (num (:pos m)) (:nick m)))
     "chat"   (let [text (clamp-text (:text m) 500)]
                (when-not (str/blank? text)
                  (sync/broadcast room-id {:type "chat" :from (:nick m) :text text
                                           :ts (System/currentTimeMillis)})))
-    "status" (sync/status! room-id cid (:pos m) (:buffering m))
+    "status" (sync/status! room-id cid (num (:pos m)) (:buffering m))
     nil))
 
 (defn endpoint [req]
@@ -66,8 +70,10 @@
                 (when (string? msg)
                   (when-let [m (try (json/parse-string msg true)
                                     (catch Exception _ nil))]
-                    (handle-msg {:room-id room-id :cid cid :admin? admin? :send! send!}
-                                (assoc m :nick nick))))
+                    (try (handle-msg {:room-id room-id :cid cid :admin? admin? :send! send!}
+                                     (assoc m :nick nick))
+                         (catch Exception e
+                           (log/info "ws" room-id "dropped a message from" nick ":" (.getMessage e))))))
                 (recur)))
             ;; reached when the client closes (gracefully or not)
             (swap! sync/conns* dissoc cid)

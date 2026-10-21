@@ -181,3 +181,23 @@
         clients #(get-in @sync/rooms* [(:id room) :clients])]
     (send! ws {:type "status" :pos 0 :buffering true})
     (is (wait-until #(:buffering (val (first (clients)))) 1000))))
+
+(deftest non-numeric-positions-are-dropped-at-the-socket
+  (let [room (room!)
+        host (connect! room "host" (login!))]
+    (send! (:ws host) {:type "cmd" :op "pause" :pos 7.0})
+    (recv-type! (:in host) "state")
+    (send! (:ws host) {:type "cmd" :op "play" :pos "x"})
+    (is (= {:op "play" :pos 7.0 :playing true}
+           (select-keys (recv-type! (:in host) "state") [:op :pos :playing])))))
+
+(deftest a-malformed-status-does-not-ghost-the-peer
+  (let [room (room!)
+        v1 (connect! room "v1")
+        v2 (connect! room "v2")]
+    (send! (:ws v1) {:type "status" :pos "x" :buffering false})
+    (.join (.sendClose ^WebSocket (:ws v1) WebSocket/NORMAL_CLOSURE ""))
+    (is (= ["v2"]
+           (loop []
+             (when-let [m (recv-type! (:in v2) "peers")]
+               (if (= 1 (count (:peers m))) (map :nick (:peers m)) (recur))))))))

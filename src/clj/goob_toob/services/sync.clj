@@ -108,11 +108,14 @@
                                 :slow-for (when (= (:rate room) (:room-slow-rate sc/tuning)) laggard)
                                 :peers (peers-list room))))))
 
+(defn tick-all! []
+  (doseq [[room-id room] @rooms* :when (seq (:clients room))]
+    (try (tick-room! room-id)
+         (catch Exception e (log/info "beat" room-id "failed:" (.getMessage e))))))
+
 (defn start-beat-loop! []
   (future
     (loop []
       (Thread/sleep 2000)
-      (doseq [[room-id room] @rooms*
-              :when (seq (:clients room))]
-        (tick-room! room-id))
+      (tick-all!)
       (recur))))
