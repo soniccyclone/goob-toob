@@ -1,21 +1,9 @@
 (ns goob-toob.repos-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [clojure.java.io :as io]
-            [goob-toob.config :as config]
-            [goob-toob.db :as db]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
-            [goob-toob.repos.storage :as storage]))
-
-(defn with-tmp [f]
-  (let [tmp (java.nio.file.Files/createTempDirectory "goob-test"
-                                                     (into-array java.nio.file.attribute.FileAttribute []))
-        dir (.toString tmp)]
-    (swap! config/config merge {:storage-dir dir :ladder config/default-ladder
-                                :keep-original true :workers 1})
-    (db/init! (str dir "/test.db"))
-    (f)
-    (.delete (io/file dir))))
+            [goob-toob.repos.storage :as storage]
+            [goob-toob.test-util :refer [with-tmp]]))
 
 (use-fixtures :each with-tmp)
 
