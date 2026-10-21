@@ -12,6 +12,14 @@
                         :setup            {:exports {default goob-toob.e2e.setup/run}
                                            :depends-on #{:config}}
                         :host-and-viewer  {:entries [goob-toob.e2e.journeys.host-and-viewer]
+                                           :depends-on #{:config}}
+                        :sync-policy      {:entries [goob-toob.e2e.journeys.sync-policy]
+                                           :depends-on #{:config}}
+                        :control          {:entries [goob-toob.e2e.journeys.control]
+                                           :depends-on #{:config}}
+                        :lobby-admin-chat {:entries [goob-toob.e2e.journeys.lobby-admin-chat]
+                                           :depends-on #{:config}}
+                        :resilience       {:entries [goob-toob.e2e.journeys.resilience]
                                            :depends-on #{:config}}}
            :js-options {:js-provider :import}
            :compiler-options {:optimizations :simple

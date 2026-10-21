@@ -2,7 +2,8 @@
   (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.string :as str]
-            [cljs.core.async :as a :refer [go <!]]
+            [cljs.core.async :as a :refer [<!]]
+            [goob-toob.e2e.async :refer-macros [go-try <?]]
             [cljs.core.async.interop :refer-macros [<p!]]
             [goob-toob.e2e.api :as api]
             [goob-toob.e2e.party :as party]
@@ -15,17 +16,17 @@
   a second page probed alongside into :host."
   ([page ms] (sample page ms {}))
   ([page ms {:keys [live host]}]
-   (go
+   (go-try
      (let [t0 (js/Date.now)
            every (:sample-every W)]
        (loop [out [] n 0]
          (let [at (- (js/Date.now) t0)]
            (if (> at ms)
              out
-             (let [p (<! (party/probe page))
+             (let [p (<? (party/probe page))
                    server (when (and live (zero? (mod n (quot 1000 every))))
                             (<p! (live)))
-                   h (when host (<! (party/probe host)))
+                   h (when host (<? (party/probe host)))
                    s (cond-> (assoc p :at at)
                        server (assoc :server server)
                        h (assoc :host h))]
@@ -110,3 +111,21 @@
                             " |\n"))
     (.attach info "metrics" #js {:body (js/JSON.stringify (clj->js {:summary summary :extra extra}) nil 1)
                                  :contentType "application/json"})))
+
+(defn sample-until
+  "Polls f (returns a Promise) every (:sample-every W) ms until pred holds
+  on a value or ms pass. Values gain :at."
+  [f pred ms]
+  (go-try
+    (let [t0 (js/Date.now)]
+      (loop [out []]
+        (let [at (- (js/Date.now) t0)
+              v (assoc (js->clj (<p! (f))) :at at)
+              out (conj out v)]
+          (if (or (pred v) (> at ms))
+            out
+            (do (<! (a/timeout (:sample-every W)))
+                (recur out))))))))
+
+(defn sample-fn [f ms]
+  (sample-until f (constantly false) ms))
