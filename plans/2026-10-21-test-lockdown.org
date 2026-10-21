@@ -378,3 +378,38 @@ Tests (sync_core_test), one per row:
 5. Container only: =server.log= shows =beat <room> failed:= once when a
    =cmd= with a string pos is injected from devtools, and the next beat
    still arrives (the =slow-note= / peer list keep updating).
+
+* Implementation notes
+Implemented 2026-10-21 by three Opus subagents from this plan (steps 1-2,
+3-4, 5-7), reviewed and verified by the planning session; PR for #35.
+Landed as specced, plus:
+
+- *Step 7 was wrong about one row.* Today a first play with a gesture into
+  a paused room without control sets =started= *and then* parks, so the
+  host's next play starts that viewer. Dispatching only on
+  =start-action='s =:park= would have left them unjoined. The handler
+  therefore keeps "joined" (gesture on an unstarted viewer) separate from
+  "what the video does" (the =start-action= result); the function and its
+  table are as written. The autoplay plan carries this split.
+- *Stream-ready and first-pong parks* are not routed through
+  =start-action=; they park unconditionally today and routing them would
+  have changed behaviour. The autoplay plan's =settle!= is where they go.
+- *=run-ffmpeg= had a race*: the stderr string was built right after
+  =.waitFor= without waiting for the reader thread. Fixed by joining the
+  =a/thread= channel first (own commit).
+- *Fake ffmpeg exit code* is baked into the script at creation; the JVM
+  cannot set an env var for a child without a production change.
+- *Assertions the audit could not make fail* were replaced, not kept: the
+  =list-all=-based room check (inner join hides orphans; =get-by-id= used),
+  the "after recovery =:slow-for nil=" check (=room-rate= already returns
+  nil; a host pause while slowed is asserted instead), the "beat keeps
+  arriving" check on string positions (the beat never touched =pos=; the
+  state message is asserted). One redundant stamp assertion was merged.
+- *Joint coverage*: =a-malformed-status-does-not-ghost-the-peer= fails only
+  when both the =num= coercion and the socket =try= are removed, so
+  =a-non-object-frame-does-not-kill-the-socket= was added to pin the =try=
+  alone.
+- *Verified*: =make test= 128 tests, every new test audited to fail under
+  a production break (tables in the PR); =make compile= with the same four
+  =admin.cljs= inference warnings before and after; the 429 checked over
+  HTTP against the running container.
