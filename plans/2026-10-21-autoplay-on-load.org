@@ -16,8 +16,9 @@ refuses even a muted start. The server does not change.
 
 Depends on the test-lockdown plan (=sc/start-action= exists and is pinned)
 and the Playwright journeys plan: the browser matrix in Verification
-becomes journeys under a =lenient= autoplay project plus the existing
-=strict= one, with the manual Firefox and Safari checks remaining.
+becomes journeys under lenient autoplay projects for Chromium and Firefox
+plus the strict ones, recorded in WebKit, with a real Safari spot check
+remaining manual.
 
 * Findings
 ** How a viewer starts today

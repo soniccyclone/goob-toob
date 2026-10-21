@@ -3,10 +3,10 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-21 Wed 12:52 -->
+<!-- 2026-10-21 Wed 13:33 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Playwright journeys: the critical paths through a real browser, judged by metrics</title>
+<title>Playwright journeys: the critical paths through real browsers, judged by metrics</title>
 <meta name="author" content="Nathan Barlow" />
 <meta name="generator" content="Org Mode" />
 <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
@@ -25,52 +25,54 @@
 </head>
 <body>
 <div id="content" class="content">
-<h1 class="title">Playwright journeys: the critical paths through a real browser, judged by metrics</h1>
+<h1 class="title">Playwright journeys: the critical paths through real browsers, judged by metrics</h1>
 <div id="table-of-contents" role="doc-toc">
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org779776f">Goal</a></li>
-<li><a href="#orgc42f210">The thesis, and where it holds</a></li>
-<li><a href="#org897366e">Findings</a></li>
-<li><a href="#org658071f">Decisions</a></li>
-<li><a href="#orgda29167">Plan</a>
+<li><a href="#org85663bf">Goal</a></li>
+<li><a href="#org6fa9989">The thesis, and where it holds</a></li>
+<li><a href="#org9ad6b24">Findings</a></li>
+<li><a href="#org01baeb7">Decisions</a></li>
+<li><a href="#org72b67f9">Plan</a>
 <ul>
-<li><a href="#orgfda699f">1 · Probe and live endpoint (product code, small)</a></li>
-<li><a href="#org5ceae39">2 · Harness: <code>e2e/</code></a></li>
-<li><a href="#orgf44dfe7">3 · Journeys</a></li>
-<li><a href="#orgf6d6982">4 · Container and Makefile</a></li>
-<li><a href="#org4f3cc73">5 · CI job</a></li>
-<li><a href="#org0c64829">6 · Retirement list (follow-up PR, after five green CI runs)</a></li>
+<li><a href="#org05ed82a">1 · Probe and live endpoint (product code, small)</a></li>
+<li><a href="#orgb6b6c88">2 · Harness: <code>e2e/</code> in ClojureScript</a></li>
+<li><a href="#orgd3722c6">3 · Journeys</a></li>
+<li><a href="#orgb4021e5">4 · Container and Makefile</a></li>
+<li><a href="#orgd707d4d">5 · CI job</a></li>
+<li><a href="#org175584a">6 · Retirement list (follow-up PR, after five green CI runs)</a></li>
 </ul>
 </li>
-<li><a href="#orgf38dc8a">Risks and open questions</a></li>
-<li><a href="#orgc8b5126">Verification</a></li>
+<li><a href="#orgbedf817">Risks and open questions</a></li>
+<li><a href="#orgf0c88e8">Verification</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org779776f" class="outline-2">
-<h2 id="org779776f">Goal</h2>
-<div class="outline-text-2" id="text-org779776f">
+<div id="outline-container-org85663bf" class="outline-2">
+<h2 id="org85663bf">Goal</h2>
+<div class="outline-text-2" id="text-org85663bf">
 <p>
 A small suite of end-to-end tests drives goob-toob the way a party does:
-real Chrome, real dash.js, real H.264 segments from the real transcode,
-real websockets, two or three browser contexts in one room. Each journey
-samples a metrics probe on the page and the server's own view of the room,
-and asserts summaries of those series (drift after settle, seeks, stalls,
-rate bounds, time to sync) against one thresholds table. The suite runs
-locally in a container (<code>make e2e</code>) and as its own CI job, and writes a
-metrics table into the job summary so a run says more than pass or fail.
-Once it is green in CI, the JVM suite shrinks to what a browser cannot
-reach: pure math, adversarial protocol input, migrations, and failure
-modes. This plan comes before autoplay and playlists; both then add
-journeys here instead of manual verification lists.
+real browsers (Chromium, Firefox and WebKit, all from Playwright's own
+builds), real dash.js, real H.264 segments from the real transcode, real
+websockets, two or three browser contexts in one room. Each journey
+samples a metrics probe on the page and the server's own view of the
+room, and asserts summaries of those series (drift after settle, seeks,
+stalls, rate bounds, time to sync) against one thresholds table. The
+specs are ClojureScript compiled by shadow-cljs. The suite runs locally
+in a container (<code>make e2e</code>) and as its own CI job, and writes a metrics
+table into the job summary so a run says more than pass or fail. Once it
+is green in CI, the JVM suite shrinks to what a browser cannot reach:
+pure math, adversarial protocol input, migrations, and failure modes.
+This plan comes before autoplay and playlists; both then add journeys
+here instead of manual verification lists.
 </p>
 </div>
 </div>
-<div id="outline-container-orgc42f210" class="outline-2">
-<h2 id="orgc42f210">The thesis, and where it holds</h2>
-<div class="outline-text-2" id="text-orgc42f210">
+<div id="outline-container-org6fa9989" class="outline-2">
+<h2 id="org6fa9989">The thesis, and where it holds</h2>
+<div class="outline-text-2" id="text-org6fa9989">
 <p>
 Nathan's framing: most of the truly valuable tests of this repository
 could be a small set of Playwright journeys asserting on metrics, with
@@ -82,7 +84,7 @@ pin implementation. Taking that seriously:
 <li><b>It holds for everything user-facing.</b> The product is "watch in sync".
 Its value is measurable: drift, stalls, seeks, catch-up rate, time to
 join. Those are properties of the whole system (server clock, websocket,
-dash.js buffering, the element's <code>playbackRate</code>, Chrome's autoplay
+dash.js buffering, the element's <code>playbackRate</code>, the browser's autoplay
 policy) and no JVM test touches more than one of them. The lockdown's
 HTTP and websocket wiring tests prove the server speaks the protocol;
 a journey proves the party works. When both exist, the wiring tests are
@@ -113,33 +115,98 @@ regression shows as a number moving before it shows as a failure.</li>
 
 <p>
 Verdict: build the journeys, then retire the JVM tests that only pin
-wiring (list in Decisions). The suite that remains is about 85 JVM tests
-of logic and hostility plus about a dozen journeys of value.
+wiring (list in Decisions). The suite that remains is about 100 JVM tests
+of logic and hostility plus about a dozen journeys of value, each run in
+three engines.
 </p>
 </div>
 </div>
-<div id="outline-container-org897366e" class="outline-2">
-<h2 id="org897366e">Findings</h2>
-<div class="outline-text-2" id="text-org897366e">
+<div id="outline-container-org9ad6b24" class="outline-2">
+<h2 id="org9ad6b24">Findings</h2>
+<div class="outline-text-2" id="text-org9ad6b24">
 <ul class="org-ul">
 <li><b>Nothing browser-driven exists.</b> <code>test/</code> is Clojure only; <code>package.json</code>
-has dash.js alone; no Chrome on the host. Every plan's browser
+has dash.js alone; no browser on the host. Every plan's browser
 verification so far was manual in two tabs.</li>
-<li><b>Playwright's bundled Chromium cannot play our video.</b> Open-source
-Chromium ships without H.264 or AAC; the ladder is libx264 and AAC
-(<code>src/clj/goob_toob/services/transcode.clj:87-93</code>). Playwright supports
-the <code>chrome</code> channel (branded Google Chrome, all codecs). GitHub's
-<code>ubuntu-latest</code> image has Google Chrome preinstalled; the Fedora test
-image needs Google's rpm repo. Firefox and Safari stay manual.</li>
-<li><b>Autoplay policy is a launch flag.</b> Chrome's
-<code>--autoplay-policy=user-gesture-required</code> (strict, the real-world
-default) and <code>no-user-gesture-required</code> make the autoplay plan's three
-branches deterministic per Playwright project. Nothing in the suite
-depends on Chrome's own history heuristics.</li>
-<li><b>Network shaping is available.</b> Playwright has no throttle API, but on
-Chrome a CDP session gives <code>Network.emulateNetworkConditions</code>
-(throughput, latency), enough to make a laggard and trigger the quality
-cap.</li>
+<li><p>
+<b>Codecs: measured, not assumed.</b> The worry was that open-source browser
+builds lack H.264 and AAC, which is the whole ladder
+(<code>src/clj/goob_toob/services/transcode.clj:87-93</code>). A probe in
+Playwright's official image (<code>mcr.microsoft.com/playwright:v1.64.1-noble</code>,
+with the <code>ffmpeg</code> apt package added, which the e2e image needs anyway
+for the clip) launched all four engines against a libx264 High + AAC-LC
+file and a VP9 + Opus file, checked <code>MediaSource.isTypeSupported</code> for
+the strings dash.js will ask about, and played each file for 1.5 s:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">engine</th>
+<th scope="col" class="org-left">avc1.64001f / avc1.4d401f / mp4a.40.2 (MSE)</th>
+<th scope="col" class="org-left">libx264+AAC playback</th>
+<th scope="col" class="org-left">VP9+Opus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Chromium 156, Playwright build</td>
+<td class="org-left">true / true / true</td>
+<td class="org-left"><code>currentTime</code> 1.46, 49 frames</td>
+<td class="org-left">plays</td>
+</tr>
+
+<tr>
+<td class="org-left">Google Chrome 156, <code>channel</code></td>
+<td class="org-left">true / true / true</td>
+<td class="org-left"><code>currentTime</code> 1.46, 49 frames</td>
+<td class="org-left">plays</td>
+</tr>
+
+<tr>
+<td class="org-left">Firefox 157, Playwright build</td>
+<td class="org-left">true / true / true</td>
+<td class="org-left"><code>currentTime</code> 1.47, 45 frames</td>
+<td class="org-left">plays</td>
+</tr>
+
+<tr>
+<td class="org-left">WebKit, Playwright build</td>
+<td class="org-left">true / true / true</td>
+<td class="org-left"><code>currentTime</code> 1.50, 46 frames</td>
+<td class="org-left">plays</td>
+</tr>
+</tbody>
+</table>
+<p>
+Every engine decodes the ladder. Firefox and WebKit use the system
+libavcodec / GStreamer that the Playwright image carries; Chromium's
+Playwright build has the codecs itself. The branded-Chrome channel adds
+nothing. Playwright cannot drive a stock Firefox or Safari (it needs its
+own patched builds), so these three builds are the whole menu, and all
+three are in.
+</p></li>
+<li><b>Autoplay policy knobs differ per engine.</b> Chromium:
+<code>--autoplay-policy=user-gesture-required</code> (strict) or
+<code>no-user-gesture-required</code> as launch args. Firefox: <code>firefoxUserPrefs</code>
+<code>{"media.autoplay.default" 1}</code> (block audible, allow muted; the shipped
+default), <code>0</code> allow all, <code>5</code> block all. WebKit: no launch-time knob in
+Playwright; its behaviour is recorded, not forced. The autoplay plan's
+branches are therefore deterministic in Chromium and Firefox and
+observed in WebKit.</li>
+<li><b>Network shaping</b> is Chromium-only: a CDP session gives
+<code>Network.emulateNetworkConditions</code>. The throttled journey runs in the
+Chromium project only.</li>
 <li><b>The page already measures everything.</b> <code>st</code> on the watch page
 (<code>src/cljs/goob_toob/watch.cljs:387-389</code>) holds <code>offset</code>, <code>mode</code>,
 <code>qcap</code>, <code>started</code>, <code>buffering</code>; <code>expected-now</code> (<code>watch.cljs:38-42</code>) and
@@ -153,53 +220,66 @@ exposed to a test.</li>
 <code>:playing?</code>; <code>client-drifts</code> (<code>sync.clj:93-96</code>) derives ages. There is
 no read endpoint.</li>
 <li><b>Upload and transcode are reachable over HTTP</b> (<code>routes.clj:102-114</code>)
-with the admin session; <code>make clip</code> shows the lavfi recipe for a
-synthetic clip. A 10 s 1280x720 clip transcodes to three rungs in a few
-seconds in the container.</li>
-<li><b>The join gesture.</b> Chrome toggles playback when a <code>&lt;video controls&gt;</code>
-surface is clicked, and a Playwright click is a real user activation.
-If headless Chrome does not toggle on surface click, focusing the
-element and pressing Space does the same with activation.</li>
+with the admin session; <code>make clip</code> shows the lavfi recipe. A 60 s
+1280x720 clip transcodes to three rungs in well under a minute in the
+container.</li>
+<li><b>shadow-cljs can emit what Playwright loads.</b> The <code>:esm</code> target with
+<code>:runtime :node</code> writes one ES module per <code>:modules</code> entry and supports
+<code>:exports {default ns/var}</code>, so the Playwright config, the global setup
+and every spec file can be ClojureScript. <code>@playwright/test</code> registers
+tests with top-level <code>test()</code> calls, which namespace top-level forms
+provide. core.async is already a dependency; <code>cljs.core.async.interop/&lt;p!</code>
+awaits promises inside <code>go</code>, and a <code>go</code> block converts to the Promise
+Playwright expects with one small wrapper.</li>
+<li><b>The join gesture.</b> Chromium toggles playback when a <code>&lt;video controls&gt;</code>
+surface is clicked, and a Playwright click is a real user activation;
+Firefox and WebKit may not toggle on surface click. Space on the
+focused element is the portable gesture.</li>
 <li><b>CI today</b> (<code>.github/workflows/ci.yml</code>): <code>test</code> (JVM + build smoke),
 <code>tag</code> (release on main), <code>plans</code> (Pages). The <code>test</code> job already installs
 Java, Clojure, Node and ffmpeg.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org658071f" class="outline-2">
-<h2 id="org658071f">Decisions</h2>
-<div class="outline-text-2" id="text-org658071f">
+<div id="outline-container-org01baeb7" class="outline-2">
+<h2 id="org01baeb7">Decisions</h2>
+<div class="outline-text-2" id="text-org01baeb7">
 <p>
 Each with the evidence; Nathan flips what he disagrees with.
 </p>
 <ul class="org-ul">
-<li><b>Specs are plain JavaScript (ESM) under <code>e2e/</code>.</b> The project is 100 %
-Clojure/CLJS and that rule stands for product code. <code>@playwright/test</code>
-is a runner with its own module discovery and top-level <code>test()</code>
-registration; driving it from shadow-cljs (<code>:npm-module</code> target, one
-compiled file per spec, a second build in the loop) buys nothing but a
-compile step for about 400 lines of harness. If this grates, the
-reversible path is a later shadow build that emits the same files.</li>
-<li><b>Chrome channel only.</b> See Findings. Firefox and Safari remain in the
-autoplay plan's manual matrix.</li>
+<li><b>Specs, config and setup are ClojureScript</b>, a second shadow-cljs build
+<code>:e2e</code> (<code>:target :esm :runtime :node</code>) under <code>e2e/src</code>, emitted into
+<code>e2e/out/</code>. The repo stays 100 % Clojure/CLJS. Cost: one build step
+before <code>playwright test</code>, which <code>make e2e</code> runs.</li>
+<li><b>Three engines, one suite.</b> Playwright projects <code>chromium</code>, <code>firefox</code>,
+<code>webkit</code>; every journey runs in all three except the throttled one
+(Chromium only, CDP). Measured above: all decode the ladder. The
+manual Firefox and Safari matrix in the autoplay plan shrinks to a
+real Safari spot check.</li>
+<li><b>The e2e image is Playwright's official image</b> plus Java, Clojure and
+ffmpeg, not Fedora plus browsers. The browsers and their system
+libraries are the hard part and Microsoft maintains that; Java and
+Clojure are two apt and curl lines. It is a separate image from the
+Fedora test image; <code>make test</code> is unchanged.</li>
 <li><b>One metrics probe in product code.</b> <code>watch.cljs</code> exposes a read-only
 <code>window.goobProbe()</code> returning the page's view (below). It is also a
 support tool: paste it in devtools on a user's machine. Cost: a few
-lines and an unreleased counter object.</li>
+lines and a counters object.</li>
 <li><b>One read endpoint on the admin API.</b> <code>GET /api/admin/rooms/:id/live</code>
 returns the live room: <code>:pos :t0 :playing :rate :now</code> and every client's
 <code>:nick :drift :age-ms :buffering :behind-ms</code>. Admin-only, loopback on
 desktop. The authority's own numbers are what the room acts on, so
 journeys assert on both the page and the server.</li>
-<li><b>Thresholds are data.</b> <code>e2e/thresholds.js</code> exports one object; specs
-import names from it; no numeric literal in a spec. Per-journey series
-go to <code>e2e/metrics/&lt;spec&gt;-&lt;title&gt;.json</code>; CI uploads them and prints a
-table to the job summary.</li>
+<li><b>Thresholds are data.</b> <code>goob-toob.e2e.thresholds</code> is one map; specs
+read names from it; no numeric literal in a spec. Per-journey series go
+to <code>e2e/metrics/&lt;engine&gt;-&lt;spec&gt;-&lt;title&gt;.json</code>; CI uploads them and
+prints a table to the job summary.</li>
 <li><b>Each journey makes its own room; the clip is shared.</b> Global setup
-logs in, generates the clip with ffmpeg, uploads it, waits for <code>ready</code>.
-Rooms are cheap and isolate state.</li>
-<li><b>Local loop is a container</b>, <code>container/Containerfile.e2e</code> on top of the
-test image, with <code>make e2e</code>. CI is the confirming run.</li>
+logs in, generates a 60 s clip with ffmpeg, uploads it, waits for
+<code>ready</code>. Rooms are cheap and isolate state.</li>
+<li><b>Local loop is the container</b>, <code>container/Containerfile.e2e</code>, with
+<code>make e2e-image</code> and <code>make e2e</code>. CI is the confirming run.</li>
 <li><b>Retire wiring tests after five green CI runs</b>, in a follow-up PR that
 this plan names (below). Not in the same PR: a journey that is flaky on
 the runner must not take a working test with it.</li>
@@ -209,17 +289,17 @@ recorded and printed for a few runs before any threshold is asserted.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgda29167" class="outline-2">
-<h2 id="orgda29167">Plan</h2>
-<div class="outline-text-2" id="text-orgda29167">
+<div id="outline-container-org72b67f9" class="outline-2">
+<h2 id="org72b67f9">Plan</h2>
+<div class="outline-text-2" id="text-org72b67f9">
 </div>
-<div id="outline-container-orgfda699f" class="outline-3">
-<h3 id="orgfda699f">1 · Probe and live endpoint (product code, small)</h3>
-<div class="outline-text-3" id="text-orgfda699f">
+<div id="outline-container-org05ed82a" class="outline-3">
+<h3 id="org05ed82a">1 · Probe and live endpoint (product code, small)</h3>
+<div class="outline-text-3" id="text-org05ed82a">
 </div>
-<div id="outline-container-org1cb4db9" class="outline-4">
-<h4 id="org1cb4db9"><code>src/cljs/goob_toob/watch.cljs</code></h4>
-<div class="outline-text-4" id="text-org1cb4db9">
+<div id="outline-container-org0505054" class="outline-4">
+<h4 id="org0505054"><code>src/cljs/goob_toob/watch.cljs</code></h4>
+<div class="outline-text-4" id="text-org0505054">
 <ul class="org-ul">
 <li><code>st</code> gains <code>"counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0 "rejected" 0 "capsteps" 0)</code>;
 increment at: <code>park!</code> and every <code>ourseek</code> write (<code>seeks</code>), <code>onwaiting</code>
@@ -252,9 +332,9 @@ else changes.
 </ul>
 </div>
 </div>
-<div id="outline-container-orgc811972" class="outline-4">
-<h4 id="orgc811972"><code>src/clj/goob_toob/routes.clj</code> and <code>sync.clj</code></h4>
-<div class="outline-text-4" id="text-orgc811972">
+<div id="outline-container-org95bdd4d" class="outline-4">
+<h4 id="org95bdd4d"><code>src/clj/goob_toob/routes.clj</code> and <code>sync.clj</code></h4>
+<div class="outline-text-4" id="text-org95bdd4d">
 <ul class="org-ul">
 <li><code>sync/live-view [room-id]</code> returns
 <code>{:pos :t0 :playing :rate :now :clients [{:nick :drift :age-ms :buffering :behind-ms}]}</code>
@@ -270,149 +350,221 @@ clients, one 4 s behind → drifts and <code>:behind-ms</code> as expected) and
 </div>
 </div>
 </div>
-<div id="outline-container-org5ceae39" class="outline-3">
-<h3 id="org5ceae39">2 · Harness: <code>e2e/</code></h3>
-<div class="outline-text-3" id="text-org5ceae39">
-<pre class="example" id="orged665e3">
+<div id="outline-container-orgb6b6c88" class="outline-3">
+<h3 id="orgb6b6c88">2 · Harness: <code>e2e/</code> in ClojureScript</h3>
+<div class="outline-text-3" id="text-orgb6b6c88">
+<pre class="example" id="org3d86a07">
 e2e/
-  package.json          @playwright/test only; "type": "module"
-  playwright.config.js  webServer, projects, reporter, globalSetup
-  global-setup.js       login, make clip, upload, wait ready -&gt; .fixture.json
-  thresholds.js         every number the specs assert against
-  lib/
-    api.js              login(), makeRoom(), setControl(), live(), probe helpers
-    party.js            host()/viewer() contexts, join(), play(), pause(), seek()
-    metrics.js          sample(page, ms, every), summarize(series), record(name, …)
-    net.js              throttle(page, kbps, latencyMs) via CDP
-  journeys/
-    01-host-and-viewer.spec.js
-    02-sync-policy.spec.js
-    03-control.spec.js
-    04-lobby-admin-chat.spec.js
-    05-resilience.spec.js
-  metrics/              output, gitignored
+  package.json                  @playwright/test only; "type": "module"
+  src/goob_toob/e2e/
+    config.cljs                 the Playwright config as data
+    setup.cljs                  global setup: login, clip, upload, wait ready
+    thresholds.cljs             every number the specs assert against
+    api.cljs                    login, make-room, set-control, live
+    party.cljs                  host/viewer contexts, join!, play!, pause!, seek!, inject!
+    metrics.cljs                sample, summarize, record
+    net.cljs                    throttle! via CDP (chromium only)
+    journey.cljs                defjourney macro: go block -&gt; Promise, engine-aware record
+    journeys/
+      host_and_viewer.cljs
+      sync_policy.cljs
+      control.cljs
+      lobby_admin_chat.cljs
+      resilience.cljs
+  out/                          shadow output, gitignored
+  metrics/ report/ test-results/ .fixture.json   gitignored
 </pre>
 </div>
-<div id="outline-container-orgdf40093" class="outline-4">
-<h4 id="orgdf40093"><code>playwright.config.js</code></h4>
-<div class="outline-text-4" id="text-orgdf40093">
+<div id="outline-container-orgfe55fa0" class="outline-4">
+<h4 id="orgfe55fa0"><code>shadow-cljs.edn</code>: the <code>:e2e</code> build</h4>
+<div class="outline-text-4" id="text-orgfe55fa0">
 <div class="org-src-container">
-<pre class="src src-javascript"><span class="org-keyword">import</span> <span class="org-rainbow-delimiters-depth-1">{</span> defineConfig <span class="org-rainbow-delimiters-depth-1">}</span> from <span class="org-string">'@playwright/test'</span>;
-<span class="org-keyword">const</span> <span class="org-variable-name">port</span> = process.env.GOOB_E2E_PORT || <span class="org-string">'18080'</span>;
-<span class="org-keyword">export</span> <span class="org-keyword">default</span> defineConfig<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-rainbow-delimiters-depth-2">{</span>
-  testDir: <span class="org-string">'./journeys'</span>,
-  timeout: 120_000,
-  fullyParallel: <span class="org-constant">false</span>,
-  workers: 1,
-  retries: process.env.CI ? 1 : 0,
-  reporter: <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span><span class="org-string">'list'</span><span class="org-rainbow-delimiters-depth-4">]</span>, <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-string">'html'</span>, <span class="org-rainbow-delimiters-depth-5">{</span> open: <span class="org-string">'never'</span>, outputFolder: <span class="org-string">'report'</span> <span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span>,
-  globalSetup: <span class="org-string">'./global-setup.js'</span>,
-  use: <span class="org-rainbow-delimiters-depth-3">{</span> baseURL: <span class="org-string">`http://127.0.0.1:${port}`</span>, channel: <span class="org-string">'chrome'</span>,
-         trace: <span class="org-string">'retain-on-failure'</span>, video: <span class="org-string">'retain-on-failure'</span> <span class="org-rainbow-delimiters-depth-3">}</span>,
-  projects: <span class="org-rainbow-delimiters-depth-3">[</span>
-    <span class="org-rainbow-delimiters-depth-4">{</span> name: <span class="org-string">'strict'</span>,  use: <span class="org-rainbow-delimiters-depth-5">{</span> launchOptions: <span class="org-rainbow-delimiters-depth-6">{</span> args: <span class="org-rainbow-delimiters-depth-7">[</span><span class="org-string">'--autoplay-policy=user-gesture-required'</span><span class="org-rainbow-delimiters-depth-7">]</span> <span class="org-rainbow-delimiters-depth-6">}</span> <span class="org-rainbow-delimiters-depth-5">}</span> <span class="org-rainbow-delimiters-depth-4">}</span>,
-  <span class="org-rainbow-delimiters-depth-3">]</span>,
-  webServer: <span class="org-rainbow-delimiters-depth-3">{</span>
-    command: <span class="org-string">'clojure -M:dev -m goob-toob.core'</span>,
-    cwd: <span class="org-string">'..'</span>,
-    url: <span class="org-string">`http://127.0.0.1:${port}/api/me`</span>,
-    env: <span class="org-rainbow-delimiters-depth-4">{</span> STORAGE_DIR: process.env.GOOB_E2E_STORAGE, ADMIN_PASSWORD: <span class="org-string">'pw'</span>, PORT: port <span class="org-rainbow-delimiters-depth-4">}</span>,
-    timeout: 120_000,
-    reuseExistingServer: !process.env.CI,
-  <span class="org-rainbow-delimiters-depth-3">}</span>,
-<span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>;
+<pre class="src src-clojure"><span class="org-clojure-keyword">:e2e</span> <span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:target</span>     <span class="org-clojure-keyword">:esm</span>
+      <span class="org-clojure-keyword">:runtime</span>    <span class="org-clojure-keyword">:node</span>
+      <span class="org-clojure-keyword">:output-dir</span> <span class="org-string">"e2e/out"</span>
+      <span class="org-clojure-keyword">:modules</span>    <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:config</span>  <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:exports</span> <span class="org-rainbow-delimiters-depth-4">{</span>default <span class="org-type">goob-toob.e2e.config</span>/config<span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:setup</span>   <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:exports</span> <span class="org-rainbow-delimiters-depth-4">{</span>default <span class="org-type">goob-toob.e2e.setup</span>/run<span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:host-and-viewer</span>  <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:entries</span> <span class="org-rainbow-delimiters-depth-4">[</span>goob-toob.e2e.journeys.host-and-viewer<span class="org-rainbow-delimiters-depth-4">]</span>  <span class="org-clojure-keyword">:depends-on</span> #<span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:config</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:sync-policy</span>      <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:entries</span> <span class="org-rainbow-delimiters-depth-4">[</span>goob-toob.e2e.journeys.sync-policy<span class="org-rainbow-delimiters-depth-4">]</span>      <span class="org-clojure-keyword">:depends-on</span> #<span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:config</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:control</span>          <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:entries</span> <span class="org-rainbow-delimiters-depth-4">[</span>goob-toob.e2e.journeys.control<span class="org-rainbow-delimiters-depth-4">]</span>          <span class="org-clojure-keyword">:depends-on</span> #<span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:config</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:lobby-admin-chat</span> <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:entries</span> <span class="org-rainbow-delimiters-depth-4">[</span>goob-toob.e2e.journeys.lobby-admin-chat<span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-clojure-keyword">:depends-on</span> #<span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:config</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span>
+                   <span class="org-clojure-keyword">:resilience</span>       <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:entries</span> <span class="org-rainbow-delimiters-depth-4">[</span>goob-toob.e2e.journeys.resilience<span class="org-rainbow-delimiters-depth-4">]</span>       <span class="org-clojure-keyword">:depends-on</span> #<span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:config</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">}</span>
+      <span class="org-clojure-keyword">:js-options</span> <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:js-provider</span> <span class="org-clojure-keyword">:import</span><span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">}</span>
 </pre>
 </div>
 <p>
-<code>GOOB_E2E_STORAGE</code> is created by <code>make e2e</code> / the CI step as a fresh temp
-dir. One project now; the autoplay plan adds <code>lenient</code> with
-<code>no-user-gesture-required</code>. <code>workers: 1</code> because journeys share one
-server and the sync metrics are timing-sensitive.
+<code>:source-paths</code> gains <code>"e2e/src"</code>. <code>:js-provider :import</code> keeps
+<code>@playwright/test</code> and <code>node:fs</code> as real imports resolved from
+<code>e2e/node_modules</code>. The implementer confirms the <code>default</code> export shape
+Playwright wants with <code>npx playwright test -c out/config.js --list</code>
+before writing a journey; if <code>:exports {default ...}</code> does not produce
+<code>export default</code>, the fallback is a one-line <code>e2e/playwright.config.js</code>
+that re-exports <code>out/config.js</code>, and that line is the only JavaScript in
+the repo.
 </p>
 </div>
 </div>
-<div id="outline-container-orgeb52ec4" class="outline-4">
-<h4 id="orgeb52ec4"><code>global-setup.js</code></h4>
-<div class="outline-text-4" id="text-orgeb52ec4">
+<div id="outline-container-org9a4a764" class="outline-4">
+<h4 id="org9a4a764"><code>config.cljs</code></h4>
+<div class="outline-text-4" id="text-org9a4a764">
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">ns</span> <span class="org-type">goob-toob.e2e.config</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-string">"@playwright/test"</span> <span class="org-clojure-keyword">:refer</span> <span class="org-rainbow-delimiters-depth-4">[</span>defineConfig devices<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">port</span> <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">..</span> <span class="org-type">js</span>/process -env -GOOB_E2E_PORT<span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-string">"18080"</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">ci?</span> <span class="org-rainbow-delimiters-depth-2">(</span>some? <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">..</span> <span class="org-type">js</span>/process -env -CI<span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">config</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>defineConfig
+    <span class="org-rainbow-delimiters-depth-3">(</span>clj-&gt;js
+     <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:testDir</span> <span class="org-string">"./out"</span>
+      <span class="org-clojure-keyword">:testMatch</span> #js <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-string">"**/*.js"</span><span class="org-rainbow-delimiters-depth-5">]</span>
+      <span class="org-clojure-keyword">:testIgnore</span> #js <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-string">"**/config.js"</span> <span class="org-string">"**/setup.js"</span> <span class="org-string">"**/shared/**"</span><span class="org-rainbow-delimiters-depth-5">]</span>
+      <span class="org-clojure-keyword">:timeout</span> 120000 <span class="org-clojure-keyword">:fullyParallel</span> <span class="org-constant">false</span> <span class="org-clojure-keyword">:workers</span> 1 <span class="org-clojure-keyword">:retries</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">if</span> ci? 1 0<span class="org-rainbow-delimiters-depth-5">)</span>
+      <span class="org-clojure-keyword">:reporter</span> <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-rainbow-delimiters-depth-6">[</span><span class="org-string">"list"</span><span class="org-rainbow-delimiters-depth-6">]</span> <span class="org-rainbow-delimiters-depth-6">[</span><span class="org-string">"html"</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:open</span> <span class="org-string">"never"</span> <span class="org-clojure-keyword">:outputFolder</span> <span class="org-string">"report"</span><span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">]</span><span class="org-rainbow-delimiters-depth-5">]</span>
+      <span class="org-clojure-keyword">:globalSetup</span> <span class="org-string">"./out/setup.js"</span>
+      <span class="org-clojure-keyword">:use</span> <span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:baseURL</span> <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"http://127.0.0.1:"</span> port<span class="org-rainbow-delimiters-depth-6">)</span>
+            <span class="org-clojure-keyword">:trace</span> <span class="org-string">"retain-on-failure"</span> <span class="org-clojure-keyword">:video</span> <span class="org-string">"retain-on-failure"</span><span class="org-rainbow-delimiters-depth-5">}</span>
+      <span class="org-clojure-keyword">:projects</span> <span class="org-rainbow-delimiters-depth-5">[</span><span class="org-rainbow-delimiters-depth-6">{</span><span class="org-clojure-keyword">:name</span> <span class="org-string">"chromium"</span> <span class="org-clojure-keyword">:use</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:browserName</span> <span class="org-string">"chromium"</span>
+                                         <span class="org-clojure-keyword">:launchOptions</span> <span class="org-rainbow-delimiters-depth-8">{</span><span class="org-clojure-keyword">:args</span> <span class="org-rainbow-delimiters-depth-9">[</span><span class="org-string">"--autoplay-policy=user-gesture-required"</span><span class="org-rainbow-delimiters-depth-9">]</span><span class="org-rainbow-delimiters-depth-8">}</span><span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">}</span>
+                 <span class="org-rainbow-delimiters-depth-6">{</span><span class="org-clojure-keyword">:name</span> <span class="org-string">"firefox"</span>  <span class="org-clojure-keyword">:use</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:browserName</span> <span class="org-string">"firefox"</span>
+                                         <span class="org-clojure-keyword">:launchOptions</span> <span class="org-rainbow-delimiters-depth-8">{</span><span class="org-clojure-keyword">:firefoxUserPrefs</span> <span class="org-rainbow-delimiters-depth-9">{</span><span class="org-string">"media.autoplay.default"</span> 1<span class="org-rainbow-delimiters-depth-9">}</span><span class="org-rainbow-delimiters-depth-8">}</span><span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">}</span>
+                 <span class="org-rainbow-delimiters-depth-6">{</span><span class="org-clojure-keyword">:name</span> <span class="org-string">"webkit"</span>   <span class="org-clojure-keyword">:use</span> <span class="org-rainbow-delimiters-depth-7">{</span><span class="org-clojure-keyword">:browserName</span> <span class="org-string">"webkit"</span><span class="org-rainbow-delimiters-depth-7">}</span><span class="org-rainbow-delimiters-depth-6">}</span><span class="org-rainbow-delimiters-depth-5">]</span>
+      <span class="org-clojure-keyword">:webServer</span> <span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:command</span> <span class="org-string">"clojure -M:dev -m goob-toob.core"</span>
+                  <span class="org-clojure-keyword">:cwd</span> <span class="org-string">".."</span> <span class="org-clojure-keyword">:url</span> <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"http://127.0.0.1:"</span> port <span class="org-string">"/api/me"</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                  <span class="org-clojure-keyword">:env</span> <span class="org-rainbow-delimiters-depth-6">{</span><span class="org-clojure-keyword">:STORAGE_DIR</span> <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">..</span> <span class="org-type">js</span>/process -env -GOOB_E2E_STORAGE<span class="org-rainbow-delimiters-depth-7">)</span>
+                        <span class="org-clojure-keyword">:ADMIN_PASSWORD</span> <span class="org-string">"pw"</span> <span class="org-clojure-keyword">:PORT</span> port<span class="org-rainbow-delimiters-depth-6">}</span>
+                  <span class="org-clojure-keyword">:timeout</span> 120000 <span class="org-clojure-keyword">:reuseExistingServer</span> <span class="org-rainbow-delimiters-depth-6">(</span>not ci?<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
 <p>
-Login with <code>request.newContext()</code> → <code>POST /api/login</code> → keep the
-<code>ring-session</code> cookie in <code>.fixture.json</code>; run
-<code>ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=12 -f lavfi -i sine=frequency=440:duration=12 -c:v libx264 -preset veryfast -c:a aac -shortest clip.mp4</code>
-in the storage dir; <code>POST /api/admin/upload</code> multipart; poll
-<code>/api/admin/videos</code> until the row is <code>ready</code> (60 s budget, fail with the
-row's <code>error</code> text otherwise); write <code>{cookie, videoId, duration}</code>.
+<code>GOOB_E2E_STORAGE</code> is a fresh temp dir made by <code>make e2e</code> / the CI step.
+The autoplay plan adds a <code>chromium-lenient</code> project with
+<code>no-user-gesture-required</code> and a <code>firefox-lenient</code> one with
+<code>media.autoplay.default 0</code>. <code>workers 1</code> because journeys share one server
+and the sync metrics are timing-sensitive. The shadow <code>:modules</code> names
+decide the file names under <code>out/</code>; the <code>testIgnore</code> keeps shadow's
+shared chunk and the config out of the test list (adjust to what shadow
+actually emits).
 </p>
 </div>
 </div>
-<div id="outline-container-orgd9aa39b" class="outline-4">
-<h4 id="orgd9aa39b"><code>lib/party.js</code></h4>
-<div class="outline-text-4" id="text-orgd9aa39b">
+<div id="outline-container-orgc5ed4e9" class="outline-4">
+<h4 id="orgc5ed4e9"><code>journey.cljs</code></h4>
+<div class="outline-text-4" id="text-orgc5ed4e9">
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">ns</span> <span class="org-type">goob-toob.e2e.journey</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require-macros</span> <span class="org-rainbow-delimiters-depth-3">[</span>goob-toob.e2e.journey<span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require</span> <span class="org-rainbow-delimiters-depth-3">[</span>cljs.core.async <span class="org-clojure-keyword">:as</span> a<span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">chan-&gt;promise</span> <span class="org-rainbow-delimiters-depth-2">[</span>ch<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-type">js</span>/Promise. <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-4">[</span>res rej<span class="org-rainbow-delimiters-depth-4">]</span>
+                 <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">a</span>/take! ch <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-6">[</span>v<span class="org-rainbow-delimiters-depth-6">]</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">if</span> <span class="org-rainbow-delimiters-depth-7">(</span>instance? <span class="org-type">js</span>/Error v<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-rainbow-delimiters-depth-7">(</span>rej v<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-rainbow-delimiters-depth-7">(</span>res v<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+with the macro (in <code>journey.clj</code>):
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defmacro</span> <span class="org-function-name">defjourney</span>
+  <span class="org-doc">"(defjourney \"title\" [{:keys [page browser] :as fx} info] body...)
+  Registers a Playwright test whose body runs in a go block; &lt;p! awaits
+  promises. A thrown error rejects the test."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>title <span class="org-rainbow-delimiters-depth-3">[</span>fx info<span class="org-rainbow-delimiters-depth-3">]</span> &amp; body<span class="org-rainbow-delimiters-depth-2">]</span>
+  `<span class="org-rainbow-delimiters-depth-2">(</span>~'test ~title
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-4">[</span>~fx ~info<span class="org-rainbow-delimiters-depth-4">]</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">goob-toob.e2e.journey</span>/chan-&gt;promise
+       <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">cljs.core.async</span>/go
+         <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">try</span> ~@body
+              <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">catch</span> <span class="org-clojure-keyword">:default</span> e# e#<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+Specs <code>(:require ["@playwright/test" :refer [test expect]] [cljs.core.async.interop :refer-macros [&lt;p!]])</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org740e9f5" class="outline-4">
+<h4 id="org740e9f5"><code>setup.cljs</code></h4>
+<div class="outline-text-4" id="text-org740e9f5">
+<p>
+<code>run</code> returns a Promise: <code>request.newContext()</code> → <code>POST /api/login</code> →
+keep the <code>ring-session</code> cookie; run
+<code>ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=60 -f lavfi -i sine=frequency=440:duration=60 -c:v libx264 -preset veryfast -c:a aac -shortest clip.mp4</code>
+via <code>node:child_process</code> in the storage dir; <code>POST /api/admin/upload</code>
+multipart; poll <code>/api/admin/videos</code> until the row is <code>ready</code> (120 s
+budget, fail with the row's <code>error</code> text otherwise); write
+<code>{:cookie :video-id :duration}</code> to <code>.fixture.json</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org3c4edf0" class="outline-4">
+<h4 id="org3c4edf0"><code>party.cljs</code></h4>
+<div class="outline-text-4" id="text-org3c4edf0">
 <ul class="org-ul">
-<li><code>host(browser)</code>: new context with the session cookie on <code>127.0.0.1</code>,
+<li><code>host</code> : new context with the session cookie on <code>127.0.0.1</code>,
 <code>localStorage goob-nick = "host"</code> via <code>addInitScript</code>, page at
 <code>/watch/&lt;token&gt;</code>; waits for the title to leave "joining the goo…".</li>
-<li><code>viewer(browser, nick)</code>: same without the cookie.</li>
-<li><code>join(page)</code>: <code>page.locator('video').click()</code>; if <code>goobProbe().started</code>
-is still false after 1 s, focus the video and press Space. Waits for
-<code>started</code>.</li>
-<li><code>play(page)</code> / <code>pause(page)</code> / <code>seek(page, s)</code>: the host row's buttons
-and range input (<code>page.getByRole('button', {name: /play/})</code> etc.).</li>
-<li><code>inject(page, deltaSeconds)</code>: <code>video.currentTime +</code> delta= in the page.</li>
+<li><code>viewer</code> : same without the cookie, nick given.</li>
+<li><code>join!</code> : focus the video and press Space; if <code>goobProbe().started</code> is
+still false after 1 s, click the video surface. Waits for <code>started</code>.</li>
+<li><code>play!</code> / <code>pause!</code> / <code>seek!</code> : the host row's buttons and range input
+via <code>getByRole</code>.</li>
+<li><code>inject!</code> : <code>video.currentTime +</code> delta= in the page.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org0cb53bf" class="outline-4">
-<h4 id="org0cb53bf"><code>lib/metrics.js</code></h4>
-<div class="outline-text-4" id="text-org0cb53bf">
+<div id="outline-container-org3a91dde" class="outline-4">
+<h4 id="org3a91dde"><code>metrics.cljs</code></h4>
+<div class="outline-text-4" id="text-org3a91dde">
 <ul class="org-ul">
-<li><code>sample(page, ms, every = 250)</code>: polls <code>goobProbe()</code> and returns the
-series.</li>
-<li><code>summarize(series, settleMs)</code>: <code>{driftAbsMax, driftAbsP95, driftFinal,
-  rateMin, rateMax, stalls, seeks, seekbacks, muted, startedAt}</code> with the
-drift stats computed only after <code>settleMs</code>.</li>
-<li><code>record(testInfo, name, summary, series)</code>: writes
-<code>metrics/&lt;file&gt;-&lt;title&gt;.json</code> and attaches the summary to the Playwright
-report; also appends a Markdown row to <code>metrics/summary.md</code>.</li>
-<li><code>liveSummary(api, roomId)</code>: the server's drifts per nick from the live
-endpoint.</li>
+<li><code>sample</code> : polls <code>goobProbe()</code> every 250 ms for a window; returns the
+series as maps.</li>
+<li><code>summarize</code> : <code>{:drift-abs-max :drift-abs-p95 :drift-final :rate-min
+  :rate-max :stalls :seeks :seekbacks :muted :started-at}</code> with the drift
+stats computed only after a settle period.</li>
+<li><code>record!</code> : writes <code>metrics/&lt;project&gt;-&lt;file&gt;-&lt;title&gt;.json</code> with series
+and summary, attaches the summary to the Playwright report, appends a
+Markdown row to <code>metrics/summary.md</code>.</li>
+<li><code>live</code> : the server's drifts per nick from the live endpoint.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orge4d04c3" class="outline-4">
-<h4 id="orge4d04c3"><code>thresholds.js</code> (initial values; tune from the first recorded runs)</h4>
-<div class="outline-text-4" id="text-orge4d04c3">
+<div id="outline-container-org53c4a8c" class="outline-4">
+<h4 id="org53c4a8c"><code>thresholds.cljs</code> (initial values; tune from the first recorded runs)</h4>
+<div class="outline-text-4" id="text-org53c4a8c">
 <div class="org-src-container">
-<pre class="src src-javascript"><span class="org-keyword">export</span> <span class="org-keyword">const</span> <span class="org-variable-name">T</span> = <span class="org-rainbow-delimiters-depth-1">{</span>
-  startWithin:      5_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms from click to started
-</span>  parkDrift:        1.0,    <span class="org-comment-delimiter">// </span><span class="org-comment">s, parked frame vs room before joining
-</span>  syncWithin:       8_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms until |drift| &lt; settled after joining
-</span>  settled:          0.5,    <span class="org-comment-delimiter">// </span><span class="org-comment">s
-</span>  steadyP95:        0.5,    <span class="org-comment-delimiter">// </span><span class="org-comment">s over the sampled window after settle
-</span>  pauseAgreement:   0.3,    <span class="org-comment-delimiter">// </span><span class="org-comment">s between two paused elements
-</span>  catchRate:        <span class="org-rainbow-delimiters-depth-2">[</span>1.04, 1.06<span class="org-rainbow-delimiters-depth-2">]</span>,
-  nudgeRate:        <span class="org-rainbow-delimiters-depth-2">[</span>0.94, 0.96<span class="org-rainbow-delimiters-depth-2">]</span>,
-  roomSlowRate:     0.97,
-  roomSlowWithin:   4_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms from laggard status to rate 0.97 at the server
-</span>  closingMin:       0.02,   <span class="org-comment-delimiter">// </span><span class="org-comment">s of drift recovered per s while catching up
-</span>  resyncWithin:    15_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms after the network returns
-</span>  chatWithin:       2_000,
-<span class="org-rainbow-delimiters-depth-1">}</span>;
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">T</span>
+  <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:start-within</span>     5000    <span class="org-comment">; ms from gesture to started
+</span>   <span class="org-clojure-keyword">:park-drift</span>       1.0     <span class="org-comment">; s, parked frame vs room before joining
+</span>   <span class="org-clojure-keyword">:sync-within</span>      8000    <span class="org-comment">; ms until |drift| &lt; :settled after joining
+</span>   <span class="org-clojure-keyword">:settled</span>          0.5     <span class="org-comment">; s
+</span>   <span class="org-clojure-keyword">:steady-p95</span>       0.5     <span class="org-comment">; s over the sampled window after settle
+</span>   <span class="org-clojure-keyword">:pause-agreement</span>  0.3     <span class="org-comment">; s between two paused elements
+</span>   <span class="org-clojure-keyword">:catch-rate</span>       <span class="org-rainbow-delimiters-depth-3">[</span>1.04 1.06<span class="org-rainbow-delimiters-depth-3">]</span>
+   <span class="org-clojure-keyword">:nudge-rate</span>       <span class="org-rainbow-delimiters-depth-3">[</span>0.94 0.96<span class="org-rainbow-delimiters-depth-3">]</span>
+   <span class="org-clojure-keyword">:room-slow-rate</span>   0.97
+   <span class="org-clojure-keyword">:room-slow-within</span> 4000    <span class="org-comment">; ms from laggard status to rate 0.97 at the server
+</span>   <span class="org-clojure-keyword">:closing-min</span>      0.02    <span class="org-comment">; s of drift recovered per s while catching up
+</span>   <span class="org-clojure-keyword">:resync-within</span>    15000   <span class="org-comment">; ms after the network returns
+</span>   <span class="org-clojure-keyword">:chat-within</span>      2000<span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div>
 </div>
 </div>
 </div>
-<div id="outline-container-orgf44dfe7" class="outline-3">
-<h3 id="orgf44dfe7">3 · Journeys</h3>
-<div class="outline-text-3" id="text-orgf44dfe7">
+<div id="outline-container-orgd3722c6" class="outline-3">
+<h3 id="orgd3722c6">3 · Journeys</h3>
+<div class="outline-text-3" id="text-orgd3722c6">
 <p>
-Each journey records its summary; the assertions column is what fails
-it. "server" means the live endpoint.
+Each journey records its summary per engine; the assertions column is
+what fails it. "server" means the live endpoint. Every journey runs in
+all three projects unless marked.
 </p>
 </div>
-<div id="outline-container-orga37dcef" class="outline-4">
-<h4 id="orga37dcef"><code>01-host-and-viewer.spec.js</code></h4>
-<div class="outline-text-4" id="text-orga37dcef">
+<div id="outline-container-org37e298c" class="outline-4">
+<h4 id="org37e298c"><code>host_and_viewer.cljs</code></h4>
+<div class="outline-text-4" id="text-org37e298c">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -434,27 +586,27 @@ it. "server" means the live endpoint.
 <tr>
 <td class="org-left"><code>host starts the party</code></td>
 <td class="org-left">host joins (gesture), play; sample 6 s</td>
-<td class="org-left"><code>started</code> within <code>startWithin</code>; <code>currentTime</code> advances ≥ 4 s in 6 s; server <code>playing</code> true; 0 stalls</td>
+<td class="org-left"><code>started</code> within <code>:start-within</code>; <code>currentTime</code> advances ≥ 4 s in 6 s; server <code>playing</code> true; 0 stalls</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>viewer joins a playing room in sync</code></td>
 <td class="org-left">host playing 5 s in; viewer opens page; wait for parked; join; sample 20 s</td>
-<td class="org-left">parked drift ≤ <code>parkDrift</code>; drift ≤ <code>settled</code> within <code>syncWithin</code>; <code>driftAbsP95</code> ≤ <code>steadyP95</code> after settle; server drift for the viewer ≤ <code>settled</code> at the end; seeks after join = 0; seekbacks = 0</td>
+<td class="org-left">parked drift ≤ <code>:park-drift</code>; drift ≤ <code>:settled</code> within <code>:sync-within</code>; <code>:drift-abs-p95</code> ≤ <code>:steady-p95</code> after settle; server drift for the viewer ≤ <code>:settled</code> at the end; seeks after join = 0; seekbacks = 0</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>pause, seek and resume agree</code></td>
 <td class="org-left">both playing; host pause; host seek +30 s; host play; sample 10 s</td>
-<td class="org-left">after pause both <code>paused</code>, <code>currentTime</code> within <code>pauseAgreement</code>; after seek both within <code>pauseAgreement</code> of the seek target; after play the viewer's <code>driftAbsP95</code> ≤ <code>steadyP95</code></td>
+<td class="org-left">after pause both <code>paused</code>, <code>currentTime</code> within <code>:pause-agreement</code>; after seek both within <code>:pause-agreement</code> of the seek target; after play the viewer's p95 ≤ <code>:steady-p95</code></td>
 </tr>
 </tbody>
 </table>
 </div>
 </div>
-<div id="outline-container-org81458a1" class="outline-4">
-<h4 id="org81458a1"><code>02-sync-policy.spec.js</code></h4>
-<div class="outline-text-4" id="text-org81458a1">
+<div id="outline-container-orge3f364f" class="outline-4">
+<h4 id="orge3f364f"><code>sync_policy.cljs</code></h4>
+<div class="outline-text-4" id="text-orge3f364f">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -475,24 +627,24 @@ it. "server" means the live endpoint.
 <tbody>
 <tr>
 <td class="org-left"><code>a laggard catches up without seeking</code></td>
-<td class="org-left">viewer synced; <code>inject(-3)</code>; sample 30 s</td>
-<td class="org-left">rate within <code>catchRate</code> within 2 s; seekbacks = 0 and seeks = 0 over the window; drift improves by ≥ <code>closingMin</code> × window seconds; server shows <code>rate 0.97</code> within <code>roomSlowWithin</code> (3 s behind is the enter threshold); host page's slow note names the viewer</td>
+<td class="org-left">viewer synced; <code>inject! -3</code>; sample 30 s</td>
+<td class="org-left">rate within <code>:catch-rate</code> within 2 s; seekbacks = 0 and seeks = 0 over the window; drift improves by ≥ <code>:closing-min</code> × window seconds; server shows <code>rate 0.97</code> within <code>:room-slow-within</code>; host page's slow note names the viewer</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>an early viewer is pulled back once</code></td>
-<td class="org-left"><code>inject(+3)</code>; sample 10 s</td>
-<td class="org-left">exactly one seekback; drift ≤ <code>settled</code> within 3 s; rate back within 0.01 of the room rate afterwards</td>
+<td class="org-left"><code>inject! +3</code>; sample 10 s</td>
+<td class="org-left">exactly one seekback; drift ≤ <code>:settled</code> within 3 s; rate back within 0.01 of the room rate afterwards</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>a slightly early viewer is nudged, not seeked</code></td>
-<td class="org-left"><code>inject(+1.0)</code>; sample 15 s</td>
-<td class="org-left">seekbacks = 0; rate within <code>nudgeRate</code> at some sample; drift ≤ <code>settled</code> by the end</td>
+<td class="org-left"><code>inject! +1.0</code>; sample 15 s</td>
+<td class="org-left">seekbacks = 0; rate within <code>:nudge-rate</code> at some sample; drift ≤ <code>:settled</code> by the end</td>
 </tr>
 
 <tr>
-<td class="org-left"><code>throttled viewer steps the quality down</code> (soft)</td>
+<td class="org-left"><code>throttled viewer steps the quality down</code> (chromium, soft)</td>
 <td class="org-left">CDP throttle to 1500 kbit/s before join; join; sample 40 s</td>
 <td class="org-left"><b>recorded only</b>: stalls, <code>qcap</code>, <code>capsteps</code>, drift p95, server <code>rate</code>. Asserted: the page is still playing at the end (<code>currentTime</code> advanced in the last 10 s)</td>
 </tr>
@@ -500,9 +652,9 @@ it. "server" means the live endpoint.
 </table>
 </div>
 </div>
-<div id="outline-container-org3983f9b" class="outline-4">
-<h4 id="org3983f9b"><code>03-control.spec.js</code></h4>
-<div class="outline-text-4" id="text-org3983f9b">
+<div id="outline-container-org578cae2" class="outline-4">
+<h4 id="org578cae2"><code>control.cljs</code></h4>
+<div class="outline-text-4" id="text-org578cae2">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -523,22 +675,16 @@ it. "server" means the live endpoint.
 <tbody>
 <tr>
 <td class="org-left"><code>a viewer cannot drive until the host allows it</code></td>
-<td class="org-left">viewer page: host row hidden; raw <code>new WebSocket(...)</code> from <code>page.evaluate</code> sends <code>cmd pause</code></td>
+<td class="org-left">viewer page: host row hidden; raw <code>js/WebSocket</code> from <code>page.evaluate</code> sends <code>cmd pause</code></td>
 <td class="org-left">server <code>playing</code> stays true for 2 s; then admin <code>PATCH allow-control true</code>; viewer reloads: host row visible, badge "co-hosting"; viewer pause → server <code>playing</code> false within 2 s, host's element paused</td>
-</tr>
-
-<tr>
-<td class="org-left"><code>the desktop admin port is always admin</code> (JVM already)</td>
-<td class="org-left">not a journey</td>
-<td class="org-left">&#xa0;</td>
 </tr>
 </tbody>
 </table>
 </div>
 </div>
-<div id="outline-container-orga5d827a" class="outline-4">
-<h4 id="orga5d827a"><code>04-lobby-admin-chat.spec.js</code></h4>
-<div class="outline-text-4" id="text-orga5d827a">
+<div id="outline-container-orgd709fb0" class="outline-4">
+<h4 id="orgd709fb0"><code>lobby_admin_chat.cljs</code></h4>
+<div class="outline-text-4" id="text-orgd709fb0">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -560,21 +706,21 @@ it. "server" means the live endpoint.
 <tr>
 <td class="org-left"><code>upload to lobby</code></td>
 <td class="org-left">admin page: upload a second clip via the file input; watch the library row</td>
-<td class="org-left">row goes <code>uploaded</code> → <code>transcoding</code> → <code>ready</code> within 60 s with the bar moving; lobby shows no card until a room exists; make room → lobby card with the title; delete room → card gone</td>
+<td class="org-left">row goes <code>uploaded</code> → <code>transcoding</code> → <code>ready</code> within 90 s with the bar moving; lobby shows no card until a room exists; make room → lobby card with the title; delete room → card gone</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>chat round trip</code></td>
 <td class="org-left">host and viewer; host sends; viewer scrolled up receives</td>
-<td class="org-left">viewer sees the bubble within <code>chatWithin</code> with the host's nick; the new-messages pill appears when scrolled up and clears on click</td>
+<td class="org-left">viewer sees the bubble within <code>:chat-within</code> with the host's nick; the new-messages pill appears when scrolled up and clears on click</td>
 </tr>
 </tbody>
 </table>
 </div>
 </div>
-<div id="outline-container-orgff03ef7" class="outline-4">
-<h4 id="orgff03ef7"><code>05-resilience.spec.js</code></h4>
-<div class="outline-text-4" id="text-orgff03ef7">
+<div id="outline-container-org3c6c086" class="outline-4">
+<h4 id="org3c6c086"><code>resilience.cljs</code></h4>
+<div class="outline-text-4" id="text-org3c6c086">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -596,69 +742,96 @@ it. "server" means the live endpoint.
 <tr>
 <td class="org-left"><code>a dropped socket resyncs</code></td>
 <td class="org-left">viewer synced; <code>context.setOffline(true)</code> 6 s; host seeks +20 s meanwhile; online</td>
-<td class="org-left">peers list on the host drops then regains the viewer; viewer drift ≤ <code>settled</code> within <code>resyncWithin</code>; no more than one seek after reconnect</td>
+<td class="org-left">peers list on the host drops then regains the viewer; viewer drift ≤ <code>:settled</code> within <code>:resync-within</code>; no more than one seek after reconnect</td>
 </tr>
 
 <tr>
 <td class="org-left"><code>a late joiner parks on the live frame</code></td>
 <td class="org-left">host 8 s in; viewer opens; sample 3 s before joining</td>
-<td class="org-left"><code>started</code> false; <code>paused</code> true; parked drift ≤ <code>parkDrift</code> on every sample (re-park tracks the room)</td>
+<td class="org-left"><code>started</code> false; <code>paused</code> true; parked drift ≤ <code>:park-drift</code> on every sample (re-park tracks the room)</td>
 </tr>
 </tbody>
 </table>
 <p>
-About a dozen journeys, under four minutes in the container.
+About a dozen journeys; three engines; target under ten minutes in the
+container, with the engines run as separate CI matrix legs so each is
+under four.
 </p>
 </div>
 </div>
 </div>
-<div id="outline-container-orgf6d6982" class="outline-3">
-<h3 id="orgf6d6982">4 · Container and Makefile</h3>
-<div class="outline-text-3" id="text-orgf6d6982">
+<div id="outline-container-orgb4021e5" class="outline-3">
+<h3 id="orgb4021e5">4 · Container and Makefile</h3>
+<div class="outline-text-3" id="text-orgb4021e5">
 <ul class="org-ul">
-<li><code>container/Containerfile.e2e</code>: <code>FROM localhost/goob-toob:latest</code>; add
-Google's rpm repo and <code>google-chrome-stable</code> plus the fonts it pulls;
-<code>COPY e2e/package*.json e2e/</code> and <code>npm ci</code> there. No Playwright browser
-download (<code>channel: chrome</code>).</li>
+<li><p>
+<code>container/Containerfile.e2e</code>:
+</p>
+<div class="org-src-container">
+<pre class="src src-dockerfile">FROM mcr.microsoft.com/playwright:v1.64.1-noble
+RUN apt-get update &amp;&amp; apt-get install -y --no-install-recommends ffmpeg openjdk-21-jdk-headless curl rlwrap \
+ &amp;&amp; rm -rf /var/lib/apt/lists/* \
+ &amp;&amp; curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | bash
+WORKDIR /app
+COPY deps.edn shadow-cljs.edn package.json package-lock.json ./
+COPY e2e/package.json e2e/package-lock.json e2e/
+RUN clojure -P -M:dev:test &amp;&amp; npm ci --no-audit --no-fund &amp;&amp; cd e2e &amp;&amp; npm ci --no-audit --no-fund
+</pre>
+</div>
+<p>
+The Playwright image pins Node and the three browsers to the same
+Playwright version as <code>e2e/package.json</code>; bumping one bumps both. Java
+21 from Ubuntu is enough for the server (the Fedora image uses 25;
+nothing in the code needs it).
+</p></li>
 <li><p>
 <code>Makefile</code>:
 </p>
 <div class="org-src-container">
-<pre class="src src-makefile"><span class="org-makefile-targets">e2e-image</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">build the e2e image (test image + Chrome + Playwright)
-</span>        podman build -f container/Containerfile.e2e -t $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span>-e2e .
-<span class="org-makefile-targets">e2e</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">run the Playwright journeys in the container (metrics in e2e/metrics)
+<pre class="src src-makefile"><span class="org-variable-name">E2E_IMAGE</span> := $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span>-e2e
+<span class="org-makefile-targets">e2e-image</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">build the e2e image (Playwright browsers + Java + Clojure + ffmpeg)
+</span>        podman build -f container/Containerfile.e2e -t $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">E2E_IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span> .
+<span class="org-makefile-targets">e2e</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">run the Playwright journeys in the container (metrics in e2e/metrics); E2E_ARGS="--project=firefox -g laggard"
 </span>        mkdir -p e2e/metrics
-        podman run --rm $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">MOUNTS</span><span class="org-rainbow-delimiters-depth-1">)</span> -e CI= -e GOOB_E2E_STORAGE=/tmp/e2e-storage $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span>-e2e \
-          sh -c <span class="org-string">"mkdir -p /tmp/e2e-storage &amp;&amp; npx shadow-cljs release client &amp;&amp; cd e2e &amp;&amp; npx playwright test $(</span><span class="org-string"><span class="org-variable-name">E2E_ARGS</span></span><span class="org-string">)"</span>
+        podman run --rm --ipc=host $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">MOUNTS</span><span class="org-rainbow-delimiters-depth-1">)</span> -e GOOB_E2E_STORAGE=/tmp/e2e-storage $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">E2E_IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span> \
+          sh -c <span class="org-string">"mkdir -p /tmp/e2e-storage &amp;&amp; npx shadow-cljs release client e2e &amp;&amp; cd e2e &amp;&amp; npx playwright test -c out/config.js $(</span><span class="org-string"><span class="org-variable-name">E2E_ARGS</span></span><span class="org-string">)"</span>
 </pre>
 </div>
 <p>
-<code>E2E_ARGS</code> passes <code>-g 'laggard'</code> or <code>--headed</code> through. The release
-build runs first so the journeys see the current client.
+<code>--ipc=host</code> is what Playwright's image documents for Chromium's shared
+memory. The release build of both <code>client</code> and <code>e2e</code> runs first so the
+journeys see the current client and the current specs.
 </p></li>
-<li><code>.gitignore</code>: <code>e2e/node_modules/</code>, <code>e2e/metrics/</code>, <code>e2e/report/</code>,
-<code>e2e/test-results/</code>, <code>e2e/.fixture.json</code>.</li>
+<li><code>.gitignore</code>: <code>e2e/node_modules/</code>, <code>e2e/out/</code>, <code>e2e/metrics/</code>,
+<code>e2e/report/</code>, <code>e2e/test-results/</code>, <code>e2e/.fixture.json</code>.</li>
+<li><code>e2e/README.org</code>: how to run one journey, one engine, and how to look
+at a trace (<code>npx playwright show-trace</code> on the host with the
+<code>test-results</code> dir mounted out).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org4f3cc73" class="outline-3">
-<h3 id="org4f3cc73">5 · CI job</h3>
-<div class="outline-text-3" id="text-org4f3cc73">
+<div id="outline-container-orgd707d4d" class="outline-3">
+<h3 id="orgd707d4d">5 · CI job</h3>
+<div class="outline-text-3" id="text-orgd707d4d">
 <p>
-New <code>e2e</code> job in <code>.github/workflows/ci.yml</code>, after <code>test</code>, same triggers:
-checkout, Java, Clojure, Node, ffmpeg (as <code>test</code>), <code>npm ci</code> at the root
-and in <code>e2e/</code>, <code>npx shadow-cljs release client</code>, then
-<code>cd e2e &amp;&amp; npx playwright test</code> with <code>GOOB_E2E_STORAGE=$RUNNER_TEMP/goob</code>
-and <code>CI=1</code>. Always upload <code>e2e/metrics</code> and <code>e2e/report</code> as artifacts;
-on failure also <code>e2e/test-results</code> (traces, videos). Last step appends
-<code>e2e/metrics/summary.md</code> to <code>$GITHUB_STEP_SUMMARY</code> so every run shows the
-metrics table on the Actions page. <code>tag</code> needs both <code>test</code> and <code>e2e</code>.
+New <code>e2e</code> job in <code>.github/workflows/ci.yml</code>, after <code>test</code>, same triggers,
+<code>strategy.matrix.project: [chromium, firefox, webkit]</code>, <code>fail-fast: false</code>.
+Simplest and identical to local: run the job inside the same image
+(<code>container: mcr.microsoft.com/playwright:v1.64.1-noble</code>), install
+ffmpeg, Java and Clojure with the same lines as the Containerfile, <code>npm ci</code>
+at the root and in <code>e2e/</code>, <code>npx shadow-cljs release client e2e</code>, then
+<code>cd e2e &amp;&amp; npx playwright test -c out/config.js --project=${{ matrix.project }}</code>
+with <code>GOOB_E2E_STORAGE=$RUNNER_TEMP/goob</code> and <code>CI=1</code>. Always upload
+<code>e2e/metrics</code> and <code>e2e/report</code> as artifacts named by project; on failure
+also <code>e2e/test-results</code> (traces, videos). Last step appends
+<code>e2e/metrics/summary.md</code> to <code>$GITHUB_STEP_SUMMARY</code>. <code>tag</code> needs <code>test</code>
+and all three <code>e2e</code> legs.
 </p>
 </div>
 </div>
-<div id="outline-container-org0c64829" class="outline-3">
-<h3 id="org0c64829">6 · Retirement list (follow-up PR, after five green CI runs)</h3>
-<div class="outline-text-3" id="text-org0c64829">
+<div id="outline-container-org175584a" class="outline-3">
+<h3 id="org175584a">6 · Retirement list (follow-up PR, after five green CI runs)</h3>
+<div class="outline-text-3" id="text-org175584a">
 <p>
 JVM tests whose only job is to pin wiring that a journey now exercises:
 </p>
@@ -714,32 +887,35 @@ green.
 </div>
 </div>
 </div>
-<div id="outline-container-orgf38dc8a" class="outline-2">
-<h2 id="orgf38dc8a">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgf38dc8a">
+<div id="outline-container-orgbedf817" class="outline-2">
+<h2 id="orgbedf817">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orgbedf817">
 <ul class="org-ul">
 <li><b>Timing on shared runners.</b> The sync journeys measure seconds of
-wall-clock behaviour. Mitigations: <code>workers: 1</code>, one retry in CI,
+wall-clock behaviour. Mitigations: <code>workers 1</code>, one retry in CI,
 summaries over windows with a settle period, thresholds tuned from
 recorded runs before being tightened, and the throttled journey kept
 soft. A journey that flakes twice gets its threshold loosened or its
 assertion moved to recorded-only, never a sleep.</li>
-<li><b>Headless Chrome and the click-to-play surface.</b> Fallback is Space on
-the focused element; both are activations. If neither toggles in
-headless, the host can start the room through its own play button
-(that path exists today) and viewers join through Space.</li>
-<li><b>H.264 decode in headless.</b> Branded Chrome decodes in software without
-a GPU; expect it to be fine at 720p. If the runner drops frames,
-<code>currentTime</code> still advances and the metrics hold; the clip can also
-be generated at 480p.</li>
-<li><b>Chrome in the Fedora image</b> adds about 300 MB and a Google repo. It is
-a separate image (<code>e2e-image</code>), so <code>make test</code> is unchanged.</li>
+<li><b>Three engines triple the timing surface.</b> The matrix runs them in
+parallel legs so wall time stays near one engine's; a journey that is
+solid in Chromium and flaky in one other engine is allowed a per-engine
+threshold entry in <code>T</code> rather than a skip.</li>
+<li><b>shadow <code>:esm</code> details.</b> The <code>default</code> export shape, the shared-chunk
+file name, and <code>:js-provider :import</code> resolving from <code>e2e/node_modules</code>
+are the three things to confirm with <code>--list</code> before writing journeys.
+The one-line re-export fallback is named above.</li>
+<li><b>Gestures in Firefox and WebKit.</b> Space on the focused element is the
+portable gesture; the surface click is the Chromium fallback. If a
+journey cannot start a viewer in one engine, that is a finding about the
+product (the join affordance), not a reason to skip.</li>
+<li><b>WebKit autoplay policy cannot be forced.</b> The autoplay plan's branches
+are asserted in Chromium and Firefox and recorded in WebKit.</li>
+<li><b>H.264 decode is software in all three engines.</b> 720p at 30 fps was
+fine in the probe; if a runner drops frames, <code>currentTime</code> still
+advances and the metrics hold. The clip can drop to 480p if needed.</li>
 <li><b>The probe is product code.</b> It is read-only and unlisted; it costs a
 closure. Counters are the only new state.</li>
-<li><b>Twelve seconds of clip</b> bounds every journey; the pause-and-seek
-journey seeks to +30 s on a 12 s clip, so make the clip 60 s (still a
-few seconds to transcode) or seek +5 s. Decide at implementation; the
-plan says 60 s.</li>
 <li><b><code>reuseExistingServer</code> locally</b> lets an already running <code>make dev</code>
 server be reused on <code>18080</code>; the storage dir must then match. The
 default <code>make e2e</code> path always starts its own.</li>
@@ -750,23 +926,22 @@ the console.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgc8b5126" class="outline-2">
-<h2 id="orgc8b5126">Verification</h2>
-<div class="outline-text-2" id="text-orgc8b5126">
+<div id="outline-container-orgf0c88e8" class="outline-2">
+<h2 id="orgf0c88e8">Verification</h2>
+<div class="outline-text-2" id="text-orgf0c88e8">
 <ol class="org-ol">
 <li><code>make test</code> still green (two new JVM tests for the live endpoint and
 view; assertion audit on both).</li>
-<li><code>make e2e-image &amp;&amp; make e2e</code>: all journeys pass three runs in a row;
-<code>e2e/metrics/summary.md</code> shows one row per journey with the numbers;
-<code>e2e/metrics/*.json</code> series exist. Report the table.</li>
+<li><code>make e2e-image &amp;&amp; make e2e</code>: all journeys pass in all three projects,
+three runs in a row; <code>e2e/metrics/summary.md</code> shows one row per
+journey per engine with the numbers; <code>e2e/metrics/*.json</code> series
+exist. Report the table.</li>
 <li>Break it on purpose once: set <code>:catch-rate</code> to 1.0 in <code>sync_core.cljc</code>,
-<code>make e2e -g laggard</code> fails on the closing-rate assertion and nothing
-else; restore.</li>
-<li><code>make e2e E2E_ARGS</code>"&#x2013;headed"= is not possible in the container; for a
-headed look, run <code>cd e2e &amp;&amp; npx playwright test --headed</code> on a machine
-with Chrome against <code>make dev</code> on <code>18080</code>. Document that in <code>e2e/README.org</code>.</li>
-<li>One CI run on the PR: the <code>e2e</code> job is green, the step summary shows
-the metrics table, the artifacts contain <code>metrics/</code> and <code>report/</code>.</li>
+<code>make e2e E2E_ARGS</code>"-g laggard"= fails on the closing-rate assertion
+in every engine and nothing else; restore.</li>
+<li>One CI run on the PR: all three <code>e2e</code> legs green, each step summary
+shows the metrics table, the artifacts contain <code>metrics/</code> and
+<code>report/</code> per project.</li>
 <li>Five green <code>main</code> runs later: open the retirement PR.</li>
 </ol>
 </div>
@@ -775,7 +950,7 @@ the metrics table, the artifacts contain <code>metrics/</code> and <code>report/
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-21</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-21 Wed 12:52</p>
+<p class="date">Created: 2026-10-21 Wed 13:33</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
