@@ -112,22 +112,24 @@
       (let [exit (-> (ProcessBuilder. ^java.util.List c) .inheritIO .start .waitFor)]
         (when-not (zero? exit)
           (log/info "transcode: could not lower ffmpeg priority (exit" exit ")"))))
-    (a/thread ; stderr -> ring buffer for error reporting
-      (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
+    (let [err-done (a/thread
+                     (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
+                       (loop []
+                         (when-let [line (.readLine r)]
+                           (.add err-lines line)
+                           (when (> (.size err-lines) 200) (.poll err-lines))
+                           (recur)))))]
+      (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream p)))]
         (loop []
           (when-let [line (.readLine r)]
-            (.add err-lines line)
-            (when (> (.size err-lines) 200) (.poll err-lines))
-            (recur)))))
-    (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream p)))]
-      (loop []
-        (when-let [line (.readLine r)]
-          (when-let [[_ us] (re-find #"out_time_ms=(\d+)" line)]
-            (let [secs (/ (Double/parseDouble us) 1e6)]
-              (videos/set-progress! video-id (min 0.99 (max 0.0 (/ secs dur))))))
-          (recur))))
-    {:exit (.waitFor p)
-     :stderr (str/join "\n" err-lines)}))
+            (when-let [[_ us] (re-find #"out_time_ms=(\d+)" line)]
+              (let [secs (/ (Double/parseDouble us) 1e6)]
+                (videos/set-progress! video-id (min 0.99 (max 0.0 (/ secs dur))))))
+            (recur))))
+      (let [exit (.waitFor p)]
+        (a/<!! err-done)
+        {:exit exit
+         :stderr (str/join "\n" err-lines)}))))
 
 (defn- process-job [video-id]
   (let [cfg (config/cfg)
