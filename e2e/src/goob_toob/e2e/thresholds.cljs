@@ -46,7 +46,7 @@
    :early-inject      3.0
    :early-window      10000
    :nudge-inject      1.0
-   :nudge-window      15000
+   :nudge-window      25000
    :throttle-kbps     1500
    :throttle-window   40000
    :still-window      10000
