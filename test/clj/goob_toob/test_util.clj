@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [goob-toob.config :as config]
             [goob-toob.db :as db]
+            [goob-toob.routes :as routes]
             [goob-toob.services.sync :as sync]))
 
 (defn tmp-dir []
@@ -19,6 +20,7 @@
     (db/init! (str dir "/test.db"))
     (reset! sync/rooms* {})
     (reset! sync/conns* {})
+    (reset! routes/login-attempts {})
     (f)
     (reset! sync/rooms* {})
     (reset! sync/conns* {})
