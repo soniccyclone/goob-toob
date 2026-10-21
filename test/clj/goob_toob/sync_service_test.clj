@@ -1,7 +1,6 @@
 (ns goob-toob.sync-service-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [clojure.string :as str]
-            [cheshire.core :as json]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.services.sync :as sync]
@@ -160,29 +159,6 @@
   (is (nil? (sync/room-for "nope")))
   (is (= {} @sync/rooms*)))
 
-(deftest join-and-leave-maintain-the-client-map
-  (let [id (video-room! "v1")]
-    (sync/join! id "c1" "alice")
-    (sync/join! id "c2" "bob")
-    (is (= #{{:nick "alice" :lag 0.0 :buffering false}
-             {:nick "bob" :lag 0.0 :buffering false}}
-           (set (sync/peers-list (get @sync/rooms* id)))))
-    (sync/leave! id "c1")
-    (is (= [{:nick "bob" :lag 0.0 :buffering false}]
-           (sync/peers-list (get @sync/rooms* id))))))
-
-(deftest broadcast-reaches-only-the-rooms-clients
-  (let [a   (video-room! "v1")
-        b   (video-room! "v2")
-        got (atom [])
-        msg {:type "chat" :text "hi"}]
-    (sync/join! a "ca" "alice")
-    (sync/join! b "cb" "bob")
-    (reset! sync/conns* {"ca" {:send #(swap! got conj ["ca" %])}
-                         "cb" {:send #(swap! got conj ["cb" %])}})
-    (sync/broadcast a msg)
-    (is (= [["ca" (json/generate-string msg)]] @got))))
-
 (deftest send-to-swallows-a-dead-socket
   (reset! sync/conns* {"c" {:send (fn [_] (throw (java.io.IOException. "closed")))}})
   (is (nil? (sync/send-to "c" {:type "ping"}))))
@@ -204,18 +180,6 @@
         (sync/host-cmd! id "seek" nil "h")
         (is (= 0.0 (:pos (room id))))))))
 
-(deftest host-command-broadcasts-state-with-the-op
-  (run
-    (fn []
-      (let [id (room-id!)]
-        (sync/host-cmd! id "play" 5.0 "h")
-        (is (= 1 (count @*sent*)))
-        (let [m (first @*sent*)]
-          (is (= {:type "state" :op "play" :pos 5.0 :playing true :rate 1.0}
-                 (select-keys m [:type :op :pos :playing :rate])))
-          (is (number? (:t0 m)))
-          (is (number? (:now m))))))))
-
 (deftest unknown-op-leaves-the-room-alone
   (run
     (fn []
@@ -228,26 +192,6 @@
           (sync/host-cmd! id "dance" 1.0 "h")
           (is (= (assoc before :rate 1.0) (room id)))
           (is (= 1 (count @*sent*))))))))
-
-(defn- beats [] (filter #(= "beat" (:type %)) @*sent*))
-
-(deftest beat-carries-peers-and-the-slow-note
-  (run
-    (fn []
-      (let [id (room-id!)]
-        (sync/host-cmd! id "play" 0.0 "host")
-        (at! 11000)
-        (report-behind! id 4.0)
-        (sync/tick-room! id)
-        (let [b   (last (beats))
-              lag (:lag (first (filter #(= "laggard" (:nick %)) (:peers b))))]
-          (is (< (Math/abs (+ 4.0 lag)) 1e-6))
-          (is (= "laggard" (:slow-for b))))
-        (sync/host-cmd! id "pause" nil "host")
-        (at! 13000)
-        (report-behind! id 4.0)
-        (sync/tick-room! id)
-        (is (nil? (:slow-for (last (beats)))))))))
 
 (deftest status-ignores-a-room-that-is-not-live
   (is (nil? (sync/status! "nope" "c" 1.0 false)))

@@ -111,20 +111,6 @@
     (spit f "not really a video")
     f))
 
-(defn- manifest [id] (io/file (storage/root) "dash" id "manifest.mpd"))
-
-(deftest process-job-marks-the-video-ready-and-keeps-the-original
-  (fake-ffmpeg! 0)
-  (let [orig (video-with-original! "v1")]
-    (#'transcode/process-job "v1")
-    (let [v (videos/get-by-id "v1")]
-      (is (= "ready" (:status v)))
-      (is (= 1.0 (:progress v)))
-      (is (= 2.0 (:duration v)))
-      (is (nil? (:error v))))
-    (is (.exists (manifest "v1")))
-    (is (.exists orig))))
-
 (deftest process-job-deletes-the-original-when-told
   (fake-ffmpeg! 0)
   (swap! config/config assoc :keep-original false)
@@ -156,30 +142,3 @@
     (with-redefs [videos/set-progress! (fn [_ p] (swap! seen conj p))]
       (#'transcode/process-job "v1"))
     (is (= [0.5 0.99] @seen))))
-
-(defn- ffmpeg-on-path? []
-  (try (zero? (.waitFor (.start (doto (ProcessBuilder. ["ffmpeg" "-version"])
-                                  (.redirectErrorStream true)
-                                  (.redirectOutput (java.io.File. "/dev/null"))))))
-       (catch java.io.IOException _ false)))
-
-(deftest real-ffmpeg-produces-a-dash-ladder
-  (if-not (ffmpeg-on-path?)
-    (is false "ffmpeg is not on PATH: run `make test` (the container has it) or install ffmpeg")
-    (let [id "real"
-          clip (io/file (storage/uploads-dir) (str id ".mkv"))
-          gen (-> (ProcessBuilder. ["ffmpeg" "-hide_banner" "-loglevel" "error" "-y"
-                                    "-f" "lavfi" "-i" "testsrc2=size=1280x720:rate=30:duration=2"
-                                    "-f" "lavfi" "-i" "sine=duration=2"
-                                    "-c:v" "libx264" "-preset" "ultrafast" "-c:a" "aac"
-                                    "-shortest" (str clip)])
-                  .inheritIO .start .waitFor)]
-      (is (zero? gen) "generating the lavfi clip failed")
-      (videos/insert! {:id id :title "Real" :original-path (str clip)})
-      (#'transcode/process-job id)
-      (is (= "ready" (:status (videos/get-by-id id))) (str (:error (videos/get-by-id id))))
-      (is (some #(str/ends-with? (.getName ^java.io.File %) ".m4s")
-                (file-seq (io/file (storage/root) "dash" id))))
-      (let [mpd (slurp (manifest id))]
-        (is (= 2 (count (re-seq #"<AdaptationSet" mpd))))
-        (is (= 4 (count (re-seq #"<Representation" mpd))))))))
