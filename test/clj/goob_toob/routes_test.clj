@@ -95,6 +95,20 @@
     (is (= 401 (:status resp)))
     (is (false? (:admin (:body (call app :get "/api/me" :cookie (session-cookie resp))))))))
 
+(deftest five-failed-logins-per-minute-then-429
+  (let [app (container-app)]
+    (dotimes [_ 5]
+      (is (= 401 (:status (call app :post "/api/login" :body {:password "no"})))))
+    (is (= 429 (:status (call app :post "/api/login" :body {:password "pw"}))))
+    (is (= 5 (count (get @routes/login-attempts "127.0.0.1"))))))
+
+(deftest login-attempts-expire-after-a-minute
+  (let [app   (container-app)
+        stale (- (System/currentTimeMillis) 61000)]
+    (reset! routes/login-attempts {"127.0.0.1" (vec (repeat 5 stale))})
+    (is (= 200 (:status (call app :post "/api/login" :body {:password "pw"}))))
+    (is (= [true] (map #(< stale %) (get @routes/login-attempts "127.0.0.1"))))))
+
 (deftest parse-range-forms
   (let [pr #(#'routes/parse-range % 1000)]
     (is (= [0 99] (pr "bytes=0-99")))

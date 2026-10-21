@@ -27,7 +27,7 @@
 
 (defn- allow-login? [ip]
   (let [now (System/currentTimeMillis)
-        recent (filter #(> (- now %) 60000) (get @login-attempts []))
+        recent (filterv #(< (- now %) 60000) (get @login-attempts ip []))
         ok? (< (count recent) 5)]
     (swap! login-attempts assoc ip (if ok? (conj recent now) recent))
     ok?))
