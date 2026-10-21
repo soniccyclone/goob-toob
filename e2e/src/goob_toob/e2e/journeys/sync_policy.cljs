@@ -47,11 +47,9 @@
     (<p! (m/record! info summary series extra))
     (-> (expect closing "drift recovered per second while catching up")
         (.toBeGreaterThanOrEqual (t browser-name :closing-min)))
-    (-> (expect catch-at "ms until the catch-up rate") (.not.toBeNull))
     (-> (expect catch-at "ms until the catch-up rate") (.toBeLessThanOrEqual (t browser-name :catch-within)))
     (-> (expect (:seekbacks summary) "seekbacks") (.toBe 0))
     (-> (expect (:seeks summary) "seeks") (.toBe 0))
-    (-> (expect slow-at "ms until the server slows the room") (.not.toBeNull))
     (-> (expect slow-at "ms until the server slows the room")
         (.toBeLessThanOrEqual (t browser-name :room-slow-within)))
     (-> (expect named? "host's slow note names the viewer") (.toBe true))))
@@ -70,7 +68,6 @@
     (<p! (m/record! info summary series {:back-at back-at :rate-gap rate-gap
                                          :drift-start (:drift (first series))}))
     (-> (expect (:seekbacks summary) "seekbacks") (.toBe (t browser-name :pullback-seekbacks)))
-    (-> (expect back-at "ms until settled") (.not.toBeNull))
     (-> (expect back-at "ms until settled") (.toBeLessThanOrEqual (t browser-name :pullback-within)))
     (-> (expect rate-gap "rate vs room rate at the end") (.toBeLessThanOrEqual (t browser-name :rate-agreement)))))
 

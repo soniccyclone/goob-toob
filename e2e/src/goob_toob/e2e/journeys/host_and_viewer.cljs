@@ -49,7 +49,6 @@
                     (assoc joined :parked-drift parked-drift :first-park-drift (:drift first-park)
                            :live-ms live-ms :sync-at sync-at :server-drift server-drift)))
     (-> (expect parked-drift "parked drift") (.toBeLessThanOrEqual (t browser-name :park-drift)))
-    (-> (expect sync-at "ms from join to settled") (.not.toBeNull))
     (-> (expect sync-at "ms from join to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))
     (-> (expect (:drift-abs-p95 summary) "drift p95 after settle")
         (.toBeLessThanOrEqual (t browser-name :steady-p95)))
