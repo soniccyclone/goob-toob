@@ -2,6 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-21
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: approved 2026-10-21.
 
 * Goal
 When a viewer opens a room link and the host is already playing, the video
