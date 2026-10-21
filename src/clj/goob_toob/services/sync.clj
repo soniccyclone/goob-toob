@@ -93,7 +93,14 @@
 (defn client-drifts [room now]
   (for [[_ c] (:clients room)]
     {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))
+     :buffering (boolean (:buffering c))
      :behind-ms (if-let [t (:behind-since c)] (- now t) 0)}))
+
+(defn live-view [room-id]
+  (when-let [room (get @rooms* room-id)]
+    (let [now (mono-ms)]
+      {:pos (:pos room) :t0 (:t0 room) :playing (:playing? room) :rate (:rate room)
+       :now now :clients (vec (client-drifts room now))})))
 
 (defn tick-room! [room-id]
   (let [now (mono-ms)
