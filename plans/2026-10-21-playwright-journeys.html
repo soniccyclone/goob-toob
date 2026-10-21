@@ -1,0 +1,782 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-21 Wed 12:52 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Playwright journeys: the critical paths through a real browser, judged by metrics</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Playwright journeys: the critical paths through a real browser, judged by metrics</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org779776f">Goal</a></li>
+<li><a href="#orgc42f210">The thesis, and where it holds</a></li>
+<li><a href="#org897366e">Findings</a></li>
+<li><a href="#org658071f">Decisions</a></li>
+<li><a href="#orgda29167">Plan</a>
+<ul>
+<li><a href="#orgfda699f">1 · Probe and live endpoint (product code, small)</a></li>
+<li><a href="#org5ceae39">2 · Harness: <code>e2e/</code></a></li>
+<li><a href="#orgf44dfe7">3 · Journeys</a></li>
+<li><a href="#orgf6d6982">4 · Container and Makefile</a></li>
+<li><a href="#org4f3cc73">5 · CI job</a></li>
+<li><a href="#org0c64829">6 · Retirement list (follow-up PR, after five green CI runs)</a></li>
+</ul>
+</li>
+<li><a href="#orgf38dc8a">Risks and open questions</a></li>
+<li><a href="#orgc8b5126">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org779776f" class="outline-2">
+<h2 id="org779776f">Goal</h2>
+<div class="outline-text-2" id="text-org779776f">
+<p>
+A small suite of end-to-end tests drives goob-toob the way a party does:
+real Chrome, real dash.js, real H.264 segments from the real transcode,
+real websockets, two or three browser contexts in one room. Each journey
+samples a metrics probe on the page and the server's own view of the room,
+and asserts summaries of those series (drift after settle, seeks, stalls,
+rate bounds, time to sync) against one thresholds table. The suite runs
+locally in a container (<code>make e2e</code>) and as its own CI job, and writes a
+metrics table into the job summary so a run says more than pass or fail.
+Once it is green in CI, the JVM suite shrinks to what a browser cannot
+reach: pure math, adversarial protocol input, migrations, and failure
+modes. This plan comes before autoplay and playlists; both then add
+journeys here instead of manual verification lists.
+</p>
+</div>
+</div>
+<div id="outline-container-orgc42f210" class="outline-2">
+<h2 id="orgc42f210">The thesis, and where it holds</h2>
+<div class="outline-text-2" id="text-orgc42f210">
+<p>
+Nathan's framing: most of the truly valuable tests of this repository
+could be a small set of Playwright journeys asserting on metrics, with
+more granularity than pass/fail and none of the drift of unit tests that
+pin implementation. Taking that seriously:
+</p>
+
+<ul class="org-ul">
+<li><b>It holds for everything user-facing.</b> The product is "watch in sync".
+Its value is measurable: drift, stalls, seeks, catch-up rate, time to
+join. Those are properties of the whole system (server clock, websocket,
+dash.js buffering, the element's <code>playbackRate</code>, Chrome's autoplay
+policy) and no JVM test touches more than one of them. The lockdown's
+HTTP and websocket wiring tests prove the server speaks the protocol;
+a journey proves the party works. When both exist, the wiring tests are
+the ones that break on harmless refactors.</li>
+<li><b>It does not hold for three kinds of test, which stay on the JVM.</b>
+<ol class="org-ol">
+<li>Pure logic with many branches (<code>policy</code>, <code>room-rate</code>, <code>quality-cap</code>,
+<code>ladder-for</code>, <code>parse-range</code>). A journey samples them under one real
+condition with wide tolerances; a table test covers every branch in
+milliseconds. This is the one place unit tests are the right tool,
+and <code>cljc</code> was built for it.</li>
+<li>Adversarial and security input: a viewer sending <code>cmd</code> without
+control, a string <code>pos</code>, a non-object frame, path traversal, the
+login limiter, the two-port split. A browser journey can reach some
+of these through <code>page.evaluate</code> and a raw <code>WebSocket</code>, but they are
+protocol tests wearing a costume. Keep them where they are cheap and
+exact.</li>
+<li>Time and failure: the 180 s give-up window, a crashed transcode's
+error text, a missing original, migrations on an old database. Not
+affordable or not reachable from a browser.</li>
+</ol></li>
+<li><b>Metrics are the right assertion language for a sync product</b>, with one
+discipline: thresholds live in one data file, assertions are on
+summaries over a window (p95, max after settle, counts), never on a
+single sample, and every journey writes its series to disk so a
+regression shows as a number moving before it shows as a failure.</li>
+</ul>
+
+<p>
+Verdict: build the journeys, then retire the JVM tests that only pin
+wiring (list in Decisions). The suite that remains is about 85 JVM tests
+of logic and hostility plus about a dozen journeys of value.
+</p>
+</div>
+</div>
+<div id="outline-container-org897366e" class="outline-2">
+<h2 id="org897366e">Findings</h2>
+<div class="outline-text-2" id="text-org897366e">
+<ul class="org-ul">
+<li><b>Nothing browser-driven exists.</b> <code>test/</code> is Clojure only; <code>package.json</code>
+has dash.js alone; no Chrome on the host. Every plan's browser
+verification so far was manual in two tabs.</li>
+<li><b>Playwright's bundled Chromium cannot play our video.</b> Open-source
+Chromium ships without H.264 or AAC; the ladder is libx264 and AAC
+(<code>src/clj/goob_toob/services/transcode.clj:87-93</code>). Playwright supports
+the <code>chrome</code> channel (branded Google Chrome, all codecs). GitHub's
+<code>ubuntu-latest</code> image has Google Chrome preinstalled; the Fedora test
+image needs Google's rpm repo. Firefox and Safari stay manual.</li>
+<li><b>Autoplay policy is a launch flag.</b> Chrome's
+<code>--autoplay-policy=user-gesture-required</code> (strict, the real-world
+default) and <code>no-user-gesture-required</code> make the autoplay plan's three
+branches deterministic per Playwright project. Nothing in the suite
+depends on Chrome's own history heuristics.</li>
+<li><b>Network shaping is available.</b> Playwright has no throttle API, but on
+Chrome a CDP session gives <code>Network.emulateNetworkConditions</code>
+(throughput, latency), enough to make a laggard and trigger the quality
+cap.</li>
+<li><b>The page already measures everything.</b> <code>st</code> on the watch page
+(<code>src/cljs/goob_toob/watch.cljs:387-389</code>) holds <code>offset</code>, <code>mode</code>,
+<code>qcap</code>, <code>started</code>, <code>buffering</code>; <code>expected-now</code> (<code>watch.cljs:38-42</code>) and
+<code>buffer-ahead</code> (<code>watch.cljs:55-60</code>) compute the rest. The <code>clientlog</code>
+path (<code>routes.clj:140-145</code>) already ships <code>:seek-back</code>, <code>:stalled</code>,
+<code>:quality-cap</code>, <code>:started</code> events to the server log. Nothing is
+exposed to a test.</li>
+<li><b>The server already measures every client.</b> <code>rooms*</code>
+(<code>src/clj/goob_toob/services/sync.clj:12</code>) holds per-client <code>:drift</code>,
+<code>:at</code>, <code>:buffering</code>, <code>:behind-since</code> and the room's <code>:rate</code>,
+<code>:playing?</code>; <code>client-drifts</code> (<code>sync.clj:93-96</code>) derives ages. There is
+no read endpoint.</li>
+<li><b>Upload and transcode are reachable over HTTP</b> (<code>routes.clj:102-114</code>)
+with the admin session; <code>make clip</code> shows the lavfi recipe for a
+synthetic clip. A 10 s 1280x720 clip transcodes to three rungs in a few
+seconds in the container.</li>
+<li><b>The join gesture.</b> Chrome toggles playback when a <code>&lt;video controls&gt;</code>
+surface is clicked, and a Playwright click is a real user activation.
+If headless Chrome does not toggle on surface click, focusing the
+element and pressing Space does the same with activation.</li>
+<li><b>CI today</b> (<code>.github/workflows/ci.yml</code>): <code>test</code> (JVM + build smoke),
+<code>tag</code> (release on main), <code>plans</code> (Pages). The <code>test</code> job already installs
+Java, Clojure, Node and ffmpeg.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org658071f" class="outline-2">
+<h2 id="org658071f">Decisions</h2>
+<div class="outline-text-2" id="text-org658071f">
+<p>
+Each with the evidence; Nathan flips what he disagrees with.
+</p>
+<ul class="org-ul">
+<li><b>Specs are plain JavaScript (ESM) under <code>e2e/</code>.</b> The project is 100 %
+Clojure/CLJS and that rule stands for product code. <code>@playwright/test</code>
+is a runner with its own module discovery and top-level <code>test()</code>
+registration; driving it from shadow-cljs (<code>:npm-module</code> target, one
+compiled file per spec, a second build in the loop) buys nothing but a
+compile step for about 400 lines of harness. If this grates, the
+reversible path is a later shadow build that emits the same files.</li>
+<li><b>Chrome channel only.</b> See Findings. Firefox and Safari remain in the
+autoplay plan's manual matrix.</li>
+<li><b>One metrics probe in product code.</b> <code>watch.cljs</code> exposes a read-only
+<code>window.goobProbe()</code> returning the page's view (below). It is also a
+support tool: paste it in devtools on a user's machine. Cost: a few
+lines and an unreleased counter object.</li>
+<li><b>One read endpoint on the admin API.</b> <code>GET /api/admin/rooms/:id/live</code>
+returns the live room: <code>:pos :t0 :playing :rate :now</code> and every client's
+<code>:nick :drift :age-ms :buffering :behind-ms</code>. Admin-only, loopback on
+desktop. The authority's own numbers are what the room acts on, so
+journeys assert on both the page and the server.</li>
+<li><b>Thresholds are data.</b> <code>e2e/thresholds.js</code> exports one object; specs
+import names from it; no numeric literal in a spec. Per-journey series
+go to <code>e2e/metrics/&lt;spec&gt;-&lt;title&gt;.json</code>; CI uploads them and prints a
+table to the job summary.</li>
+<li><b>Each journey makes its own room; the clip is shared.</b> Global setup
+logs in, generates the clip with ffmpeg, uploads it, waits for <code>ready</code>.
+Rooms are cheap and isolate state.</li>
+<li><b>Local loop is a container</b>, <code>container/Containerfile.e2e</code> on top of the
+test image, with <code>make e2e</code>. CI is the confirming run.</li>
+<li><b>Retire wiring tests after five green CI runs</b>, in a follow-up PR that
+this plan names (below). Not in the same PR: a journey that is flaky on
+the runner must not take a working test with it.</li>
+<li><b>Soft metrics first for the throttled journey.</b> Bandwidth shaping on a
+shared runner is the least deterministic thing here; its numbers are
+recorded and printed for a few runs before any threshold is asserted.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgda29167" class="outline-2">
+<h2 id="orgda29167">Plan</h2>
+<div class="outline-text-2" id="text-orgda29167">
+</div>
+<div id="outline-container-orgfda699f" class="outline-3">
+<h3 id="orgfda699f">1 · Probe and live endpoint (product code, small)</h3>
+<div class="outline-text-3" id="text-orgfda699f">
+</div>
+<div id="outline-container-org1cb4db9" class="outline-4">
+<h4 id="org1cb4db9"><code>src/cljs/goob_toob/watch.cljs</code></h4>
+<div class="outline-text-4" id="text-org1cb4db9">
+<ul class="org-ul">
+<li><code>st</code> gains <code>"counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0 "rejected" 0 "capsteps" 0)</code>;
+increment at: <code>park!</code> and every <code>ourseek</code> write (<code>seeks</code>), <code>onwaiting</code>
+(<code>stalls</code>), the <code>:seek-back</code> branch (<code>seekbacks</code>), <code>:play-rejected</code>
+(<code>rejected</code>), a cap change in <code>quality-event!</code> (<code>capsteps</code>).</li>
+<li><p>
+In <code>page</code>, after <code>st</code> exists:
+</p>
+<div class="org-src-container">
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-2">(</span>.-goobProbe <span class="org-type">js</span>/window<span class="org-rainbow-delimiters-depth-2">)</span>
+      <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">fn</span> <span class="org-rainbow-delimiters-depth-3">[]</span>
+        <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-4">[</span>room <span class="org-rainbow-delimiters-depth-5">(</span>.-room st<span class="org-rainbow-delimiters-depth-5">)</span> v <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">ui</span>/$ <span class="org-string">"video"</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">]</span>
+          <span class="org-rainbow-delimiters-depth-4">(</span>clj-&gt;js <span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:t</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">ui</span>/perf-now<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:currentTime</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">some-&gt;</span> v .-currentTime<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:expected</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">when</span> room <span class="org-rainbow-delimiters-depth-7">(</span>expected-now st room<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:drift</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">and</span> room v<span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-type">sc</span>/drift <span class="org-rainbow-delimiters-depth-8">(</span>.-currentTime v<span class="org-rainbow-delimiters-depth-8">)</span> <span class="org-rainbow-delimiters-depth-8">(</span>expected-now st room<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:rate</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">some-&gt;</span> v .-playbackRate<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:roomRate</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:rate</span> room<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:playing</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:playing</span> room<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:paused</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">some-&gt;</span> v .-paused<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:muted</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">some-&gt;</span> v .-muted<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:started</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-started st<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:mode</span> <span class="org-rainbow-delimiters-depth-6">(</span>name <span class="org-rainbow-delimiters-depth-7">(</span>.-mode st<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:buffering</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-buffering st<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:bufferAhead</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">when</span> v <span class="org-rainbow-delimiters-depth-7">(</span>buffer-ahead v<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:qcap</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:cap</span> <span class="org-rainbow-delimiters-depth-7">(</span>.-qcap st<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:offset</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-offset st<span class="org-rainbow-delimiters-depth-6">)</span>
+                    <span class="org-clojure-keyword">:counters</span> <span class="org-rainbow-delimiters-depth-6">(</span>js-&gt;clj <span class="org-rainbow-delimiters-depth-7">(</span>.-counters st<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
+</pre>
+</div>
+<p>
+<code>expected-now</code> and <code>buffer-ahead</code> move above <code>page</code> if needed; nothing
+else changes.
+</p></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgc811972" class="outline-4">
+<h4 id="orgc811972"><code>src/clj/goob_toob/routes.clj</code> and <code>sync.clj</code></h4>
+<div class="outline-text-4" id="text-orgc811972">
+<ul class="org-ul">
+<li><code>sync/live-view [room-id]</code> returns
+<code>{:pos :t0 :playing :rate :now :clients [{:nick :drift :age-ms :buffering :behind-ms}]}</code>
+from <code>rooms*</code> via <code>client-drifts</code> (now needs <code>:nick</code> and <code>:buffering</code>
+in the derived map: add them). nil for an unknown room.</li>
+<li>Route <code>["/rooms/:id/live" {:get room-live}]</code> in the admin group: 200
+with the map, 404 when nil.</li>
+<li>JVM tests: <code>live-view-reports-every-client</code> (sync_service_test: two
+clients, one 4 s behind → drifts and <code>:behind-ms</code> as expected) and
+<code>room-live-is-admin-only</code> (routes_test: 401 without session, 200 with,
+404 unknown room).</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-org5ceae39" class="outline-3">
+<h3 id="org5ceae39">2 · Harness: <code>e2e/</code></h3>
+<div class="outline-text-3" id="text-org5ceae39">
+<pre class="example" id="orged665e3">
+e2e/
+  package.json          @playwright/test only; "type": "module"
+  playwright.config.js  webServer, projects, reporter, globalSetup
+  global-setup.js       login, make clip, upload, wait ready -&gt; .fixture.json
+  thresholds.js         every number the specs assert against
+  lib/
+    api.js              login(), makeRoom(), setControl(), live(), probe helpers
+    party.js            host()/viewer() contexts, join(), play(), pause(), seek()
+    metrics.js          sample(page, ms, every), summarize(series), record(name, …)
+    net.js              throttle(page, kbps, latencyMs) via CDP
+  journeys/
+    01-host-and-viewer.spec.js
+    02-sync-policy.spec.js
+    03-control.spec.js
+    04-lobby-admin-chat.spec.js
+    05-resilience.spec.js
+  metrics/              output, gitignored
+</pre>
+</div>
+<div id="outline-container-orgdf40093" class="outline-4">
+<h4 id="orgdf40093"><code>playwright.config.js</code></h4>
+<div class="outline-text-4" id="text-orgdf40093">
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">import</span> <span class="org-rainbow-delimiters-depth-1">{</span> defineConfig <span class="org-rainbow-delimiters-depth-1">}</span> from <span class="org-string">'@playwright/test'</span>;
+<span class="org-keyword">const</span> <span class="org-variable-name">port</span> = process.env.GOOB_E2E_PORT || <span class="org-string">'18080'</span>;
+<span class="org-keyword">export</span> <span class="org-keyword">default</span> defineConfig<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-rainbow-delimiters-depth-2">{</span>
+  testDir: <span class="org-string">'./journeys'</span>,
+  timeout: 120_000,
+  fullyParallel: <span class="org-constant">false</span>,
+  workers: 1,
+  retries: process.env.CI ? 1 : 0,
+  reporter: <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span><span class="org-string">'list'</span><span class="org-rainbow-delimiters-depth-4">]</span>, <span class="org-rainbow-delimiters-depth-4">[</span><span class="org-string">'html'</span>, <span class="org-rainbow-delimiters-depth-5">{</span> open: <span class="org-string">'never'</span>, outputFolder: <span class="org-string">'report'</span> <span class="org-rainbow-delimiters-depth-5">}</span><span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span>,
+  globalSetup: <span class="org-string">'./global-setup.js'</span>,
+  use: <span class="org-rainbow-delimiters-depth-3">{</span> baseURL: <span class="org-string">`http://127.0.0.1:${port}`</span>, channel: <span class="org-string">'chrome'</span>,
+         trace: <span class="org-string">'retain-on-failure'</span>, video: <span class="org-string">'retain-on-failure'</span> <span class="org-rainbow-delimiters-depth-3">}</span>,
+  projects: <span class="org-rainbow-delimiters-depth-3">[</span>
+    <span class="org-rainbow-delimiters-depth-4">{</span> name: <span class="org-string">'strict'</span>,  use: <span class="org-rainbow-delimiters-depth-5">{</span> launchOptions: <span class="org-rainbow-delimiters-depth-6">{</span> args: <span class="org-rainbow-delimiters-depth-7">[</span><span class="org-string">'--autoplay-policy=user-gesture-required'</span><span class="org-rainbow-delimiters-depth-7">]</span> <span class="org-rainbow-delimiters-depth-6">}</span> <span class="org-rainbow-delimiters-depth-5">}</span> <span class="org-rainbow-delimiters-depth-4">}</span>,
+  <span class="org-rainbow-delimiters-depth-3">]</span>,
+  webServer: <span class="org-rainbow-delimiters-depth-3">{</span>
+    command: <span class="org-string">'clojure -M:dev -m goob-toob.core'</span>,
+    cwd: <span class="org-string">'..'</span>,
+    url: <span class="org-string">`http://127.0.0.1:${port}/api/me`</span>,
+    env: <span class="org-rainbow-delimiters-depth-4">{</span> STORAGE_DIR: process.env.GOOB_E2E_STORAGE, ADMIN_PASSWORD: <span class="org-string">'pw'</span>, PORT: port <span class="org-rainbow-delimiters-depth-4">}</span>,
+    timeout: 120_000,
+    reuseExistingServer: !process.env.CI,
+  <span class="org-rainbow-delimiters-depth-3">}</span>,
+<span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span>;
+</pre>
+</div>
+<p>
+<code>GOOB_E2E_STORAGE</code> is created by <code>make e2e</code> / the CI step as a fresh temp
+dir. One project now; the autoplay plan adds <code>lenient</code> with
+<code>no-user-gesture-required</code>. <code>workers: 1</code> because journeys share one
+server and the sync metrics are timing-sensitive.
+</p>
+</div>
+</div>
+<div id="outline-container-orgeb52ec4" class="outline-4">
+<h4 id="orgeb52ec4"><code>global-setup.js</code></h4>
+<div class="outline-text-4" id="text-orgeb52ec4">
+<p>
+Login with <code>request.newContext()</code> → <code>POST /api/login</code> → keep the
+<code>ring-session</code> cookie in <code>.fixture.json</code>; run
+<code>ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=12 -f lavfi -i sine=frequency=440:duration=12 -c:v libx264 -preset veryfast -c:a aac -shortest clip.mp4</code>
+in the storage dir; <code>POST /api/admin/upload</code> multipart; poll
+<code>/api/admin/videos</code> until the row is <code>ready</code> (60 s budget, fail with the
+row's <code>error</code> text otherwise); write <code>{cookie, videoId, duration}</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-orgd9aa39b" class="outline-4">
+<h4 id="orgd9aa39b"><code>lib/party.js</code></h4>
+<div class="outline-text-4" id="text-orgd9aa39b">
+<ul class="org-ul">
+<li><code>host(browser)</code>: new context with the session cookie on <code>127.0.0.1</code>,
+<code>localStorage goob-nick = "host"</code> via <code>addInitScript</code>, page at
+<code>/watch/&lt;token&gt;</code>; waits for the title to leave "joining the goo…".</li>
+<li><code>viewer(browser, nick)</code>: same without the cookie.</li>
+<li><code>join(page)</code>: <code>page.locator('video').click()</code>; if <code>goobProbe().started</code>
+is still false after 1 s, focus the video and press Space. Waits for
+<code>started</code>.</li>
+<li><code>play(page)</code> / <code>pause(page)</code> / <code>seek(page, s)</code>: the host row's buttons
+and range input (<code>page.getByRole('button', {name: /play/})</code> etc.).</li>
+<li><code>inject(page, deltaSeconds)</code>: <code>video.currentTime +</code> delta= in the page.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org0cb53bf" class="outline-4">
+<h4 id="org0cb53bf"><code>lib/metrics.js</code></h4>
+<div class="outline-text-4" id="text-org0cb53bf">
+<ul class="org-ul">
+<li><code>sample(page, ms, every = 250)</code>: polls <code>goobProbe()</code> and returns the
+series.</li>
+<li><code>summarize(series, settleMs)</code>: <code>{driftAbsMax, driftAbsP95, driftFinal,
+  rateMin, rateMax, stalls, seeks, seekbacks, muted, startedAt}</code> with the
+drift stats computed only after <code>settleMs</code>.</li>
+<li><code>record(testInfo, name, summary, series)</code>: writes
+<code>metrics/&lt;file&gt;-&lt;title&gt;.json</code> and attaches the summary to the Playwright
+report; also appends a Markdown row to <code>metrics/summary.md</code>.</li>
+<li><code>liveSummary(api, roomId)</code>: the server's drifts per nick from the live
+endpoint.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orge4d04c3" class="outline-4">
+<h4 id="orge4d04c3"><code>thresholds.js</code> (initial values; tune from the first recorded runs)</h4>
+<div class="outline-text-4" id="text-orge4d04c3">
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">export</span> <span class="org-keyword">const</span> <span class="org-variable-name">T</span> = <span class="org-rainbow-delimiters-depth-1">{</span>
+  startWithin:      5_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms from click to started
+</span>  parkDrift:        1.0,    <span class="org-comment-delimiter">// </span><span class="org-comment">s, parked frame vs room before joining
+</span>  syncWithin:       8_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms until |drift| &lt; settled after joining
+</span>  settled:          0.5,    <span class="org-comment-delimiter">// </span><span class="org-comment">s
+</span>  steadyP95:        0.5,    <span class="org-comment-delimiter">// </span><span class="org-comment">s over the sampled window after settle
+</span>  pauseAgreement:   0.3,    <span class="org-comment-delimiter">// </span><span class="org-comment">s between two paused elements
+</span>  catchRate:        <span class="org-rainbow-delimiters-depth-2">[</span>1.04, 1.06<span class="org-rainbow-delimiters-depth-2">]</span>,
+  nudgeRate:        <span class="org-rainbow-delimiters-depth-2">[</span>0.94, 0.96<span class="org-rainbow-delimiters-depth-2">]</span>,
+  roomSlowRate:     0.97,
+  roomSlowWithin:   4_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms from laggard status to rate 0.97 at the server
+</span>  closingMin:       0.02,   <span class="org-comment-delimiter">// </span><span class="org-comment">s of drift recovered per s while catching up
+</span>  resyncWithin:    15_000,  <span class="org-comment-delimiter">// </span><span class="org-comment">ms after the network returns
+</span>  chatWithin:       2_000,
+<span class="org-rainbow-delimiters-depth-1">}</span>;
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf44dfe7" class="outline-3">
+<h3 id="orgf44dfe7">3 · Journeys</h3>
+<div class="outline-text-3" id="text-orgf44dfe7">
+<p>
+Each journey records its summary; the assertions column is what fails
+it. "server" means the live endpoint.
+</p>
+</div>
+<div id="outline-container-orga37dcef" class="outline-4">
+<h4 id="orga37dcef"><code>01-host-and-viewer.spec.js</code></h4>
+<div class="outline-text-4" id="text-orga37dcef">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>host starts the party</code></td>
+<td class="org-left">host joins (gesture), play; sample 6 s</td>
+<td class="org-left"><code>started</code> within <code>startWithin</code>; <code>currentTime</code> advances ≥ 4 s in 6 s; server <code>playing</code> true; 0 stalls</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>viewer joins a playing room in sync</code></td>
+<td class="org-left">host playing 5 s in; viewer opens page; wait for parked; join; sample 20 s</td>
+<td class="org-left">parked drift ≤ <code>parkDrift</code>; drift ≤ <code>settled</code> within <code>syncWithin</code>; <code>driftAbsP95</code> ≤ <code>steadyP95</code> after settle; server drift for the viewer ≤ <code>settled</code> at the end; seeks after join = 0; seekbacks = 0</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>pause, seek and resume agree</code></td>
+<td class="org-left">both playing; host pause; host seek +30 s; host play; sample 10 s</td>
+<td class="org-left">after pause both <code>paused</code>, <code>currentTime</code> within <code>pauseAgreement</code>; after seek both within <code>pauseAgreement</code> of the seek target; after play the viewer's <code>driftAbsP95</code> ≤ <code>steadyP95</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org81458a1" class="outline-4">
+<h4 id="org81458a1"><code>02-sync-policy.spec.js</code></h4>
+<div class="outline-text-4" id="text-org81458a1">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>a laggard catches up without seeking</code></td>
+<td class="org-left">viewer synced; <code>inject(-3)</code>; sample 30 s</td>
+<td class="org-left">rate within <code>catchRate</code> within 2 s; seekbacks = 0 and seeks = 0 over the window; drift improves by ≥ <code>closingMin</code> × window seconds; server shows <code>rate 0.97</code> within <code>roomSlowWithin</code> (3 s behind is the enter threshold); host page's slow note names the viewer</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>an early viewer is pulled back once</code></td>
+<td class="org-left"><code>inject(+3)</code>; sample 10 s</td>
+<td class="org-left">exactly one seekback; drift ≤ <code>settled</code> within 3 s; rate back within 0.01 of the room rate afterwards</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>a slightly early viewer is nudged, not seeked</code></td>
+<td class="org-left"><code>inject(+1.0)</code>; sample 15 s</td>
+<td class="org-left">seekbacks = 0; rate within <code>nudgeRate</code> at some sample; drift ≤ <code>settled</code> by the end</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>throttled viewer steps the quality down</code> (soft)</td>
+<td class="org-left">CDP throttle to 1500 kbit/s before join; join; sample 40 s</td>
+<td class="org-left"><b>recorded only</b>: stalls, <code>qcap</code>, <code>capsteps</code>, drift p95, server <code>rate</code>. Asserted: the page is still playing at the end (<code>currentTime</code> advanced in the last 10 s)</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org3983f9b" class="outline-4">
+<h4 id="org3983f9b"><code>03-control.spec.js</code></h4>
+<div class="outline-text-4" id="text-org3983f9b">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>a viewer cannot drive until the host allows it</code></td>
+<td class="org-left">viewer page: host row hidden; raw <code>new WebSocket(...)</code> from <code>page.evaluate</code> sends <code>cmd pause</code></td>
+<td class="org-left">server <code>playing</code> stays true for 2 s; then admin <code>PATCH allow-control true</code>; viewer reloads: host row visible, badge "co-hosting"; viewer pause → server <code>playing</code> false within 2 s, host's element paused</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>the desktop admin port is always admin</code> (JVM already)</td>
+<td class="org-left">not a journey</td>
+<td class="org-left">&#xa0;</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orga5d827a" class="outline-4">
+<h4 id="orga5d827a"><code>04-lobby-admin-chat.spec.js</code></h4>
+<div class="outline-text-4" id="text-orga5d827a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>upload to lobby</code></td>
+<td class="org-left">admin page: upload a second clip via the file input; watch the library row</td>
+<td class="org-left">row goes <code>uploaded</code> → <code>transcoding</code> → <code>ready</code> within 60 s with the bar moving; lobby shows no card until a room exists; make room → lobby card with the title; delete room → card gone</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>chat round trip</code></td>
+<td class="org-left">host and viewer; host sends; viewer scrolled up receives</td>
+<td class="org-left">viewer sees the bubble within <code>chatWithin</code> with the host's nick; the new-messages pill appears when scrolled up and clears on click</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orgff03ef7" class="outline-4">
+<h4 id="orgff03ef7"><code>05-resilience.spec.js</code></h4>
+<div class="outline-text-4" id="text-orgff03ef7">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>a dropped socket resyncs</code></td>
+<td class="org-left">viewer synced; <code>context.setOffline(true)</code> 6 s; host seeks +20 s meanwhile; online</td>
+<td class="org-left">peers list on the host drops then regains the viewer; viewer drift ≤ <code>settled</code> within <code>resyncWithin</code>; no more than one seek after reconnect</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>a late joiner parks on the live frame</code></td>
+<td class="org-left">host 8 s in; viewer opens; sample 3 s before joining</td>
+<td class="org-left"><code>started</code> false; <code>paused</code> true; parked drift ≤ <code>parkDrift</code> on every sample (re-park tracks the room)</td>
+</tr>
+</tbody>
+</table>
+<p>
+About a dozen journeys, under four minutes in the container.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf6d6982" class="outline-3">
+<h3 id="orgf6d6982">4 · Container and Makefile</h3>
+<div class="outline-text-3" id="text-orgf6d6982">
+<ul class="org-ul">
+<li><code>container/Containerfile.e2e</code>: <code>FROM localhost/goob-toob:latest</code>; add
+Google's rpm repo and <code>google-chrome-stable</code> plus the fonts it pulls;
+<code>COPY e2e/package*.json e2e/</code> and <code>npm ci</code> there. No Playwright browser
+download (<code>channel: chrome</code>).</li>
+<li><p>
+<code>Makefile</code>:
+</p>
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-makefile-targets">e2e-image</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">build the e2e image (test image + Chrome + Playwright)
+</span>        podman build -f container/Containerfile.e2e -t $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span>-e2e .
+<span class="org-makefile-targets">e2e</span>: <span class="org-comment-delimiter">## </span><span class="org-comment">run the Playwright journeys in the container (metrics in e2e/metrics)
+</span>        mkdir -p e2e/metrics
+        podman run --rm $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">MOUNTS</span><span class="org-rainbow-delimiters-depth-1">)</span> -e CI= -e GOOB_E2E_STORAGE=/tmp/e2e-storage $<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-variable-name">IMAGE</span><span class="org-rainbow-delimiters-depth-1">)</span>-e2e \
+          sh -c <span class="org-string">"mkdir -p /tmp/e2e-storage &amp;&amp; npx shadow-cljs release client &amp;&amp; cd e2e &amp;&amp; npx playwright test $(</span><span class="org-string"><span class="org-variable-name">E2E_ARGS</span></span><span class="org-string">)"</span>
+</pre>
+</div>
+<p>
+<code>E2E_ARGS</code> passes <code>-g 'laggard'</code> or <code>--headed</code> through. The release
+build runs first so the journeys see the current client.
+</p></li>
+<li><code>.gitignore</code>: <code>e2e/node_modules/</code>, <code>e2e/metrics/</code>, <code>e2e/report/</code>,
+<code>e2e/test-results/</code>, <code>e2e/.fixture.json</code>.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org4f3cc73" class="outline-3">
+<h3 id="org4f3cc73">5 · CI job</h3>
+<div class="outline-text-3" id="text-org4f3cc73">
+<p>
+New <code>e2e</code> job in <code>.github/workflows/ci.yml</code>, after <code>test</code>, same triggers:
+checkout, Java, Clojure, Node, ffmpeg (as <code>test</code>), <code>npm ci</code> at the root
+and in <code>e2e/</code>, <code>npx shadow-cljs release client</code>, then
+<code>cd e2e &amp;&amp; npx playwright test</code> with <code>GOOB_E2E_STORAGE=$RUNNER_TEMP/goob</code>
+and <code>CI=1</code>. Always upload <code>e2e/metrics</code> and <code>e2e/report</code> as artifacts;
+on failure also <code>e2e/test-results</code> (traces, videos). Last step appends
+<code>e2e/metrics/summary.md</code> to <code>$GITHUB_STEP_SUMMARY</code> so every run shows the
+metrics table on the Actions page. <code>tag</code> needs both <code>test</code> and <code>e2e</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org0c64829" class="outline-3">
+<h3 id="org0c64829">6 · Retirement list (follow-up PR, after five green CI runs)</h3>
+<div class="outline-text-3" id="text-org0c64829">
+<p>
+JVM tests whose only job is to pin wiring that a journey now exercises:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">file</th>
+<th scope="col" class="org-left">retire</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>routes_test</code></td>
+<td class="org-left"><code>login-sets-a-session-that-admin-routes-accept</code>, <code>create-room-returns-a-watch-url</code>, <code>update-room-flips-co-host-control</code>, <code>upload-stores-the-file-and-queues-it</code>, <code>delete-video-removes-rows-and-files</code>, <code>watch-pages-are-public</code>, <code>public-rooms-lists-only-ready-videos</code>, <code>clientlog-clips-and-logs</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ws_test</code></td>
+<td class="org-left"><code>welcome-describes-the-room-and-the-viewer</code>, <code>admin-session-makes-the-host</code>, <code>co-host-control-opens-commands-live</code>, <code>host-play-reaches-every-viewer</code>, <code>ping-answers-with-both-clocks</code>, <code>leaving-updates-the-peer-list</code>, <code>status-is-recorded</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>sync_service_test</code></td>
+<td class="org-left"><code>join-and-leave-maintain-the-client-map</code>, <code>broadcast-reaches-only-the-rooms-clients</code>, <code>host-command-broadcasts-state-with-the-op</code>, <code>beat-carries-peers-and-the-slow-note</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>repos_test</code></td>
+<td class="org-left"><code>video-lifecycle</code>, <code>rooms-list-all-joins-the-video-title-and-status</code>, <code>set-control-flips-the-flag</code>, <code>save-upload-moves-the-file-under-uploads</code>, <code>delete-video-files-removes-dash-and-original</code>, <code>deleting-a-video-closes-its-rooms</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>transcode_test</code></td>
+<td class="org-left"><code>real-ffmpeg-produces-a-dash-ladder</code> (the journeys transcode for real every run), <code>process-job-marks-the-video-ready-and-keeps-the-original</code></td>
+</tr>
+</tbody>
+</table>
+<p>
+Everything else stays: all of <code>sync_core_test</code>, <code>db_test</code>, the security
+and limiter tests in <code>routes_test</code>, the hostile-input tests in <code>ws_test</code>,
+the time-driven <code>tick-*</code> and give-up tests, the transcode failure modes
+and pure helpers. About 28 retire, about 100 stay. The retirement PR
+reruns the assertion audit on nothing (it deletes) and just has to stay
+green.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf38dc8a" class="outline-2">
+<h2 id="orgf38dc8a">Risks and open questions</h2>
+<div class="outline-text-2" id="text-orgf38dc8a">
+<ul class="org-ul">
+<li><b>Timing on shared runners.</b> The sync journeys measure seconds of
+wall-clock behaviour. Mitigations: <code>workers: 1</code>, one retry in CI,
+summaries over windows with a settle period, thresholds tuned from
+recorded runs before being tightened, and the throttled journey kept
+soft. A journey that flakes twice gets its threshold loosened or its
+assertion moved to recorded-only, never a sleep.</li>
+<li><b>Headless Chrome and the click-to-play surface.</b> Fallback is Space on
+the focused element; both are activations. If neither toggles in
+headless, the host can start the room through its own play button
+(that path exists today) and viewers join through Space.</li>
+<li><b>H.264 decode in headless.</b> Branded Chrome decodes in software without
+a GPU; expect it to be fine at 720p. If the runner drops frames,
+<code>currentTime</code> still advances and the metrics hold; the clip can also
+be generated at 480p.</li>
+<li><b>Chrome in the Fedora image</b> adds about 300 MB and a Google repo. It is
+a separate image (<code>e2e-image</code>), so <code>make test</code> is unchanged.</li>
+<li><b>The probe is product code.</b> It is read-only and unlisted; it costs a
+closure. Counters are the only new state.</li>
+<li><b>Twelve seconds of clip</b> bounds every journey; the pause-and-seek
+journey seeks to +30 s on a 12 s clip, so make the clip 60 s (still a
+few seconds to transcode) or seek +5 s. Decide at implementation; the
+plan says 60 s.</li>
+<li><b><code>reuseExistingServer</code> locally</b> lets an already running <code>make dev</code>
+server be reused on <code>18080</code>; the storage dir must then match. The
+default <code>make e2e</code> path always starts its own.</li>
+<li><b>The retirement list shrinks coverage of the admin HTTP API to the
+journeys.</b> If the admin console is ever replaced, those journeys go
+with it and the API loses its tests. Accepted; the API's consumer is
+the console.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgc8b5126" class="outline-2">
+<h2 id="orgc8b5126">Verification</h2>
+<div class="outline-text-2" id="text-orgc8b5126">
+<ol class="org-ol">
+<li><code>make test</code> still green (two new JVM tests for the live endpoint and
+view; assertion audit on both).</li>
+<li><code>make e2e-image &amp;&amp; make e2e</code>: all journeys pass three runs in a row;
+<code>e2e/metrics/summary.md</code> shows one row per journey with the numbers;
+<code>e2e/metrics/*.json</code> series exist. Report the table.</li>
+<li>Break it on purpose once: set <code>:catch-rate</code> to 1.0 in <code>sync_core.cljc</code>,
+<code>make e2e -g laggard</code> fails on the closing-rate assertion and nothing
+else; restore.</li>
+<li><code>make e2e E2E_ARGS</code>"&#x2013;headed"= is not possible in the container; for a
+headed look, run <code>cd e2e &amp;&amp; npx playwright test --headed</code> on a machine
+with Chrome against <code>make dev</code> on <code>18080</code>. Document that in <code>e2e/README.org</code>.</li>
+<li>One CI run on the PR: the <code>e2e</code> job is green, the step summary shows
+the metrics table, the artifacts contain <code>metrics/</code> and <code>report/</code>.</li>
+<li>Five green <code>main</code> runs later: open the retirement PR.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-21</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-21 Wed 12:52</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>

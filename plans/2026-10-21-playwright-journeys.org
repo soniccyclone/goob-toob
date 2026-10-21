@@ -1,0 +1,398 @@
+#+TITLE: Playwright journeys: the critical paths through a real browser, judged by metrics
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-21
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: approved 2026-10-21.
+
+* Goal
+A small suite of end-to-end tests drives goob-toob the way a party does:
+real Chrome, real dash.js, real H.264 segments from the real transcode,
+real websockets, two or three browser contexts in one room. Each journey
+samples a metrics probe on the page and the server's own view of the room,
+and asserts summaries of those series (drift after settle, seeks, stalls,
+rate bounds, time to sync) against one thresholds table. The suite runs
+locally in a container (=make e2e=) and as its own CI job, and writes a
+metrics table into the job summary so a run says more than pass or fail.
+Once it is green in CI, the JVM suite shrinks to what a browser cannot
+reach: pure math, adversarial protocol input, migrations, and failure
+modes. This plan comes before autoplay and playlists; both then add
+journeys here instead of manual verification lists.
+
+* The thesis, and where it holds
+Nathan's framing: most of the truly valuable tests of this repository
+could be a small set of Playwright journeys asserting on metrics, with
+more granularity than pass/fail and none of the drift of unit tests that
+pin implementation. Taking that seriously:
+
+- *It holds for everything user-facing.* The product is "watch in sync".
+  Its value is measurable: drift, stalls, seeks, catch-up rate, time to
+  join. Those are properties of the whole system (server clock, websocket,
+  dash.js buffering, the element's =playbackRate=, Chrome's autoplay
+  policy) and no JVM test touches more than one of them. The lockdown's
+  HTTP and websocket wiring tests prove the server speaks the protocol;
+  a journey proves the party works. When both exist, the wiring tests are
+  the ones that break on harmless refactors.
+- *It does not hold for three kinds of test, which stay on the JVM.*
+  1. Pure logic with many branches (=policy=, =room-rate=, =quality-cap=,
+     =ladder-for=, =parse-range=). A journey samples them under one real
+     condition with wide tolerances; a table test covers every branch in
+     milliseconds. This is the one place unit tests are the right tool,
+     and =cljc= was built for it.
+  2. Adversarial and security input: a viewer sending =cmd= without
+     control, a string =pos=, a non-object frame, path traversal, the
+     login limiter, the two-port split. A browser journey can reach some
+     of these through =page.evaluate= and a raw =WebSocket=, but they are
+     protocol tests wearing a costume. Keep them where they are cheap and
+     exact.
+  3. Time and failure: the 180 s give-up window, a crashed transcode's
+     error text, a missing original, migrations on an old database. Not
+     affordable or not reachable from a browser.
+- *Metrics are the right assertion language for a sync product*, with one
+  discipline: thresholds live in one data file, assertions are on
+  summaries over a window (p95, max after settle, counts), never on a
+  single sample, and every journey writes its series to disk so a
+  regression shows as a number moving before it shows as a failure.
+
+Verdict: build the journeys, then retire the JVM tests that only pin
+wiring (list in Decisions). The suite that remains is about 85 JVM tests
+of logic and hostility plus about a dozen journeys of value.
+
+* Findings
+- *Nothing browser-driven exists.* =test/= is Clojure only; =package.json=
+  has dash.js alone; no Chrome on the host. Every plan's browser
+  verification so far was manual in two tabs.
+- *Playwright's bundled Chromium cannot play our video.* Open-source
+  Chromium ships without H.264 or AAC; the ladder is libx264 and AAC
+  (~src/clj/goob_toob/services/transcode.clj:87-93~). Playwright supports
+  the =chrome= channel (branded Google Chrome, all codecs). GitHub's
+  =ubuntu-latest= image has Google Chrome preinstalled; the Fedora test
+  image needs Google's rpm repo. Firefox and Safari stay manual.
+- *Autoplay policy is a launch flag.* Chrome's
+  =--autoplay-policy=user-gesture-required= (strict, the real-world
+  default) and =no-user-gesture-required= make the autoplay plan's three
+  branches deterministic per Playwright project. Nothing in the suite
+  depends on Chrome's own history heuristics.
+- *Network shaping is available.* Playwright has no throttle API, but on
+  Chrome a CDP session gives =Network.emulateNetworkConditions=
+  (throughput, latency), enough to make a laggard and trigger the quality
+  cap.
+- *The page already measures everything.* =st= on the watch page
+  (~src/cljs/goob_toob/watch.cljs:387-389~) holds =offset=, =mode=,
+  =qcap=, =started=, =buffering=; =expected-now= (~watch.cljs:38-42~) and
+  =buffer-ahead= (~watch.cljs:55-60~) compute the rest. The =clientlog=
+  path (~routes.clj:140-145~) already ships =:seek-back=, =:stalled=,
+  =:quality-cap=, =:started= events to the server log. Nothing is
+  exposed to a test.
+- *The server already measures every client.* =rooms*=
+  (~src/clj/goob_toob/services/sync.clj:12~) holds per-client =:drift=,
+  =:at=, =:buffering=, =:behind-since= and the room's =:rate=,
+  =:playing?=; =client-drifts= (~sync.clj:93-96~) derives ages. There is
+  no read endpoint.
+- *Upload and transcode are reachable over HTTP* (~routes.clj:102-114~)
+  with the admin session; =make clip= shows the lavfi recipe for a
+  synthetic clip. A 10 s 1280x720 clip transcodes to three rungs in a few
+  seconds in the container.
+- *The join gesture.* Chrome toggles playback when a =<video controls>=
+  surface is clicked, and a Playwright click is a real user activation.
+  If headless Chrome does not toggle on surface click, focusing the
+  element and pressing Space does the same with activation.
+- *CI today* (~.github/workflows/ci.yml~): =test= (JVM + build smoke),
+  =tag= (release on main), =plans= (Pages). The =test= job already installs
+  Java, Clojure, Node and ffmpeg.
+
+* Decisions
+Each with the evidence; Nathan flips what he disagrees with.
+- *Specs are plain JavaScript (ESM) under =e2e/=.* The project is 100 %
+  Clojure/CLJS and that rule stands for product code. =@playwright/test=
+  is a runner with its own module discovery and top-level =test()=
+  registration; driving it from shadow-cljs (=:npm-module= target, one
+  compiled file per spec, a second build in the loop) buys nothing but a
+  compile step for about 400 lines of harness. If this grates, the
+  reversible path is a later shadow build that emits the same files.
+- *Chrome channel only.* See Findings. Firefox and Safari remain in the
+  autoplay plan's manual matrix.
+- *One metrics probe in product code.* =watch.cljs= exposes a read-only
+  =window.goobProbe()= returning the page's view (below). It is also a
+  support tool: paste it in devtools on a user's machine. Cost: a few
+  lines and an unreleased counter object.
+- *One read endpoint on the admin API.* =GET /api/admin/rooms/:id/live=
+  returns the live room: =:pos :t0 :playing :rate :now= and every client's
+  =:nick :drift :age-ms :buffering :behind-ms=. Admin-only, loopback on
+  desktop. The authority's own numbers are what the room acts on, so
+  journeys assert on both the page and the server.
+- *Thresholds are data.* =e2e/thresholds.js= exports one object; specs
+  import names from it; no numeric literal in a spec. Per-journey series
+  go to =e2e/metrics/<spec>-<title>.json=; CI uploads them and prints a
+  table to the job summary.
+- *Each journey makes its own room; the clip is shared.* Global setup
+  logs in, generates the clip with ffmpeg, uploads it, waits for =ready=.
+  Rooms are cheap and isolate state.
+- *Local loop is a container*, =container/Containerfile.e2e= on top of the
+  test image, with =make e2e=. CI is the confirming run.
+- *Retire wiring tests after five green CI runs*, in a follow-up PR that
+  this plan names (below). Not in the same PR: a journey that is flaky on
+  the runner must not take a working test with it.
+- *Soft metrics first for the throttled journey.* Bandwidth shaping on a
+  shared runner is the least deterministic thing here; its numbers are
+  recorded and printed for a few runs before any threshold is asserted.
+
+* Plan
+** 1 · Probe and live endpoint (product code, small)
+*** ~src/cljs/goob_toob/watch.cljs~
+- =st= gains ="counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0 "rejected" 0 "capsteps" 0)=;
+  increment at: =park!= and every =ourseek= write (=seeks=), =onwaiting=
+  (=stalls=), the =:seek-back= branch (=seekbacks=), =:play-rejected=
+  (=rejected=), a cap change in =quality-event!= (=capsteps=).
+- In =page=, after =st= exists:
+  #+begin_src clojure
+  (set! (.-goobProbe js/window)
+        (fn []
+          (let [room (.-room st) v (ui/$ "video")]
+            (clj->js {:t (ui/perf-now)
+                      :currentTime (some-> v .-currentTime)
+                      :expected (when room (expected-now st room))
+                      :drift (when (and room v) (sc/drift (.-currentTime v) (expected-now st room)))
+                      :rate (some-> v .-playbackRate) :roomRate (:rate room)
+                      :playing (:playing room) :paused (some-> v .-paused)
+                      :muted (some-> v .-muted) :started (.-started st)
+                      :mode (name (.-mode st)) :buffering (.-buffering st)
+                      :bufferAhead (when v (buffer-ahead v))
+                      :qcap (:cap (.-qcap st)) :offset (.-offset st)
+                      :counters (js->clj (.-counters st))}))))
+  #+end_src
+  =expected-now= and =buffer-ahead= move above =page= if needed; nothing
+  else changes.
+*** ~src/clj/goob_toob/routes.clj~ and ~sync.clj~
+- =sync/live-view [room-id]= returns
+  ={:pos :t0 :playing :rate :now :clients [{:nick :drift :age-ms :buffering :behind-ms}]}=
+  from =rooms*= via =client-drifts= (now needs =:nick= and =:buffering=
+  in the derived map: add them). nil for an unknown room.
+- Route =["/rooms/:id/live" {:get room-live}]= in the admin group: 200
+  with the map, 404 when nil.
+- JVM tests: =live-view-reports-every-client= (sync_service_test: two
+  clients, one 4 s behind → drifts and =:behind-ms= as expected) and
+  =room-live-is-admin-only= (routes_test: 401 without session, 200 with,
+  404 unknown room).
+
+** 2 · Harness: ~e2e/~
+#+begin_example
+e2e/
+  package.json          @playwright/test only; "type": "module"
+  playwright.config.js  webServer, projects, reporter, globalSetup
+  global-setup.js       login, make clip, upload, wait ready -> .fixture.json
+  thresholds.js         every number the specs assert against
+  lib/
+    api.js              login(), makeRoom(), setControl(), live(), probe helpers
+    party.js            host()/viewer() contexts, join(), play(), pause(), seek()
+    metrics.js          sample(page, ms, every), summarize(series), record(name, …)
+    net.js              throttle(page, kbps, latencyMs) via CDP
+  journeys/
+    01-host-and-viewer.spec.js
+    02-sync-policy.spec.js
+    03-control.spec.js
+    04-lobby-admin-chat.spec.js
+    05-resilience.spec.js
+  metrics/              output, gitignored
+#+end_example
+*** =playwright.config.js=
+#+begin_src javascript
+import { defineConfig } from '@playwright/test';
+const port = process.env.GOOB_E2E_PORT || '18080';
+export default defineConfig({
+  testDir: './journeys',
+  timeout: 120_000,
+  fullyParallel: false,
+  workers: 1,
+  retries: process.env.CI ? 1 : 0,
+  reporter: [['list'], ['html', { open: 'never', outputFolder: 'report' }]],
+  globalSetup: './global-setup.js',
+  use: { baseURL: `http://127.0.0.1:${port}`, channel: 'chrome',
+         trace: 'retain-on-failure', video: 'retain-on-failure' },
+  projects: [
+    { name: 'strict',  use: { launchOptions: { args: ['--autoplay-policy=user-gesture-required'] } } },
+  ],
+  webServer: {
+    command: 'clojure -M:dev -m goob-toob.core',
+    cwd: '..',
+    url: `http://127.0.0.1:${port}/api/me`,
+    env: { STORAGE_DIR: process.env.GOOB_E2E_STORAGE, ADMIN_PASSWORD: 'pw', PORT: port },
+    timeout: 120_000,
+    reuseExistingServer: !process.env.CI,
+  },
+});
+#+end_src
+=GOOB_E2E_STORAGE= is created by =make e2e= / the CI step as a fresh temp
+dir. One project now; the autoplay plan adds =lenient= with
+=no-user-gesture-required=. =workers: 1= because journeys share one
+server and the sync metrics are timing-sensitive.
+*** =global-setup.js=
+Login with =request.newContext()= → =POST /api/login= → keep the
+=ring-session= cookie in =.fixture.json=; run
+=ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=12 -f lavfi -i sine=frequency=440:duration=12 -c:v libx264 -preset veryfast -c:a aac -shortest clip.mp4=
+in the storage dir; =POST /api/admin/upload= multipart; poll
+=/api/admin/videos= until the row is =ready= (60 s budget, fail with the
+row's =error= text otherwise); write ={cookie, videoId, duration}=.
+*** =lib/party.js=
+- =host(browser)=: new context with the session cookie on =127.0.0.1=,
+  =localStorage goob-nick = "host"= via =addInitScript=, page at
+  =/watch/<token>=; waits for the title to leave "joining the goo…".
+- =viewer(browser, nick)=: same without the cookie.
+- =join(page)=: =page.locator('video').click()=; if =goobProbe().started=
+  is still false after 1 s, focus the video and press Space. Waits for
+  =started=.
+- =play(page)= / =pause(page)= / =seek(page, s)=: the host row's buttons
+  and range input (=page.getByRole('button', {name: /play/})= etc.).
+- =inject(page, deltaSeconds)=: =video.currentTime += delta= in the page.
+*** =lib/metrics.js=
+- =sample(page, ms, every = 250)=: polls =goobProbe()= and returns the
+  series.
+- =summarize(series, settleMs)=: ={driftAbsMax, driftAbsP95, driftFinal,
+  rateMin, rateMax, stalls, seeks, seekbacks, muted, startedAt}= with the
+  drift stats computed only after =settleMs=.
+- =record(testInfo, name, summary, series)=: writes
+  =metrics/<file>-<title>.json= and attaches the summary to the Playwright
+  report; also appends a Markdown row to =metrics/summary.md=.
+- =liveSummary(api, roomId)=: the server's drifts per nick from the live
+  endpoint.
+*** =thresholds.js= (initial values; tune from the first recorded runs)
+#+begin_src javascript
+export const T = {
+  startWithin:      5_000,  // ms from click to started
+  parkDrift:        1.0,    // s, parked frame vs room before joining
+  syncWithin:       8_000,  // ms until |drift| < settled after joining
+  settled:          0.5,    // s
+  steadyP95:        0.5,    // s over the sampled window after settle
+  pauseAgreement:   0.3,    // s between two paused elements
+  catchRate:        [1.04, 1.06],
+  nudgeRate:        [0.94, 0.96],
+  roomSlowRate:     0.97,
+  roomSlowWithin:   4_000,  // ms from laggard status to rate 0.97 at the server
+  closingMin:       0.02,   // s of drift recovered per s while catching up
+  resyncWithin:    15_000,  // ms after the network returns
+  chatWithin:       2_000,
+};
+#+end_src
+** 3 · Journeys
+Each journey records its summary; the assertions column is what fails
+it. "server" means the live endpoint.
+*** =01-host-and-viewer.spec.js=
+| journey                             | steps                                                                  | asserts                                                                                             |
+|-------------------------------------+------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------|
+| =host starts the party=             | host joins (gesture), play; sample 6 s                                 | =started= within =startWithin=; =currentTime= advances ≥ 4 s in 6 s; server =playing= true; 0 stalls |
+| =viewer joins a playing room in sync= | host playing 5 s in; viewer opens page; wait for parked; join; sample 20 s | parked drift ≤ =parkDrift=; drift ≤ =settled= within =syncWithin=; =driftAbsP95= ≤ =steadyP95= after settle; server drift for the viewer ≤ =settled= at the end; seeks after join = 0; seekbacks = 0 |
+| =pause, seek and resume agree=      | both playing; host pause; host seek +30 s; host play; sample 10 s       | after pause both =paused=, =currentTime= within =pauseAgreement=; after seek both within =pauseAgreement= of the seek target; after play the viewer's =driftAbsP95= ≤ =steadyP95= |
+*** =02-sync-policy.spec.js=
+| journey                                   | steps                                                        | asserts                                                                                              |
+|-------------------------------------------+--------------------------------------------------------------+------------------------------------------------------------------------------------------------------|
+| =a laggard catches up without seeking=    | viewer synced; =inject(-3)=; sample 30 s                     | rate within =catchRate= within 2 s; seekbacks = 0 and seeks = 0 over the window; drift improves by ≥ =closingMin= × window seconds; server shows =rate 0.97= within =roomSlowWithin= (3 s behind is the enter threshold); host page's slow note names the viewer |
+| =an early viewer is pulled back once=     | =inject(+3)=; sample 10 s                                    | exactly one seekback; drift ≤ =settled= within 3 s; rate back within 0.01 of the room rate afterwards |
+| =a slightly early viewer is nudged, not seeked= | =inject(+1.0)=; sample 15 s                             | seekbacks = 0; rate within =nudgeRate= at some sample; drift ≤ =settled= by the end                   |
+| =throttled viewer steps the quality down= (soft) | CDP throttle to 1500 kbit/s before join; join; sample 40 s | *recorded only*: stalls, =qcap=, =capsteps=, drift p95, server =rate=. Asserted: the page is still playing at the end (=currentTime= advanced in the last 10 s) |
+*** =03-control.spec.js=
+| journey                                        | steps                                                                                   | asserts                                                                                   |
+|------------------------------------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------|
+| =a viewer cannot drive until the host allows it= | viewer page: host row hidden; raw =new WebSocket(...)= from =page.evaluate= sends =cmd pause= | server =playing= stays true for 2 s; then admin =PATCH allow-control true=; viewer reloads: host row visible, badge "co-hosting"; viewer pause → server =playing= false within 2 s, host's element paused |
+| =the desktop admin port is always admin= (JVM already) | not a journey                                                                    |                                                                                           |
+*** =04-lobby-admin-chat.spec.js=
+| journey                                 | steps                                                                              | asserts                                                                                  |
+|-----------------------------------------+------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------|
+| =upload to lobby=                       | admin page: upload a second clip via the file input; watch the library row         | row goes =uploaded= → =transcoding= → =ready= within 60 s with the bar moving; lobby shows no card until a room exists; make room → lobby card with the title; delete room → card gone |
+| =chat round trip=                       | host and viewer; host sends; viewer scrolled up receives                           | viewer sees the bubble within =chatWithin= with the host's nick; the new-messages pill appears when scrolled up and clears on click |
+*** =05-resilience.spec.js=
+| journey                               | steps                                                                           | asserts                                                                                     |
+|---------------------------------------+---------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------|
+| =a dropped socket resyncs=            | viewer synced; =context.setOffline(true)= 6 s; host seeks +20 s meanwhile; online | peers list on the host drops then regains the viewer; viewer drift ≤ =settled= within =resyncWithin=; no more than one seek after reconnect |
+| =a late joiner parks on the live frame= | host 8 s in; viewer opens; sample 3 s before joining                            | =started= false; =paused= true; parked drift ≤ =parkDrift= on every sample (re-park tracks the room) |
+About a dozen journeys, under four minutes in the container.
+
+** 4 · Container and Makefile
+- ~container/Containerfile.e2e~: =FROM localhost/goob-toob:latest=; add
+  Google's rpm repo and =google-chrome-stable= plus the fonts it pulls;
+  =COPY e2e/package*.json e2e/= and =npm ci= there. No Playwright browser
+  download (=channel: chrome=).
+- =Makefile=:
+  #+begin_src makefile
+  e2e-image: ## build the e2e image (test image + Chrome + Playwright)
+  	podman build -f container/Containerfile.e2e -t $(IMAGE)-e2e .
+  e2e: ## run the Playwright journeys in the container (metrics in e2e/metrics)
+  	mkdir -p e2e/metrics
+  	podman run --rm $(MOUNTS) -e CI= -e GOOB_E2E_STORAGE=/tmp/e2e-storage $(IMAGE)-e2e \
+  	  sh -c "mkdir -p /tmp/e2e-storage && npx shadow-cljs release client && cd e2e && npx playwright test $(E2E_ARGS)"
+  #+end_src
+  =E2E_ARGS= passes =-g 'laggard'= or =--headed= through. The release
+  build runs first so the journeys see the current client.
+- =.gitignore=: =e2e/node_modules/=, =e2e/metrics/=, =e2e/report/=,
+  =e2e/test-results/=, =e2e/.fixture.json=.
+
+** 5 · CI job
+New =e2e= job in ~.github/workflows/ci.yml~, after =test=, same triggers:
+checkout, Java, Clojure, Node, ffmpeg (as =test=), =npm ci= at the root
+and in =e2e/=, =npx shadow-cljs release client=, then
+=cd e2e && npx playwright test= with =GOOB_E2E_STORAGE=$RUNNER_TEMP/goob=
+and =CI=1=. Always upload =e2e/metrics= and =e2e/report= as artifacts;
+on failure also =e2e/test-results= (traces, videos). Last step appends
+=e2e/metrics/summary.md= to =$GITHUB_STEP_SUMMARY= so every run shows the
+metrics table on the Actions page. =tag= needs both =test= and =e2e=.
+
+** 6 · Retirement list (follow-up PR, after five green CI runs)
+JVM tests whose only job is to pin wiring that a journey now exercises:
+| file                   | retire                                                                                                                                                              |
+|------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =routes_test=          | =login-sets-a-session-that-admin-routes-accept=, =create-room-returns-a-watch-url=, =update-room-flips-co-host-control=, =upload-stores-the-file-and-queues-it=, =delete-video-removes-rows-and-files=, =watch-pages-are-public=, =public-rooms-lists-only-ready-videos=, =clientlog-clips-and-logs= |
+| =ws_test=              | =welcome-describes-the-room-and-the-viewer=, =admin-session-makes-the-host=, =co-host-control-opens-commands-live=, =host-play-reaches-every-viewer=, =ping-answers-with-both-clocks=, =leaving-updates-the-peer-list=, =status-is-recorded= |
+| =sync_service_test=    | =join-and-leave-maintain-the-client-map=, =broadcast-reaches-only-the-rooms-clients=, =host-command-broadcasts-state-with-the-op=, =beat-carries-peers-and-the-slow-note= |
+| =repos_test=           | =video-lifecycle=, =rooms-list-all-joins-the-video-title-and-status=, =set-control-flips-the-flag=, =save-upload-moves-the-file-under-uploads=, =delete-video-files-removes-dash-and-original=, =deleting-a-video-closes-its-rooms= |
+| =transcode_test=       | =real-ffmpeg-produces-a-dash-ladder= (the journeys transcode for real every run), =process-job-marks-the-video-ready-and-keeps-the-original=                          |
+Everything else stays: all of =sync_core_test=, =db_test=, the security
+and limiter tests in =routes_test=, the hostile-input tests in =ws_test=,
+the time-driven =tick-*= and give-up tests, the transcode failure modes
+and pure helpers. About 28 retire, about 100 stay. The retirement PR
+reruns the assertion audit on nothing (it deletes) and just has to stay
+green.
+
+* Risks and open questions
+- *Timing on shared runners.* The sync journeys measure seconds of
+  wall-clock behaviour. Mitigations: =workers: 1=, one retry in CI,
+  summaries over windows with a settle period, thresholds tuned from
+  recorded runs before being tightened, and the throttled journey kept
+  soft. A journey that flakes twice gets its threshold loosened or its
+  assertion moved to recorded-only, never a sleep.
+- *Headless Chrome and the click-to-play surface.* Fallback is Space on
+  the focused element; both are activations. If neither toggles in
+  headless, the host can start the room through its own play button
+  (that path exists today) and viewers join through Space.
+- *H.264 decode in headless.* Branded Chrome decodes in software without
+  a GPU; expect it to be fine at 720p. If the runner drops frames,
+  =currentTime= still advances and the metrics hold; the clip can also
+  be generated at 480p.
+- *Chrome in the Fedora image* adds about 300 MB and a Google repo. It is
+  a separate image (=e2e-image=), so =make test= is unchanged.
+- *The probe is product code.* It is read-only and unlisted; it costs a
+  closure. Counters are the only new state.
+- *Twelve seconds of clip* bounds every journey; the pause-and-seek
+  journey seeks to +30 s on a 12 s clip, so make the clip 60 s (still a
+  few seconds to transcode) or seek +5 s. Decide at implementation; the
+  plan says 60 s.
+- *=reuseExistingServer= locally* lets an already running =make dev=
+  server be reused on =18080=; the storage dir must then match. The
+  default =make e2e= path always starts its own.
+- *The retirement list shrinks coverage of the admin HTTP API to the
+  journeys.* If the admin console is ever replaced, those journeys go
+  with it and the API loses its tests. Accepted; the API's consumer is
+  the console.
+
+* Verification
+1. =make test= still green (two new JVM tests for the live endpoint and
+   view; assertion audit on both).
+2. =make e2e-image && make e2e=: all journeys pass three runs in a row;
+   =e2e/metrics/summary.md= shows one row per journey with the numbers;
+   =e2e/metrics/*.json= series exist. Report the table.
+3. Break it on purpose once: set =:catch-rate= to 1.0 in =sync_core.cljc=,
+   =make e2e -g laggard= fails on the closing-rate assertion and nothing
+   else; restore.
+4. =make e2e E2E_ARGS="--headed"= is not possible in the container; for a
+   headed look, run =cd e2e && npx playwright test --headed= on a machine
+   with Chrome against =make dev= on =18080=. Document that in =e2e/README.org=.
+5. One CI run on the PR: the =e2e= job is green, the step summary shows
+   the metrics table, the artifacts contain =metrics/= and =report/=.
+6. Five green =main= runs later: open the retirement PR.

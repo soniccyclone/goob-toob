@@ -14,8 +14,10 @@ sound; the page tries audible first, falls back to muted with a visible
 "tap for sound" control, and only parks (today's behaviour) when the browser
 refuses even a muted start. The server does not change.
 
-Depends on the test-lockdown plan (=sc/start-action= exists and is pinned).
-If this ships first, do that plan's step 7 as the first commit here.
+Depends on the test-lockdown plan (=sc/start-action= exists and is pinned)
+and the Playwright journeys plan: the browser matrix in Verification
+becomes journeys under a =lenient= autoplay project plus the existing
+=strict= one, with the manual Firefox and Safari checks remaining.
 
 * Findings
 ** How a viewer starts today

@@ -17,7 +17,8 @@ migrate to one-item queues and keep their links.
 Depends on the test-lockdown plan (tests, fixture, =start-action=) and the
 autoplay plan (=autostart!= / =settle!=, which the item switch reuses so a
 viewer who already pressed play follows into the next video without
-touching anything).
+touching anything). The Playwright journeys plan is where the item switch,
+auto-advance and end-of-queue get their browser tests.
 
 * Decisions
 Each with the evidence; Nathan flips what he disagrees with before
