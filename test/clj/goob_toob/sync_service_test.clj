@@ -1,5 +1,6 @@
 (ns goob-toob.sync-service-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
+            [clojure.string :as str]
             [cheshire.core :as json]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
@@ -251,3 +252,15 @@
 (deftest status-ignores-a-room-that-is-not-live
   (is (nil? (sync/status! "nope" "c" 1.0 false)))
   (is (= {} @sync/rooms*)))
+
+(deftest beat-loop-survives-a-broken-room
+  (let [sent    (atom [])
+        laggard {"lag" {:nick "laggard" :drift -4.0 :at 1000 :behind-since 1000}}]
+    (reset! sync/rooms*
+            {"broken" {:pos "junk" :t0 1000 :playing? true :rate 1.0 :clients laggard}
+             "good"   {:pos 0.0 :t0 1000 :playing? true :rate 1.0
+                       :clients {"c" {:nick "c" :drift 0.0 :at 1000}}}})
+    (with-redefs [sync/mono-ms (fn [] 2000)
+                  sync/broadcast (fn [room-id msg] (swap! sent conj [room-id (:type msg)]))]
+      (is (str/includes? (with-out-str (sync/tick-all!)) "beat broken failed:")))
+    (is (some #{["good" "beat"]} @sent))))
