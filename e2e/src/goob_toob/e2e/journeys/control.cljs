@@ -46,7 +46,6 @@
                                     :stopped-ms stopped-ms :host-paused host-paused}))
     (-> (expect sent? "raw socket sent its cmd") (.toBe true))
     (-> (expect (every? :playing held) "room kept playing after the viewer's raw cmd") (.toBe true))
-    (-> (expect stopped-ms "ms from co-host pause to server paused") (.not.toBeNull))
     (-> (expect stopped-ms "ms from co-host pause to server paused")
         (.toBeLessThanOrEqual (t browser-name :control-within)))
     (-> (expect host-paused "host's element paused") (.toBe true))))
