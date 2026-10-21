@@ -1,0 +1,68 @@
+#+TITLE: e2e: Playwright journeys
+
+The journeys drive goob-toob through Chromium, Firefox and WebKit
+(Playwright's own builds) and judge it by metrics: drift, seeks, stalls,
+rates, time to sync. Specs, config and global setup are ClojureScript
+under =src/=, compiled by the =:e2e= shadow-cljs build into =out/=.
+Every number a spec asserts against lives in
+=src/goob_toob/e2e/thresholds.cljs=.
+
+* Run everything
+From the repo root, with podman installed:
+#+begin_src sh
+make e2e-image
+make e2e
+#+end_src
+=make e2e-image= builds =localhost/goob-toob:latest-e2e= (Playwright's
+image plus Java 21, Clojure and ffmpeg); the first build pulls about
+2 GB. =make e2e= builds the client and the specs inside that image,
+starts the server on port 18080 with a fresh storage dir, renders and
+uploads the test clips, and runs every journey in all three engines.
+The run ends with Playwright's summary line, for example
+=36 passed (12.0m)=.
+
+* Run one engine, or one journey
+=E2E_ARGS= goes straight to =playwright test=. Quote patterns with single
+quotes; the Makefile wraps the command in double quotes.
+#+begin_src sh
+make e2e E2E_ARGS=--project=firefox
+make e2e E2E_ARGS="-g laggard"
+make e2e E2E_ARGS="--project=webkit -g 'late joiner|dropped'"
+#+end_src
+A CI matrix leg is =make e2e E2E_ARGS=--project=<chromium|firefox|webkit>=.
+
+* Read the metrics
+Every journey records before it asserts, so a failing run still writes
+its numbers.
+- =metrics/summary.md=: one row per engine and journey (drift p95, max
+  and final, rate bounds, seek, stall and seek-back counts, plus the
+  journey's own numbers in the last column).
+- =metrics/<engine>-<spec>-<journey>.json=: the full sampled series and
+  the summary.
+#+begin_src sh
+cat e2e/metrics/summary.md
+#+end_src
+
+* Look at a failure
+A failed journey keeps its trace and video under =test-results/=; the
+HTML report is in =report/=. Open them from the repo root with the
+image's Playwright, which serves the viewer on port 9323:
+#+begin_src sh
+podman run --rm --ipc=host -p 9323:9323 -v "$PWD":/app:z -w /app/e2e localhost/goob-toob:latest-e2e \
+  npx playwright show-report report --host 0.0.0.0
+#+end_src
+then browse to http://localhost:9323 and open the trace from the failed
+test. A single trace opens the same way with
+=npx playwright show-trace --host 0.0.0.0 --port 9323 test-results/<dir>/trace.zip=.
+
+* Journeys marked as expected failures
+- =a dropped socket resyncs= is marked =test.fail=: after a reconnect the
+  watch page takes the room's clock but not its position, so a seek the
+  host made while the viewer was offline leaves the viewer behind. When
+  that is fixed the journey starts passing and Playwright reports it as
+  an unexpected pass; remove the =.fail= line then.
+- =a laggard catches up without seeking= is marked =test.fail= in WebKit
+  only: in Playwright's WebKit build the injected 3.5 s backward seek ends
+  in =MEDIA_ERR_DECODE= ("Failed to send data for decoding") and the
+  element never plays again, so the catch-up policy is never reached. It
+  runs and asserts normally in Chromium and Firefox.
