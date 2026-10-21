@@ -520,14 +520,19 @@ for #40. Landed as specced, plus:
   the report attributes each test to its spec file rather than to the
   shared chunk. The =:e2e= build is =:optimizations :simple= with
   =:infer-externs false=.
-- *Two journeys ship as expected failures*, each pinned to an issue:
-  =a dropped socket resyncs= (#41, all engines: a reconnect applies the
-  room clock but never seeks the element, so a seek missed while offline
-  leaves the viewer 19-38 s behind) and =a laggard catches up without
-  seeking= in WebKit only (#42: an injected backward seek ends in
-  =MEDIA_ERR_DECODE= in Playwright's WebKitGTK build; real Safari is
-  unknown). Both flip to "unexpected pass" when fixed; delete the mark
-  then.
+- *One journey ships as an expected failure and one as a runtime skip*,
+  each pinned to an issue. =a dropped socket resyncs= is =test.fail= in
+  every engine (#41: a reconnect applies the room clock but never seeks
+  the element, so a seek missed while offline leaves the viewer 19-38 s
+  behind); it flips to "unexpected pass" when fixed, delete the mark
+  then. =a laggard catches up without seeking= in WebKit hit
+  =MEDIA_ERR_DECODE= on the injected backward seek 5/5 times locally and
+  0/2 on the GitHub runner (#42), so a hard mark was wrong either way: the
+  journey records its metrics with =:decode-error=, then skips at runtime
+  with the issue only when the error happened, and asserts normally
+  otherwise. dash.js clears =video.error= before a test can read it, so
+  the journey captures the codes with a capture-phase =error= listener on
+  =document= installed before the injection.
 - *The parked frame sits at 0:00 for 3-4.4 s* in every engine: the park
   on stream-init runs before the first pong, so =expected= is computed
   with offset 0, and only the next pong lands it; between pongs the
@@ -546,7 +551,10 @@ for #40. Landed as specced, plus:
   0.076-0.078; with the catch rate broken to 1.0 the room's 0.97 alone
   closes 0.027, which 0.02 would have passed), laggard injection -3.0 →
   -3.5 s (Firefox once reported 2.99 s and the room never slowed), clip
-  60 → 90 s and the upload clip 180 s, =:parked-window= 3 → 12 s. Counts
+  60 → 90 s and the upload clip 180 s, =:parked-window= 3 → 12 s,
+  =:nudge-window= 15 → 25 s after a CI flake at 0.72 s (a 0.95x nudge
+  closes 0.05 s/s, so 1.0 s to the 0.15 s settle point is 17 s plus up to
+  2 s to enter the nudge; 15 s only passed on a fast machine). Counts
   the plan stated as "exactly one" are =T= entries; step lengths and
   deltas are in a =W= map; specs contain no numeric literal but 0.
 - *=make e2e= runs =npm install --prefer-offline=* at the root and in
@@ -560,9 +568,12 @@ for #40. Landed as specced, plus:
   have left the file-deletion path untested. 24 retired; the JVM suite
   is 106 tests.
 - *Verified*: three consecutive full =make e2e= runs ending
-  =34 passed, 2 skipped= (the 34 include the four expected failures; the
-  two skips are the Chromium-only throttled journey in the other
-  engines), about 12 minutes each in the container (over the plan's
+  =34 passed, 2 skipped= before the WebKit rework (the 34 included the
+  expected failures; the two skips are the Chromium-only throttled
+  journey in the other engines); after it, a local run reports one more
+  skip when the WebKit decode error fires. First CI run: chromium and
+  firefox legs green, webkit red on the two items above, fixed and rerun
+  once. About 12 minutes per full run in the container (over the plan's
   10-minute target; CI runs the engines as parallel legs). Break check:
   =:catch-rate 1.0= failed the laggard journey on the closing-rate
   assertion in Chromium (0.0275) and Firefox (0.0269) and nothing else.
