@@ -56,12 +56,12 @@ test. A single trace opens the same way with
 =npx playwright show-trace --host 0.0.0.0 --port 9323 test-results/<dir>/trace.zip=.
 
 * Journeys marked as expected failures
-- =a dropped socket resyncs= is marked =test.fail=: after a reconnect the
+- =a dropped socket resyncs= is marked =test.fail= (issue #41): after a reconnect the
   watch page takes the room's clock but not its position, so a seek the
   host made while the viewer was offline leaves the viewer behind. When
   that is fixed the journey starts passing and Playwright reports it as
   an unexpected pass; remove the =.fail= line then.
-- =a laggard catches up without seeking= is marked =test.fail= in WebKit
+- =a laggard catches up without seeking= is marked =test.fail= in WebKit (issue #42)
   only: in Playwright's WebKit build the injected 3.5 s backward seek ends
   in =MEDIA_ERR_DECODE= ("Failed to send data for decoding") and the
   element never plays again, so the catch-up policy is never reached. It

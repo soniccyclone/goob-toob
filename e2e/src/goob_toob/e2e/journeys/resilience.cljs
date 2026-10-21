@@ -18,7 +18,7 @@
   (.evaluate page (peer-listed-expr nick)))
 
 (defjourney "a dropped socket resyncs" [{:keys [browser browser-name base-url]} info]
-  (.fail test true (str "product bug: a reconnect applies the room clock but not its position,"
+  (.fail test true (str "#41: a reconnect applies the room clock but not its position,"
                         " so a seek missed while offline leaves the viewer behind"))
   (let [{:keys [cookie] :as fx} (api/fixture info)
         {:keys [room host]} (<? (party/host! browser base-url browser-name fx))

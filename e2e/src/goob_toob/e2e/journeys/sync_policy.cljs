@@ -25,7 +25,7 @@
 
 (defjourney "a laggard catches up without seeking" [{:keys [browser browser-name base-url]} info]
   (.fail test (= "webkit" browser-name)
-         (str "WebKit build: a backward seek of the playing element ends in"
+         (str "#42 WebKit build: a backward seek of the playing element ends in"
               " MEDIA_ERR_DECODE and playback never resumes"))
   (let [{:keys [cookie] :as fx} (api/fixture info)
         {:keys [room host viewer]} (<? (party/pair! browser base-url browser-name fx))
