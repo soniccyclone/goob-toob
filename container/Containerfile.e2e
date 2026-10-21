@@ -1,0 +1,15 @@
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg openjdk-21-jdk-headless curl rlwrap \
+ && rm -rf /var/lib/apt/lists/* \
+ && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
+ && curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | bash
+
+WORKDIR /app
+COPY deps.edn shadow-cljs.edn package.json package-lock.json ./
+COPY e2e/package.json e2e/package-lock.json e2e/
+RUN clojure -P -M:dev:test \
+ && npm ci --no-audit --no-fund \
+ && npx shadow-cljs classpath >/dev/null \
+ && cd e2e && npm ci --no-audit --no-fund

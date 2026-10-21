@@ -1,7 +1,18 @@
-{:source-paths ["src/cljs" "src/cljc"]
+{:source-paths ["src/cljs" "src/cljc" "e2e/src"]
  :builds
  {:client {:target     :browser
            :output-dir "resources/public/js"
            :asset-path "/js"
            :modules    {:main {:init-fn goob-toob.client/init}}
-           :devtools   {:after-load goob-toob.client/reload!}}}}
+           :devtools   {:after-load goob-toob.client/reload!}}
+  :e2e    {:target     :esm
+           :runtime    :node
+           :output-dir "e2e/out"
+           :modules    {:config           {:exports {default goob-toob.e2e.config/config}}
+                        :setup            {:exports {default goob-toob.e2e.setup/run}
+                                           :depends-on #{:config}}
+                        :host-and-viewer  {:entries [goob-toob.e2e.journeys.host-and-viewer]
+                                           :depends-on #{:config}}}
+           :js-options {:js-provider :import}
+           :compiler-options {:optimizations :simple
+                              :infer-externs false}}}}
