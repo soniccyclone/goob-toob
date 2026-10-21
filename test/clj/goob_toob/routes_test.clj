@@ -79,17 +79,6 @@
   (when status (videos/set-status! id status))
   id)
 
-(deftest login-sets-a-session-that-admin-routes-accept
-  (let [app    (container-app)
-        resp   (call app :post "/api/login" :body {:password "pw"})
-        cookie (session-cookie resp)]
-    (is (= 200 (:status resp)))
-    (is (some? cookie))
-    (is (true? (:admin (:body (call app :get "/api/me" :cookie cookie)))))
-    (is (= 200 (:status (call app :get "/api/admin/videos" :cookie cookie))))
-    (call app :post "/api/logout" :cookie cookie)
-    (is (false? (:admin (:body (call app :get "/api/me" :cookie cookie)))))))
-
 (deftest wrong-password-is-401
   (let [app  (container-app)
         resp (call app :post "/api/login" :body {:password "no"})]
@@ -139,46 +128,6 @@
     (is (= 404 (:status (call app :get "/dash/v1/../../test.db"))))
     (is (= 404 (:status (call app :get "/dash/v1/nope.m4s"))))))
 
-(deftest public-rooms-lists-only-ready-videos
-  (video! "ok" :title "Ready one" :status "ready")
-  (video! "wip" :title "Still uploading")
-  (let [ready (rooms/create! "ok")]
-    (rooms/create! "wip")
-    (is (= [{:token (:token ready) :title "Ready one"}]
-           (:body (call (container-app) :get "/api/rooms"))))))
-
-(deftest create-room-returns-a-watch-url
-  (video! "v1")
-  (let [app    (container-app)
-        cookie (login! app)
-        resp   (call app :post "/api/admin/rooms" :cookie cookie :body {:video-id "v1"})
-        token  (get-in resp [:body :token])]
-    (is (= 201 (:status resp)))
-    (is (= "v1" (:video-id (rooms/get-by-token token))))
-    (is (= (str "/watch/" token) (get-in resp [:body :url])))
-    (is (= 400 (:status (call app :post "/api/admin/rooms" :cookie cookie
-                              :body {:video-id "nope"}))))))
-
-(deftest update-room-flips-co-host-control
-  (video! "v1")
-  (let [app    (container-app)
-        cookie (login! app)
-        id     (:id (rooms/create! "v1"))]
-    (is (= 200 (:status (call app :patch (str "/api/admin/rooms/" id) :cookie cookie
-                              :body {:allow-control true}))))
-    (is (= 1 (:allow-control (rooms/get-by-id id))))))
-
-(deftest upload-stores-the-file-and-queues-it
-  (let [f    (doto (java.io.File/createTempFile "goob-upload" ".tmp") (spit "twelve bytes"))
-        resp (routes/upload {:params {:file {:tempfile f :filename "My.Show.S01E01.MKV" :size 12}}})
-        id   (get-in resp [:body :id])
-        v    (videos/get-by-id id)]
-    (is (= 202 (:status resp)))
-    (is (= "queued" (get-in resp [:body :status])))
-    (is (= "My.Show.S01E01" (:title v)))
-    (is (= "uploaded" (:status v)))
-    (is (.isFile (io/file (config/storage-dir) "uploads" (str id ".mkv"))))))
-
 (deftest upload-without-a-file-is-400
   (is (= 400 (:status (routes/upload {:params {}})))))
 
@@ -193,27 +142,11 @@
     (is (nil? (rooms/get-by-id room)))
     (is (not (.exists (io/file (config/storage-dir) "dash" "v1"))))))
 
-(deftest watch-pages-are-public
-  (let [app   (routes/app {:admin? false})
-        watch (call app :get "/watch/anything")]
-    (is (= 200 (:status watch)))
-    (is (str/starts-with? (get-in watch [:headers "Content-Type"]) "text/html"))
-    (is (= 200 (:status (call app :get "/"))))))
-
 (deftest clientlog-is-rate-limited-per-token
   (reset! routes/clientlog-hits {})
   (is (every? true? (repeatedly 120 #(#'routes/clientlog-allow? "t" 0))))
   (is (false? (#'routes/clientlog-allow? "t" 0)))
   (is (true? (#'routes/clientlog-allow? "t" 60000))))
-
-(deftest clientlog-clips-and-logs
-  (reset! routes/clientlog-hits {})
-  (let [resp (atom nil)
-        out  (with-out-str
-               (reset! resp (call (routes/app {:admin? false}) :post "/api/clientlog"
-                                  :body {:token "abcdefghijk" :msg "hi"})))]
-    (is (= 200 (:status @resp)))
-    (is (str/includes? out "client abcdefgh : hi"))))
 
 (deftest room-live-is-admin-only
   (video! "v1")

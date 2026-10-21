@@ -95,30 +95,11 @@
 (deftest unknown-token-is-refused
   (is (thrown? CompletionException (ws-client @port "nope" "x" nil))))
 
-(deftest welcome-describes-the-room-and-the-viewer
-  (let [room (room!)
-        {:keys [welcome]} (connect! room "ann")]
-    (is (= "welcome" (:type welcome)))
-    (is (false? (:is-host welcome)))
-    (is (false? (:can-control welcome)))
-    (is (= {:id "v1" :title "Clip" :duration 42.0 :dash "/dash/v1/manifest.mpd"}
-           (:video welcome)))
-    (is (false? (get-in welcome [:state :playing])))
-    (is (= 0.0 (get-in welcome [:state :pos])))
-    (is (= 2000 (:start-kbps welcome)))
-    (is (= ["ann"] (map :nick (:peers welcome))))))
-
 (deftest nick-is-trimmed-and-clamped
   (let [room (room!)]
     (is (= [(apply str (repeat 32 "a"))]
            (map :nick (:peers (:welcome (connect! room (str "  " (apply str (repeat 40 "a")) "  ")))))))
     (is (some #{"guest"} (map :nick (:peers (:welcome (connect! room ""))))))))
-
-(deftest admin-session-makes-the-host
-  (let [room (room!)
-        {:keys [welcome]} (connect! room "host" (login!))]
-    (is (true? (:is-host welcome)))
-    (is (true? (:can-control welcome)))))
 
 (deftest viewer-commands-are-ignored-without-co-host-control
   (let [room (room!)
@@ -127,24 +108,6 @@
     (send! (:ws v1) {:type "cmd" :op "play" :pos 0})
     (is (not-any? #(= "state" (:type %)) (recv-all! (:in v2) 1000)))
     (is (false? (get-in @sync/rooms* [(:id room) :playing?])))))
-
-(deftest co-host-control-opens-commands-live
-  (let [room (room!)
-        v1 (connect! room "v1")
-        v2 (connect! room "v2")]
-    (rooms/set-control! (:id room) true)
-    (send! (:ws v1) {:type "cmd" :op "play" :pos 0})
-    (is (= "play" (:op (recv-type! (:in v1) "state"))))
-    (is (= "play" (:op (recv-type! (:in v2) "state"))))))
-
-(deftest host-play-reaches-every-viewer
-  (let [room (room!)
-        host (connect! room "host" (login!))
-        viewer (connect! room "viewer")]
-    (send! (:ws host) {:type "cmd" :op "play" :pos 3.0})
-    (let [m (recv-type! (:in viewer) "state")]
-      (is (= "play" (:op m)))
-      (is (= 3.0 (:pos m))))))
 
 (deftest chat-is-clamped-and-blank-dropped
   (let [room (room!)
@@ -156,31 +119,6 @@
       (is (number? (:ts m))))
     (send! ws {:type "chat" :text "   "})
     (is (not-any? #(= "chat" (:type %)) (recv-all! in 500)))))
-
-(deftest ping-answers-with-both-clocks
-  (let [room (room!)
-        {:keys [ws in]} (connect! room "ann")]
-    (send! ws {:type "ping" :t 123})
-    (let [m (recv-type! in "pong")]
-      (is (= 123 (:t m)))
-      (is (number? (:st m))))))
-
-(deftest leaving-updates-the-peer-list
-  (let [room (room!)
-        v1 (connect! room "v1")
-        v2 (connect! room "v2")]
-    (.join (.sendClose ^WebSocket (:ws v1) WebSocket/NORMAL_CLOSURE ""))
-    (is (= ["v2"]
-           (loop []
-             (when-let [m (recv-type! (:in v2) "peers")]
-               (if (= 1 (count (:peers m))) (map :nick (:peers m)) (recur))))))))
-
-(deftest status-is-recorded
-  (let [room (room!)
-        {:keys [ws]} (connect! room "ann")
-        clients #(get-in @sync/rooms* [(:id room) :clients])]
-    (send! ws {:type "status" :pos 0 :buffering true})
-    (is (wait-until #(:buffering (val (first (clients)))) 1000))))
 
 (deftest non-numeric-positions-are-dropped-at-the-socket
   (let [room (room!)

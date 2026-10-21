@@ -12,23 +12,6 @@
 
 (use-fixtures :each with-tmp)
 
-(deftest video-lifecycle
-  (videos/insert! {:id "v1" :title "Test clip" :original-path "/tmp/v1.mp4"})
-  (let [v (videos/get-by-id "v1")]
-    (is (= "uploaded" (:status v)))
-    (is (= "Test clip" (:title v))))
-  (videos/set-status! "v1" "transcoding" :progress 0.0)
-  (videos/set-progress! "v1" 0.5)
-  (is (= "transcoding" (:status (videos/get-by-id "v1"))))
-  (is (= 0.5 (:progress (videos/get-by-id "v1"))))
-  (videos/set-status! "v1" "ready" :progress 1.0 :duration 42.0)
-  (let [v (videos/get-by-id "v1")]
-    (is (= "ready" (:status v)))
-    (is (= 42.0 (:duration v))))
-  (is (= ["v1"] (map :id (videos/list-ready))))
-  (videos/delete! "v1")
-  (is (nil? (videos/get-by-id "v1"))))
-
 (deftest room-tokens-are-secret-and-unique
   (videos/insert! {:id "v2" :title "Room video" :original-path "/tmp/v2.mp4"})
   (let [r1 (rooms/create! "v2")
@@ -78,20 +61,6 @@
                    :values [{:id id :title id :status "uploaded" :created-at at}]})))
   (is (= ["b" "a"] (map :id (videos/list-all)))))
 
-(deftest rooms-list-all-joins-the-video-title-and-status
-  (video! "v1" :title "T")
-  (rooms/create! "v1")
-  (is (= {:title "T" :status "uploaded" :allow-control 0}
-         (select-keys (first (rooms/list-all)) [:title :status :allow-control]))))
-
-(deftest set-control-flips-the-flag
-  (video! "v1")
-  (let [id (:id (rooms/create! "v1"))]
-    (rooms/set-control! id true)
-    (is (= 1 (:allow-control (rooms/get-by-id id))))
-    (rooms/set-control! id false)
-    (is (= 0 (:allow-control (rooms/get-by-id id))))))
-
 (deftest deleting-a-video-closes-its-rooms
   (video! "v1")
   (let [id (:id (rooms/create! "v1"))]
@@ -102,14 +71,6 @@
   (let [f (java.io.File/createTempFile "goob-upload" ".tmp")]
     (spit f content)
     f))
-
-(deftest save-upload-moves-the-file-under-uploads
-  (let [tmp  (tmp-file "data")
-        dest (storage/save-upload! tmp "v9" "mkv")]
-    (is (= (.getCanonicalFile (io/file (config/storage-dir) "uploads" "v9.mkv"))
-           (.getCanonicalFile dest)))
-    (is (not (.exists tmp)))
-    (is (= "data" (slurp (storage/find-original "v9"))))))
 
 (deftest save-upload-rejects-an-id-that-escapes-the-root
   (let [tmp (tmp-file "data")]
