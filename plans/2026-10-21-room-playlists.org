@@ -442,6 +442,24 @@ All in the existing files unless noted; =with-tmp= from the lockdown.
 | =viewer-next-is-ignored-without-control=          | viewer =cmd next= → no =item= within 1 s                                                        |
 | =queue-edit-reaches-the-room=                     | HTTP POST item while a viewer is connected → viewer receives =:type "queue"= with 2 items          |
 
+** Journeys (the Playwright plan's harness)
+New spec =journeys/playlists.cljs=; =api.cljs= gains =add-item!=,
+=remove-item!=, =reorder!=; =goobProbe()= gains =:vid= (the current video
+id) and =:ended=; thresholds =:switch-within 8000= ms (item broadcast to
+first advancing frame on the new video) and =:advance-slack 3000= ms. The
+shared clip is 60 s; journeys that need the end seek the host to
+=duration - 5=. Every journey runs in all projects.
+| journey                                              | steps                                                                                         | asserts                                                                                                                      |
+|------------------------------------------------------+-----------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------|
+| =the room advances at the end of the video=          | two-item room; host and viewer playing; host seeks to =duration - 5=; sample 15 s              | both pages' =:vid= becomes the second video within =:advance-slack= of the clock passing =duration=, with no gesture; =currentTime= advancing on the new video within =:switch-within=; viewer drift ≤ =:settled= within =:sync-within=; =seeks= ≤ 1 per page across the switch; server =video-id= is the second |
+| =next and prev switch every viewer=                  | host "next"; sample; host "prev"; sample                                                       | each switch: both =:vid= change within =:switch-within=, playing from 0 (first sample's =currentTime= < 2), server =playing= true; a viewer's "next" with control off changes nothing for 3 s |
+| =jump from the queue=                                | three items; co-host control on; viewer clicks the third item                                  | both pages on the third video within =:switch-within=; the queue panel marks it current                                       |
+| =end of the queue pauses everyone=                   | single-item room; host seeks to =duration - 5=; sample 12 s                                    | both =paused= within =:advance-slack= after =duration=, =:ended= true, hint text says end of the queue; server =playing= false, =pos= equals duration; host "next" changes nothing; host seek + play resumes |
+| =queue edits reach the room live=                    | playing; admin API adds an item, removes the non-current one, reorders                         | both pages' queue panel reflects each edit within =:chat-within= with no reload; removing the current item answers 409 and the panel is unchanged |
+| =a reconnect across a switch lands on the new video= | viewer synced; =setOffline true=; host "next"; 6 s; online                                     | viewer =:vid= is the new video within =:resync-within=; drift ≤ =:settled=; the title updated                                 |
+| =a late joiner lands on the current video=           | room on its second item, playing; new viewer opens                                             | welcome lands them on the second video (=:vid=), parked at the room position (≤ =:park-drift=); join → synced                   |
+| =the lobby shows the party's progress=               | room titled "Season 1" on item 2 of 3                                                          | lobby card: title, "now: <second title>", "3 in the queue"; a room whose current video is not ready is absent                   |
+
 * Risks and open questions
 - *FK on for real is the riskiest line in the plan.* It could reject writes
   that silently succeeded before. Mitigations: migration 003 deletes
@@ -490,24 +508,12 @@ All in the existing files unless noted; =with-tmp= from the lockdown.
    running install (or build one with the 001+002 test path), start the
    app on it: log shows =migrated 003-room-items.sql=, every old room has
    one queued item, links still open.
-4. =make run=; upload three short clips (use =make clip= three times with
-   different durations, 20 s is fine); in admin: make a room on clip A,
-   add B and C, reorder to C B A, rename the room. Open the lobby: card
-   shows the title, "now: C", "3 in the queue".
-5. Host tab plays C from 0. Two viewer tabs autostart into C (autoplay
-   plan). At C's end (20 s) everyone moves to B at 0 and keeps playing:
-   =server.log= =room <id> item B=, one =:item= client log per tab, drift
-   under 1 s within 5 s. Host presses "next": A starts. Host "prev": B
-   again. A viewer clicks C in the queue with co-host off: nothing; turn
-   co-host on, click: C starts for everyone.
-6. Mid-play, admin removes B (not current): every watch tab's queue
-   updates without reload. Admin tries to remove the current video: toast
-   with the 409 text. Library "del" on a queued clip: toast names the
-   room.
-7. Let the last video run out: everyone pauses on the last frame, hint
-   reads end of the queue, host "next" does nothing, host seeks back and
-   plays: it plays.
-8. Kill a viewer tab's network for 10 s across a "next", restore: the
-   reconnect's welcome lands it on the new video at the room position.
-9. Restart the server mid-party: on reconnect every tab is on the same
-   (current) video at 0, paused, as the model says.
+4. =make e2e=: every playlist journey green in all projects, three runs
+   in a row; the metrics table shows switch times and post-switch drift
+   per engine. Break it once: make =sc/ended?= always false and confirm
+   only the advance and end-of-queue journeys fail; restore.
+5. One CI run on the PR with all legs green.
+6. Manual, once: restart the server mid-party; on reconnect every tab is
+   on the same (current) video at 0, paused, as the model says. Admin
+   console by hand: build a three-item queue, rename the room, try to
+   delete a queued video from the library and read the 409 toast.
