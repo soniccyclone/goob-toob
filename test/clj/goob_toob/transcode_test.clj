@@ -50,3 +50,29 @@
 
 (deftest priority-cmd-is-nil-elsewhere
   (is (nil? (transcode/priority-cmd 4242 false))))
+
+(deftest probe-media-reads-height-audio-and-duration
+  (is (= {:height 696 :audio? true :duration 12.5}
+         (#'transcode/probe-media {:streams [{:codec_type "video" :height 696} {:codec_type "audio"}]
+                                   :format {:duration "12.5"}}))))
+
+(deftest probe-media-defaults-when-fields-are-missing
+  (is (= {:height 1080 :audio? false :duration 1.0}
+         (#'transcode/probe-media {:streams [{:codec_type "video"}] :format {}}))))
+
+(deftest probe-media-refuses-a-file-without-video
+  (is (thrown? clojure.lang.ExceptionInfo
+               (#'transcode/probe-media {:streams [{:codec_type "audio"}] :format {:duration "3.0"}}))))
+
+(deftest ffprobe-sits-next-to-a-vendored-ffmpeg
+  (with-redefs [config/cfg (constantly {:ffmpeg-path "/opt/g/ffmpeg/ffmpeg.exe"})]
+    (is (= "/opt/g/ffmpeg/ffprobe.exe" (#'transcode/ffprobe-bin))))
+  (with-redefs [config/cfg (constantly {:ffmpeg-path "ffmpeg"})]
+    (is (= "ffprobe" (#'transcode/ffprobe-bin)))))
+
+(deftest ffmpeg-cmd-omits-audio-when-the-source-has-none
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? false} config/default-ladder)]
+    (is (not-any? #{"0:a:0"} cmd))
+    (is (not-any? #{"-c:a"} cmd))
+    (is (= "id=0,streams=v" (second (drop-while #(not= "-adaptation_sets" %) cmd))))))

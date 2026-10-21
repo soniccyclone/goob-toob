@@ -111,3 +111,15 @@
 (deftest start-kbps-prefers-the-720-rung
   (is (= 2000 (sc/start-kbps [{:h 1080 :v 4000} {:h 720 :v 2000} {:h 480 :v 900} {:h 360 :v 450}])))
   (is (= 450 (sc/start-kbps [{:h 360 :v 450}]))))
+
+(deftest expected-pos-honours-the-room-rate
+  (is (< (Math/abs (- 19.7 (sc/expected-pos {:pos 10 :t0 0 :now 10000 :playing? true :rate 0.97})))
+         1e-9)))
+
+(deftest drift-is-local-minus-expected
+  (is (= -0.5 (sc/drift 9.5 10.0))))
+
+(deftest room-rate-picks-the-worst-laggard
+  (is (= {:rate 0.97 :for "b"}
+         (sc/room-rate 1.0 [{:nick "a" :drift -3.5 :age-ms 0 :behind-ms 0}
+                            {:nick "b" :drift -5.0 :age-ms 0 :behind-ms 0}]))))
