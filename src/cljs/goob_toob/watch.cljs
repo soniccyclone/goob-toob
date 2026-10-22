@@ -121,6 +121,18 @@
                         (set! (.-currentTime video) (:pos msg)))
             nil)))
 
+(defn- resync! [^js st token video]
+  (let [room (.-room st)
+        e (expected-now st room)]
+    (log! token :reconnect-resync {:drift (/ (Math/round (* 10 (sc/drift (.-currentTime video) e))) 10)})
+    (set! (.-mode st) :none)
+    (set! (.-playbackRate video) 1.0)
+    (mark-seek! st)
+    (set! (.-currentTime video) e)
+    (if (:playing room)
+      (play! video)
+      (.pause video))))
+
 (defn- render-peers! [peers-el peers host?]
   (ui/clear! peers-el)
   (doseq [p peers]
@@ -193,6 +205,8 @@
               (set! (.-cancontrol st) (boolean (:can-control msg)))
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
+              (when (and (.-player st) (.-started st))
+                (resync! st token video))
               (when-not (.-player st)
                 (set! (.-preservesPitch video) true)
                 (set! (.-webkitPreservesPitch video) true)

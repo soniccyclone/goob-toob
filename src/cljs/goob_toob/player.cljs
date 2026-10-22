@@ -11,6 +11,8 @@
     (.on ctx "streamInitialized"
          (fn [_] (on-ready ctx)))
     (.updateSettings ctx #js {:streaming #js {:buffer #js {:fastSwitchEnabled true}
+                                              :retryAttempts #js {:MediaSegment js/Infinity
+                                                                  :InitializationSegment js/Infinity}
                                               :abr #js {:initialBitrate #js {:video start-kbps}}
                                               :gaps #js {:jumpLargeGaps false}}
                               :debug #js {:logLevel 1}})
