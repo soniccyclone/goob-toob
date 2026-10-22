@@ -31,11 +31,44 @@ jobs:
           npx shadow-cljs release client
           VERSION=$(git describe --tags) clojure -T:build uberjar
 
-  e2e:
-    needs: test
+  e2e-image:
+    # The e2e image (Playwright's image + ffmpeg, Java, Clojure, deps) is
+    # built once per change to its inputs and pushed to GHCR; the matrix
+    # legs below run inside it and never touch apt.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: name
+        run: echo "image=ghcr.io/${{ github.repository_owner }}/goob-toob-e2e:${{ hashFiles('container/Containerfile.e2e', 'deps.edn', 'package-lock.json', 'e2e/package-lock.json') }}" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - id: have
+        run: |
+          if docker manifest inspect "${{ steps.name.outputs.image }}" >/dev/null 2>&1; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.have.outputs.have == 'false'
+        run: |
+          docker build -f container/Containerfile.e2e -t "${{ steps.name.outputs.image }}" .
+          docker push "${{ steps.name.outputs.image }}"
+
+  e2e:
+    needs: [test, e2e-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      image: ${{ needs.e2e-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
       options: --ipc=host
     strategy:
       fail-fast: false
@@ -46,12 +79,6 @@ jobs:
       HOME: /root
     steps:
       - uses: actions/checkout@v4
-      - name: Install ffmpeg, Java and Clojure
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ffmpeg openjdk-21-jdk-headless curl rlwrap
-          curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | bash
-      - run: clojure -P -M:dev
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund
         working-directory: e2e
