@@ -116,6 +116,7 @@ video.stage {
   border: 3px solid var(--slime);
   display: block;
 }
+.unmute { position: absolute; left: 12px; bottom: 56px; z-index: 2; }
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {
