@@ -23,7 +23,6 @@ jobs:
         run: |
           curl -fsSL https://download.clojure.org/install/linux-install-1.12.0.1527.sh | sudo bash -
       - run: npm ci --no-audit --no-fund
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Tests
         run: clojure -M:test
       - name: Build client + uberjar (smoke)
