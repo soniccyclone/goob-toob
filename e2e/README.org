@@ -30,6 +30,11 @@ make e2e E2E_ARGS="-g laggard"
 make e2e E2E_ARGS="--project=webkit -g 'late joiner|dropped'"
 #+end_src
 A CI matrix leg is =make e2e E2E_ARGS=--project=<chromium|firefox|webkit>=.
+CI does not build the image per run: the =e2e-image= job pushes it to
+=ghcr.io/soniccyclone/goob-toob-e2e:<hash of its inputs>= once per change
+to the Containerfile or the lock files, and the legs run inside it. To
+use that image locally instead of building: =E2E_IMAGE=ghcr.io/soniccyclone/goob-toob-e2e:<tag> make e2e=
+after =podman login ghcr.io=.
 
 * Read the metrics
 Every journey records before it asserts, so a failing run still writes

@@ -43,7 +43,7 @@ test: ## run the CLJ test suite in the container
 compile: ## shadow-cljs release build of the client
 	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) npx shadow-cljs release client
 
-E2E_IMAGE := $(IMAGE)-e2e
+E2E_IMAGE ?= $(IMAGE)-e2e
 
 e2e-image: ## build the e2e image (Playwright browsers + Java + Clojure + ffmpeg)
 	podman build -f container/Containerfile.e2e -t $(E2E_IMAGE) .
