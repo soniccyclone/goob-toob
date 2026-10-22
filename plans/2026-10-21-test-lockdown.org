@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-21
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-21.
+# Status: approved 2026-10-21; shipped as v0.4.4 on 2026-10-21 (#36).
 
 * Goal
 v0.4.x is working and stable. Two feature plans follow this one (autoplay on

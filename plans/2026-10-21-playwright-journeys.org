@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-21
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-21; revised 2026-10-21 (CLJS specs, three engines, codec probe).
+# Status: approved 2026-10-21; revised 2026-10-21 (CLJS specs, three engines, codec probe); shipped as v0.4.5 on 2026-10-22 (#43).
 
 * Goal
 A small suite of end-to-end tests drives goob-toob the way a party does:
