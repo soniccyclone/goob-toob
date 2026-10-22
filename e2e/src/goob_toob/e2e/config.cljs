@@ -18,7 +18,7 @@
             :trace {:mode "retain-on-failure" :snapshots false :screenshots true}
             :video "retain-on-failure"}
       :projects [{:name "chromium" :use {:browserName "chromium"
-                                         :launchOptions {:args ["--autoplay-policy=user-gesture-required"]}}}
+                                         :launchOptions {:args ["--autoplay-policy=document-user-activation-required"]}}}
                  {:name "chromium-lenient" :use {:browserName "chromium"
                                                  :launchOptions {:args ["--autoplay-policy=no-user-gesture-required"]}}}
                  {:name "firefox"  :use {:browserName "firefox"
