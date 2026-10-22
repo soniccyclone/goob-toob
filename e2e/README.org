@@ -29,7 +29,11 @@ make e2e E2E_ARGS=--project=firefox
 make e2e E2E_ARGS="-g laggard"
 make e2e E2E_ARGS="--project=webkit -g 'late joiner|dropped'"
 #+end_src
-A CI matrix leg is =make e2e E2E_ARGS=--project=<chromium|firefox|webkit>=.
+A CI matrix leg is =make e2e E2E_ARGS=--project=<chromium|firefox>=; the
+CI WebKit leg runs on a macOS runner instead, so it decodes through
+Apple's media stack the way Safari does. The local =webkit= project is
+WebKitGTK on GStreamer: good for DOM and gesture behaviour, not for
+decode timing (see issue #42).
 CI does not build the image per run: the =e2e-image= job pushes it to
 =ghcr.io/soniccyclone/goob-toob-e2e:<hash of its inputs>= once per change
 to the Containerfile or the lock files, and the legs run inside it. To
