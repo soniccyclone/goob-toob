@@ -18,8 +18,6 @@
   (.evaluate page (peer-listed-expr nick)))
 
 (defjourney "a dropped socket resyncs" [{:keys [browser browser-name base-url]} info]
-  (.fail test true (str "#41: a reconnect applies the room clock but not its position,"
-                        " so a seek missed while offline leaves the viewer behind"))
   (let [{:keys [cookie] :as fx} (api/fixture info)
         {:keys [room host]} (<? (party/host! browser base-url browser-name fx))
         _ (<! (a/timeout (:host-head-start W)))
@@ -71,7 +69,9 @@
     (-> (expect resync-at "ms from online to settled") (.not.toBeNull))
     (-> (expect (+ reconnect-ms resync-at) "ms from online to settled")
         (.toBeLessThanOrEqual (t browser-name :resync-within)))
-    (-> (expect seeks-after "seeks after reconnect") (.toBeLessThanOrEqual (t browser-name :reconnect-seeks)))))
+    (-> (expect seeks-after "seeks after reconnect") (.toBeLessThanOrEqual (t browser-name :reconnect-seeks)))
+    (-> (expect (:drift-abs-p95 summary) "drift p95 after the resync") (.toBeLessThanOrEqual (t browser-name :steady-p95)))
+    (-> (expect (:stalls summary) "stalls after the resync") (.toBe 0))))
 
 (defjourney "a late joiner parks on the live frame" [{:keys [browser browser-name base-url]} info]
   (let [fx (api/fixture info)

@@ -56,11 +56,6 @@ test. A single trace opens the same way with
 =npx playwright show-trace --host 0.0.0.0 --port 9323 test-results/<dir>/trace.zip=.
 
 * Expected failures and runtime skips
-- =a dropped socket resyncs= is marked =test.fail= (issue #41): after a reconnect the
-  watch page takes the room's clock but not its position, so a seek the
-  host made while the viewer was offline leaves the viewer behind. When
-  that is fixed the journey starts passing and Playwright reports it as
-  an unexpected pass; remove the =.fail= line then.
 - =a laggard catches up without seeking= skips itself at runtime (issue
   #42) only when the element reports =MEDIA_ERR_DECODE= after the
   injected 3.5 s backward seek, which Playwright's WebKit build does in
