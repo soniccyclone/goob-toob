@@ -94,7 +94,6 @@
                                 {:nick "throttled"
                                  :before-goto #(net/throttle! %1 %2 (:throttle-kbps W))}))
         vp (:page viewer)
-        _ (<p! (party/wait-parked! vp))
         joined (<? (party/join! vp (t browser-name :start-within)))
         series (<? (m/sample vp (:throttle-window W) {:live #(api/live base-url cookie (:id room))}))
         summary (m/summarize series 0)
