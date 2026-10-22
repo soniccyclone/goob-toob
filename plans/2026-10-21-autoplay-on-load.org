@@ -353,3 +353,7 @@ as specced, plus:
 - *Not done here*: the WebKit and Firefox projects (dropped from the
   loop; they remain in the config), the CI run and the manual Safari
   check (Verification 4 and 5).
+- *For the playlist plan*: an autostart happens at most once per load,
+  gated on =(.-autostart st)= being nil. =switch-item!= must reset that
+  outcome to nil together with =started=, or the next video parks
+  instead of autostarting.
