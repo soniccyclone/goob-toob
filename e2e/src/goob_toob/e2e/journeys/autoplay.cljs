@@ -1,6 +1,7 @@
 (ns goob-toob.e2e.journeys.autoplay
   (:refer-clojure :exclude [test])
   (:require ["@playwright/test" :refer [test expect]]
+            [cljs.core.async :as a :refer [<!]]
             [cljs.core.async.interop :refer-macros [<p!]]
             [goob-toob.e2e.api :as api]
             [goob-toob.e2e.async :refer-macros [go-try <?]]
@@ -9,8 +10,8 @@
             [goob-toob.e2e.party :as party]
             [goob-toob.e2e.thresholds :refer [t W]]))
 
-(defn- unmute-button [^js page]
-  (.getByRole page "button" #js {:name "tap for sound" :exact true}))
+(def ^:private audible-log? (party/log-line? ":autostart {"))
+(def ^:private blocked-log? (party/log-line? ":autostart-blocked"))
 
 (defn- settled-at [series settled]
   (m/first-at #(and (:started %) (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series))
@@ -20,36 +21,31 @@
     {:autostart (:autostart end) :muted (:muted end) :started (:started end) :paused (:paused end)
      :rejected (get-in end [:counters :rejected]) :autostarts (get-in end [:counters :autostarts])}))
 
-(def ^:private autostart-log? (party/log-line? ":autostart"))
+(defn- expect-audible [end]
+  (-> (expect (:started end) "started") (.toBe true))
+  (-> (expect (:autostart end) "autostart outcome") (.toBe "audible"))
+  (-> (expect (:muted end) "element muted") (.toBe false)))
 
-(defn- autostarted!
-  "host! plus a viewer with a saved nick whose page autostarted, untouched
-  until then, and settled."
-  [browser base-url engine fx]
-  (go-try
-    (let [{:keys [room] :as scene} (<? (party/host! browser base-url engine fx))
-          viewer (<? (party/open! browser base-url (:token room) {:nick "viewer" :hands-off? true}))
-          page (:page viewer)]
-      (<? (party/wait-seen! (:seen viewer) autostart-log? (t engine :autostart-within)))
-      (<p! (party/wait-synced! page (t engine :settled) (t engine :sync-within)))
-      (assoc scene :viewer viewer))))
-
-(defn- expect-outcome [policy end]
-  (case policy
-    :strict  (do (-> (expect (:autostart end) "autostart outcome") (.toBe "muted"))
-                 (-> (expect (:muted end) "element muted") (.toBe true)))
-    :lenient (do (-> (expect (:autostart end) "autostart outcome") (.toBe "audible"))
-                 (-> (expect (:muted end) "element muted") (.toBe false)))
-    nil))
-
-(defjourney "a returning viewer autostarts into a playing room" [{:keys [browser browser-name base-url]} info]
+(defjourney "a returning viewer in a strict browser stays parked until they touch the page"
+  [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie] :as fx} (api/fixture info)
         {:keys [room]} (<? (party/host! browser base-url browser-name fx))
+        policy (party/policy info)
+        strict? (not= :lenient policy)
         t0 (js/Date.now)
         viewer (<? (party/open! browser base-url (:token room) {:nick "viewer" :hands-off? true}))
         page (:page viewer)
-        auto (<? (party/wait-seen! (:seen viewer) autostart-log? (t browser-name :autostart-within)))
-        started-ms (when auto (- (:at auto) t0))
+        seen (:seen viewer)
+        blocked (when strict?
+                  (<? (party/wait-seen! seen (some-fn blocked-log? audible-log?) (t browser-name :autostart-within))))
+        _ (when strict? (<! (a/timeout (:parked-hold W))))
+        early-audible (some audible-log? @seen)
+        parked (when strict? (<? (party/probe page)))
+        t-touch (js/Date.now)
+        _ (when strict? (<p! (party/touch! page)))
+        auto (<? (party/wait-seen! seen audible-log?
+                                   (if strict? (party/touch-start-within) (t browser-name :autostart-within))))
+        started-ms (when auto (- (:at auto) (if strict? t-touch t0)))
         ts (js/Date.now)
         series (<? (m/sample page (:autostart-window W) {:live #(api/live base-url cookie (:id room))}))
         settled (t browser-name :settled)
@@ -57,57 +53,26 @@
         sync-ms (when (and auto sync-at) (- (+ ts sync-at) (:at auto)))
         summary (m/summarize series sync-at)
         end (outcome series)
-        button? (<p! (.isVisible (unmute-button page)))
-        server-drift (:drift (api/client (<p! (api/live base-url cookie (:id room))) "viewer"))
-        policy (party/policy info)]
-    (<p! (m/record! info summary series (assoc end :button button? :started-ms started-ms :sync-ms sync-ms
-                                               :log (:log auto) :server-drift server-drift
-                                               :policy (name policy))))
+        server-drift (:drift (api/client (<p! (api/live base-url cookie (:id room))) "viewer"))]
+    (<p! (m/record! info summary series
+                    (assoc end :policy (name policy) :blocked-log (:log blocked) :early-audible (boolean early-audible)
+                           :parked-started (:started parked) :parked-paused (:paused parked)
+                           :parked-autostart (:autostart parked) :parked-drift (:drift parked)
+                           :started-ms started-ms :sync-ms sync-ms :server-drift server-drift)))
+    (when strict?
+      (-> (expect (blocked-log? blocked) "first autostart blocked") (.toBe true))
+      (-> (expect (boolean early-audible) "audible start before the touch") (.toBe false))
+      (-> (expect (:started parked) "started before the touch") (.toBe false))
+      (-> (expect (:paused parked) "paused before the touch") (.toBe true))
+      (-> (expect (:autostart parked) "autostart outcome before the touch") (.toBe "blocked"))
+      (-> (expect (m/abs* (:drift parked)) "parked drift before the touch")
+          (.toBeLessThanOrEqual (t browser-name :park-track))))
+    (expect-audible end)
+    (-> (expect started-ms (if strict? "ms from touch to audible start" "ms from open to audible start, no gesture"))
+        (.toBeLessThanOrEqual (if strict? (party/touch-start-within) (t browser-name :autostart-within))))
     (-> (expect (:rejected end) "rejected plays") (.toBe 0))
-    (if (and (= :record policy) (= "blocked" (:autostart end)))
-      (do (-> (expect (:paused end) "blocked viewer parked") (.toBe true))
-          (-> (expect (m/abs* (:drift-final summary)) "blocked viewer's parked drift")
-              (.toBeLessThanOrEqual (t browser-name :park-track))))
-      (do (-> (expect (:started end) "started") (.toBe true))
-          (-> (expect started-ms "ms from open to started, no gesture")
-              (.toBeLessThanOrEqual (t browser-name :autostart-within)))
-          (-> (expect sync-ms "ms from started to settled")
-              (.toBeLessThanOrEqual (t browser-name :sync-within)))
-          (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual settled))))
-    (expect-outcome policy end)
-    (case policy
-      :strict  (-> (expect button? "tap for sound shown") (.toBe true))
-      :lenient (-> (expect button? "tap for sound shown") (.toBe false))
-      nil)))
-
-(defjourney "tap for sound unmutes without a seek" [{:keys [browser browser-name base-url]} info]
-  (.skip test (= :lenient (party/policy info)) "a lenient policy starts audible; there is no button")
-  (let [fx (api/fixture info)
-        {:keys [viewer]} (<? (autostarted! browser base-url browser-name fx))
-        page (:page viewer)
-        before (<? (party/probe page))
-        button (unmute-button page)
-        shown? (<p! (.isVisible button))
-        _ (when shown? (<p! (.click button)))
-        t0 (js/Date.now)
-        unmuted? (try (<p! (party/wait-for! page "goobProbe().muted === false" (t browser-name :unmute-within))) true
-                      (catch :default _ false))
-        unmute-ms (- (js/Date.now) t0)
-        series (<? (m/sample page (:unmute-window W)))
-        summary (m/summarize series 0)
-        hidden? (not (<p! (.isVisible button)))
-        seeks (- (get-in (last series) [:counters :seeks]) (get-in before [:counters :seeks]))]
-    (<p! (m/record! info summary series (assoc (outcome series) :autostart-before (:autostart before)
-                                               :shown shown? :unmute-ms unmute-ms :hidden hidden?
-                                               :seeks-since-click seeks)))
-    (when (= :strict (party/policy info))
-      (-> (expect shown? "tap for sound shown") (.toBe true))
-      (-> (expect unmuted? "unmuted after the tap") (.toBe true))
-      (-> (expect unmute-ms "ms from tap to unmuted") (.toBeLessThanOrEqual (t browser-name :unmute-within)))
-      (-> (expect hidden? "button hidden after the tap") (.toBe true))
-      (-> (expect seeks "seeks since the tap") (.toBe 0))
-      (-> (expect (:drift-abs-p95 summary) "drift p95 after the tap")
-          (.toBeLessThanOrEqual (t browser-name :steady-p95))))))
+    (-> (expect sync-ms "ms from started to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))
+    (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual settled))))
 
 (def ^:private doc-marker "window.goobDoc = Math.random();")
 
@@ -129,9 +94,7 @@
     (<p! (m/record! info summary series (assoc end :same-document same-doc? :policy (name policy))))
     (-> (expect same-doc? "same document after the join, no reload") (.toBe true))
     (when (not= :record policy)
-      (-> (expect (:started end) "started") (.toBe true))
-      (-> (expect (:autostart end) "autostart outcome") (.toBe "audible"))
-      (-> (expect (:muted end) "element muted") (.toBe false)))))
+      (expect-audible end))))
 
 (defjourney "a parked viewer starts when the host presses play" [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie video-id]} (api/fixture info)
@@ -140,12 +103,14 @@
         viewer (<? (party/open! browser base-url (:token room) {:nick "viewer" :hands-off? true}))
         page (:page viewer)
         seen (:seen viewer)
+        policy (party/policy info)
         _ (<? (party/wait-seen! seen (party/log-line? ":stream-init") (:ready-timeout W)))
         _ (<? (party/wait-seen! seen (party/frame? "pong") (:ready-timeout W)))
-        parked-started? (boolean (some (some-fn autostart-log? (party/log-line? ":started")) @seen))
+        _ (when (not= :lenient policy) (<p! (party/touch! page)))
+        parked-started? (boolean (some (some-fn audible-log? blocked-log? (party/log-line? ":started")) @seen))
         t0 (js/Date.now)
         host-joined (<? (party/join! (:page host) (t browser-name :start-within)))
-        auto (<? (party/wait-seen! seen autostart-log? (t browser-name :autostart-within)))
+        auto (<? (party/wait-seen! seen audible-log? (t browser-name :autostart-within)))
         started-ms (when auto (- (:at auto) t0))
         ts (js/Date.now)
         series (<? (m/sample page (:autostart-window W) {:live #(api/live base-url cookie (:id room))}))
@@ -153,25 +118,18 @@
         sync-at (settled-at series settled)
         sync-ms (when (and auto sync-at) (- (+ ts sync-at) (:at auto)))
         summary (m/summarize series sync-at)
-        end (outcome series)
-        button? (<p! (.isVisible (unmute-button page)))
-        policy (party/policy info)]
-    (<p! (m/record! info summary series (assoc end :button button? :host-gesture (:gesture host-joined)
+        end (outcome series)]
+    (<p! (m/record! info summary series (assoc end :host-gesture (:gesture host-joined)
                                                :parked-started parked-started? :started-ms started-ms
                                                :sync-ms sync-ms :log (:log auto) :policy (name policy))))
     (-> (expect parked-started? "viewer started before the host's play") (.toBe false))
     (-> (expect (:rejected end) "rejected plays") (.toBe 0))
     (when (not= :record policy)
-      (-> (expect (:started end) "started") (.toBe true))
-      (-> (expect started-ms "ms from the host's play to started, no gesture")
+      (-> (expect started-ms "ms from the host's play to the audible start")
           (.toBeLessThanOrEqual (t browser-name :autostart-within)))
+      (expect-audible end)
       (-> (expect sync-ms "ms from started to settled")
-          (.toBeLessThanOrEqual (t browser-name :sync-within))))
-    (expect-outcome policy end)
-    (case policy
-      :strict  (-> (expect button? "tap for sound shown") (.toBe true))
-      :lenient (-> (expect button? "tap for sound shown") (.toBe false))
-      nil)))
+          (.toBeLessThanOrEqual (t browser-name :sync-within))))))
 
 (defjourney "a controller still has to start a paused room" [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie video-id]} (api/fixture info)
@@ -229,28 +187,25 @@
 
 (defjourney "solo pause and play keep the join" [{:keys [browser browser-name base-url]} info]
   (let [fx (api/fixture info)
-        {:keys [viewer]} (<? (autostarted! browser base-url browser-name fx))
+        {:keys [viewer joined]} (<? (party/pair! browser base-url browser-name fx))
         page (:page viewer)
         _ (<p! (.evaluate page count-events))
         before (<? (party/probe page))
-        button-before (<p! (.isVisible (unmute-button page)))
         pause-gesture (<? (toggle! page "pause"))
         play-gesture (<? (toggle! page "play"))
         series (<? (m/sample page (:autostart-window W)))
         settled (t browser-name :settled)
         sync-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series)
         summary (m/summarize series sync-at)
-        end (last series)
-        button-after (<p! (.isVisible (unmute-button page)))]
-    (<p! (m/record! info summary series (assoc (outcome series) :pause-gesture pause-gesture
-                                               :play-gesture play-gesture :sync-at sync-at
-                                               :autostart-before (:autostart before)
-                                               :button-before button-before :button-after button-after)))
+        end (last series)]
+    (<p! (m/record! info summary series (assoc (outcome series) :join-gesture (:gesture joined)
+                                               :pause-gesture pause-gesture :play-gesture play-gesture
+                                               :sync-at sync-at :autostart-before (:autostart before))))
     (-> (expect (every? :started series) "started on every sample") (.toBe true))
     (-> (expect (:autostart end) "autostart outcome") (.toBe (:autostart before)))
     (-> (expect (get-in end [:counters :autostarts]) "autostart attempts")
         (.toBe (get-in before [:counters :autostarts])))
     (-> (expect (get-in end [:counters :rejected]) "rejected plays")
         (.toBe (get-in before [:counters :rejected])))
-    (-> (expect button-after "tap for sound visibility") (.toBe button-before))
+    (-> (expect (:muted end) "element muted") (.toBe false))
     (-> (expect sync-at "ms from the solo play to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))))

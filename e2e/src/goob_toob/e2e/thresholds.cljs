@@ -26,8 +26,7 @@
    :still-playing     1.0
    :reconnect-seeks   1
    :pullback-seekbacks 1
-   :autostart-within  6000
-   :unmute-within     1000})
+   :autostart-within  6000})
 
 (def per-engine {})
 
@@ -60,6 +59,7 @@
    :gesture-retry     1000
    :ready-timeout     30000
    :autostart-window  12000
-   :unmute-window     5000
-   :control-idle      5000})
+   :control-idle      5000
+   :pong-every        5000
+   :parked-hold       6000})
 

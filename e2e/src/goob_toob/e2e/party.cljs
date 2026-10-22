@@ -132,25 +132,42 @@
 (def ^:private start-settled
   "(() => { const p = goobProbe(); return p.started || p.autostart === 'blocked' || !p.playing; })()")
 
+(defn touch!
+  "A harmless real click (the chat input): gives the document sticky
+  activation without pressing play."
+  [^js page]
+  (.click (.getByPlaceholder page "say something gooey…")))
+
+(defn touch-start-within []
+  (+ (:pong-every W) (:autostart-within T)))
+
 (defn join!
-  "The viewer joins. In a playing room the page autostarts on its own; join!
-  waits up to :autostart-within for that and returns {:gesture
-  \"autostart\"} with no input. Otherwise the gesture: Space on the
-  focused video, then a click on its surface if that did not start the
-  page. Returns {:gesture :autostart :started-ms}."
+  "The viewer joins. In a playing room the page autostarts on its own when
+  the browser allows sound; join! waits up to :autostart-within for that
+  ({:gesture \"autostart\"}). When the autostart was blocked it touches
+  the page and waits for the next update to start it ({:gesture
+  \"touch\"}). Otherwise, or if that did not start it, the gesture: Space
+  on the focused video, then a click on its surface. Returns {:gesture
+  :autostart :started-ms}."
   [^js page timeout]
   (go-try
     (let [video (.locator page "video")
           t0 (js/Date.now)
+          started? #(go-try (try (<p! (wait-for! page "goobProbe().started" %)) true
+                                 (catch :default _ false)))
           _ (try (<p! (wait-for! page start-settled (:autostart-within T))) (catch :default _ nil))
-          auto (<? (probe page))]
-      (if (:started auto)
-        {:gesture "autostart" :autostart (:autostart auto) :started-ms (- (js/Date.now) t0)}
+          auto (<? (probe page))
+          touched? (and (not (:started auto)) (= "blocked" (:autostart auto))
+                        (do (<p! (touch! page))
+                            (<? (started? (touch-start-within)))))]
+      (cond
+        (:started auto) {:gesture "autostart" :autostart (:autostart auto) :started-ms (- (js/Date.now) t0)}
+        touched? {:gesture "touch" :autostart (:autostart (<? (probe page))) :started-ms (- (js/Date.now) t0)}
+        :else
         (do
           (<p! (.focus video))
           (<p! (.press (.-keyboard page) "Space"))
-          (let [space? (try (<p! (wait-for! page "goobProbe().started" (:gesture-retry W))) true
-                            (catch :default _ false))]
+          (let [space? (<? (started? (:gesture-retry W)))]
             (when-not space?
               (<p! (.click video)))
             (<p! (wait-for! page "goobProbe().started" timeout))

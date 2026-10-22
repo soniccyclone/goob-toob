@@ -29,8 +29,11 @@ make e2e E2E_ARGS=--project=firefox
 make e2e E2E_ARGS="-g laggard"
 make e2e E2E_ARGS="--project=webkit -g 'late joiner|dropped'"
 #+end_src
-The projects are =chromium= and =firefox= (strict autoplay: audible
-starts need a gesture, muted ones do not), =chromium-lenient= and
+The projects are =chromium= and =firefox= (strict autoplay: a start
+with sound needs the document to have been touched; =chromium= uses
+=--autoplay-policy=document-user-activation-required=, Chrome's shipped
+policy, because =user-gesture-required= also refuses a play more than
+5 s after the touch), =chromium-lenient= and
 =firefox-lenient= (any start allowed) and =webkit= (Playwright cannot
 force its policy; the autoplay journeys record its outcome). CI runs
 =chromium= and =chromium-lenient=. =firefox=, =firefox-lenient= and
