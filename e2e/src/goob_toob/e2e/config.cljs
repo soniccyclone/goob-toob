@@ -15,11 +15,16 @@
       :reporter [["list"] ["html" {:open "never" :outputFolder "../report"}]]
       :globalSetup "./setup.js"
       :use {:baseURL (str "http://127.0.0.1:" port)
-            :trace "retain-on-failure" :video "retain-on-failure"}
+            :trace {:mode "retain-on-failure" :snapshots false :screenshots true}
+            :video "retain-on-failure"}
       :projects [{:name "chromium" :use {:browserName "chromium"
                                          :launchOptions {:args ["--autoplay-policy=user-gesture-required"]}}}
+                 {:name "chromium-lenient" :use {:browserName "chromium"
+                                                 :launchOptions {:args ["--autoplay-policy=no-user-gesture-required"]}}}
                  {:name "firefox"  :use {:browserName "firefox"
                                          :launchOptions {:firefoxUserPrefs {"media.autoplay.default" 1}}}}
+                 {:name "firefox-lenient" :use {:browserName "firefox"
+                                                :launchOptions {:firefoxUserPrefs {"media.autoplay.default" 0}}}}
                  {:name "webkit"   :use {:browserName "webkit"}}]
       :webServer {:command "clojure -M:dev -m goob-toob.core"
                   :cwd "../.." :url (str "http://127.0.0.1:" port "/api/me")

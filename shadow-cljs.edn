@@ -20,6 +20,8 @@
                         :lobby-admin-chat {:entries [goob-toob.e2e.journeys.lobby-admin-chat]
                                            :depends-on #{:config}}
                         :resilience       {:entries [goob-toob.e2e.journeys.resilience]
+                                           :depends-on #{:config}}
+                        :autoplay         {:entries [goob-toob.e2e.journeys.autoplay]
                                            :depends-on #{:config}}}
            :js-options {:js-provider :import}
            :compiler-options {:optimizations :simple

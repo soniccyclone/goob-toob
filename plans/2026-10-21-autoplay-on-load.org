@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-21
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-21.
+# Status: approved 2026-10-21; implemented 2026-10-22 on autoplay-on-load (Chromium journeys only).
 
 * Goal
 When a viewer opens a room link and the host is already playing, the video
@@ -272,3 +272,84 @@ Every viewer sees it: the merge's last commit carries =Release: minor=.
    container: a returning viewer gets a muted start with the button, and
    with Low Power Mode on gets the parked frame. Record the outcome in the
    implementation notes; it is the only check automation cannot do.
+
+* Implementation notes
+Implemented 2026-10-22 from this plan (steps 1-6), Chromium only for
+the journeys (Firefox and WebKit were dropped from the loop). Landed
+as specced, plus:
+
+- *Playwright's =evaluate= hands the page user activation* in all three
+  engines: Chromium sends =Runtime.callFunctionOn= with
+  =userGesture: true=, and trace DOM snapshots do the same. A scratch
+  probe showed an audible =play()= refused under the strict policy
+  (Chromium =--autoplay-policy=user-gesture-required=, Firefox
+  =media.autoplay.default 1=, WebKit by default) with no evaluate, and
+  allowed after a single =page.evaluate= or with snapshot tracing on.
+  The strict projects therefore reported =audible= at first. Two fixes:
+  the config keeps traces without DOM snapshots
+  (={:mode "retain-on-failure" :snapshots false :screenshots true}=),
+  and =party/open!= takes =:hands-off? true=, which waits for the
+  welcome from the socket frames, with =party/wait-seen!= watching
+  socket frames and clientlog requests until the =:autostart= line
+  arrives. Journeys that assert an autostart outcome open the viewer
+  that way and only probe afterwards. The first-time-viewer journey
+  still evaluates before its join click (the click is a real gesture
+  anyway); its same-document marker is what catches a reload.
+- *dash.js clobbered the autostart's seek.* dash makes its own initial
+  seek to the stream start after =streamInitialized=, so the room seek
+  made at stream-ready was overwritten: a viewer joining 8 s in started
+  at 0 and sat 7.9 s behind, catching up at 1.05x. =ready?= now also
+  requires =readyState >= 2= (HAVE_CURRENT_DATA) and =loadeddata= runs
+  =settle!=, so the start happens at the first frame rather than the
+  next pong. Worst case (first pong after =loadeddata= while a park
+  seek is in flight) waits for the next pong, up to 5 s.
+- *One autostart attempt per load.* =settle!= only autostarts while
+  =autostart= is nil; after a =blocked= outcome it parks on every later
+  trigger, as before this plan, instead of retrying on each pong and
+  logging =:autostart-blocked= every 5 s.
+- *Counters.* =begin!= uses =mark-seek!=, so the begin seek counts in
+  =seeks=; =counters.autostarts= counts attempts (the solo pause/play
+  journey asserts it does not move). =goobProbe()= reports
+  =:autostart=. =automuted= is set as specced but nothing reads it yet.
+- *=settle!= returns its action* and =apply-state-msg!= dispatches on
+  it, so =start-action= stays the one decision for state messages.
+- *Journeys changed for autostart:*
+  =a late joiner parks on the live frame= became
+  =a late joiner lands on the live frame= (autostarts, strict muted,
+  settled within =:sync-within=), and the parked-frame assertions moved
+  to the new =a viewer parks on a paused room=.
+  =viewer joins a playing room in sync= lost its parked phase and
+  parked-drift assertion (an autostarting viewer never parks);
+  everything else is kept and the metrics record gesture vs autostart.
+  =party/pair!=, =a dropped socket resyncs= and
+  =throttled viewer steps the quality down= no longer wait for a park
+  before =join!=; =join!= waits up to =:autostart-within= for an
+  autostart and only presses Space when none came.
+  =upload to lobby= titles its upload by project, not engine: the
+  second Chromium project found the first one's ready row and failed
+  in 0.5 s.
+- *Chromium metrics*, last of three consecutive green runs of
+  =make e2e E2E_ARGS="--project=chromium --project=chromium-lenient"=
+  (each 37 passed, 1 skipped: tap-for-sound in the lenient project).
+  Started ms counts from opening the viewer (from the host's play for
+  the parked viewer); "muted" for tap-for-sound is after the tap.
+  | project | journey | autostart | muted | started ms | started to settled ms | drift p95 s |
+  |-
+  | chromium | a returning viewer autostarts into a playing room | muted | true | 165 | 182 | 0.058 |
+  | chromium | tap for sound unmutes without a seek | muted | false | - | - | 0.088 |
+  | chromium | a first-time viewer's join click gives sound | audible | false | - | - | 0.108 |
+  | chromium | a parked viewer starts when the host presses play | muted | true | 55 | 83 | 0.051 |
+  | chromium | a controller still has to start a paused room | - | - | 125 (gesture) | - | 0.001 |
+  | chromium | solo pause and play keep the join | muted | true | - | - | 0.090 |
+  | chromium-lenient | a returning viewer autostarts into a playing room | audible | false | 166 | 184 | 0.105 |
+  | chromium-lenient | a first-time viewer's join click gives sound | audible | false | - | - | 0.104 |
+  | chromium-lenient | a parked viewer starts when the host presses play | audible | false | 44 | 85 | 0.098 |
+  | chromium-lenient | a controller still has to start a paused room | - | - | 127 (gesture) | - | 0.001 |
+  | chromium-lenient | solo pause and play keep the join | audible | false | - | - | 0.125 |
+- *Break check*: with the muted retry skipped in =autostart!=,
+  =a returning viewer autostarts into a playing room= failed in the
+  strict =chromium= project on "started" (=autostart=blocked=,
+  =:autostart-blocked {:err "NotAllowedError"}=, parked); restored.
+- *Not done here*: the WebKit and Firefox projects (dropped from the
+  loop; they remain in the config), the CI run and the manual Safari
+  check (Verification 4 and 5).

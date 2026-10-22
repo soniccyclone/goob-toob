@@ -17,7 +17,7 @@ make e2e
 image plus Java 21, Clojure and ffmpeg); the first build pulls about
 2 GB. =make e2e= builds the client and the specs inside that image,
 starts the server on port 18080 with a fresh storage dir, renders and
-uploads the test clips, and runs every journey in all three engines.
+uploads the test clips, and runs every journey in all five projects.
 The run ends with Playwright's summary line, for example
 =36 passed (12.0m)=.
 
@@ -29,9 +29,21 @@ make e2e E2E_ARGS=--project=firefox
 make e2e E2E_ARGS="-g laggard"
 make e2e E2E_ARGS="--project=webkit -g 'late joiner|dropped'"
 #+end_src
-CI runs the =chromium= project only. =firefox= and =webkit= stay available
-locally for DOM and gesture checks; their decode timing on shared runners
-said nothing useful (see issue #42).
+The projects are =chromium= and =firefox= (strict autoplay: audible
+starts need a gesture, muted ones do not), =chromium-lenient= and
+=firefox-lenient= (any start allowed) and =webkit= (Playwright cannot
+force its policy; the autoplay journeys record its outcome). CI runs
+=chromium= and =chromium-lenient=. =firefox=, =firefox-lenient= and
+=webkit= stay available locally for DOM and gesture checks; their decode
+timing on shared runners said nothing useful (see issue #42).
+
+Playwright's =evaluate= (and so =waitForFunction=, locators and trace
+DOM snapshots) runs with a user gesture in all three engines, which
+gives the page sticky activation and lets it start with sound under the
+strict policy. Journeys that assert an autostart's outcome open the
+viewer with =:hands-off? true= and watch its socket frames and clientlog
+requests (=party/wait-seen!=) until the outcome is logged; the config
+keeps traces without DOM snapshots for the same reason.
 CI does not build the image per run: the =e2e-image= job pushes it to
 =ghcr.io/soniccyclone/goob-toob-e2e:<hash of its inputs>= once per change
 to the Containerfile or the lock files, and the legs run inside it. To
