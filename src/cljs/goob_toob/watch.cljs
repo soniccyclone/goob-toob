@@ -105,8 +105,9 @@
               (str "you're " (int (- d)) "s behind the room — reload to jump to it")
               "")))))
 
-(defn- ready? [^js st]
-  (boolean (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st)))))
+(defn- ready? [^js st ^js video]
+  (boolean (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st))
+                (>= (.-readyState video) 2))))
 
 (defn- begin! [^js st ^js video]
   (set! (.-started st) true)
@@ -145,7 +146,7 @@
                                         :playing? (boolean (:playing (.-room st)))
                                         :can-control? (boolean (.-cancontrol st))})]
     (case action
-      :autostart (if (and (ready? st) (nil? (.-autostart st)))
+      :autostart (if (and (ready? st video) (nil? (.-autostart st)))
                    (autostart! st token video (:unmute refs))
                    (park! st video))
       :park      (park! st video)
@@ -257,6 +258,7 @@
               (when-not (.-player st)
                 (set! (.-preservesPitch video) true)
                 (set! (.-webkitPreservesPitch video) true)
+                (.addEventListener video "loadeddata" #(settle! st token video refs))
                 (.addEventListener video "error"
                   #(log! token :video-error {:code (some-> (.-error video) .-code)
                                              :msg (some-> (.-error video) .-message)}))
