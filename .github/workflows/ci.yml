@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit]
+        project: [chromium, firefox]
     env:
       CI: "1"
       HOME: /root
@@ -109,8 +109,65 @@ jobs:
       - if: always()
         run: if [ -f e2e/metrics/summary.md ]; then cat e2e/metrics/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
 
+  # WebKit runs on macOS so it decodes through Apple's media stack
+  # (CoreMedia, hardware H.264/AAC) the way Safari does; Playwright's Linux
+  # WebKit is WebKitGTK on GStreamer and measures nothing about Safari.
+  e2e-webkit:
+    needs: test
+    runs-on: macos-latest
+    env:
+      CI: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Clojure
+        run: |
+          curl -fsSLo /tmp/clj-install.sh https://download.clojure.org/install/posix-install-1.12.0.1527.sh
+          sudo bash /tmp/clj-install.sh
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - run: clojure -P -M:dev
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+        working-directory: e2e
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+      - run: npx playwright install webkit
+        working-directory: e2e
+      - run: npx shadow-cljs release client e2e
+      - name: Journeys
+        working-directory: e2e
+        run: |
+          export GOOB_E2E_STORAGE="$RUNNER_TEMP/goob"
+          mkdir -p "$GOOB_E2E_STORAGE"
+          npx playwright test -c out/config.js --project=webkit
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-webkit
+          path: |
+            e2e/metrics
+            e2e/report
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-webkit-test-results
+          path: e2e/test-results
+      - if: always()
+        run: if [ -f e2e/metrics/summary.md ]; then cat e2e/metrics/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+
   tag:
-    needs: [test, e2e]
+    needs: [test, e2e, e2e-webkit]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
