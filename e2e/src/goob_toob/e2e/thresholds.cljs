@@ -25,7 +25,8 @@
    :transcode-within  90000
    :still-playing     1.0
    :reconnect-seeks   1
-   :pullback-seekbacks 1})
+   :pullback-seekbacks 1
+   :autostart-within  6000})
 
 (def per-engine {})
 
@@ -56,5 +57,9 @@
    :parked-window     12000
    :chat-fill         20
    :gesture-retry     1000
-   :ready-timeout     30000})
+   :ready-timeout     30000
+   :autostart-window  12000
+   :control-idle      5000
+   :pong-every        5000
+   :parked-hold       6000})
 

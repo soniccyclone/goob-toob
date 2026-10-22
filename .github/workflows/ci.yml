@@ -93,7 +93,7 @@ jobs:
         run: |
           export GOOB_E2E_STORAGE="$RUNNER_TEMP/goob"
           mkdir -p "$GOOB_E2E_STORAGE"
-          npx playwright test -c out/config.js --project=${{ matrix.project }}
+          npx playwright test -c out/config.js --project=chromium --project=chromium-lenient
       - if: always()
         uses: actions/upload-artifact@v4
         with:

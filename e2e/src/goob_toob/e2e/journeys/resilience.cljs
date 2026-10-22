@@ -26,7 +26,6 @@
                                  :before-goto (fn [ctx _] (party/droppable! ctx))}))
         hp (:page host) vp (:page viewer)
         ^js vctx (:context viewer)
-        _ (<p! (party/wait-parked! vp))
         _ (<? (party/join! vp (t browser-name :start-within)))
         _ (<p! (party/wait-synced! vp (t browser-name :settled) (t browser-name :sync-within)))
         listed-before (<p! (peer-listed? hp "viewer"))
@@ -73,10 +72,40 @@
     (-> (expect (:drift-abs-p95 summary) "drift p95 after the resync") (.toBeLessThanOrEqual (t browser-name :steady-p95)))
     (-> (expect (:stalls summary) "stalls after the resync") (.toBe 0))))
 
-(defjourney "a late joiner parks on the live frame" [{:keys [browser browser-name base-url]} info]
-  (let [fx (api/fixture info)
+(defjourney "a late joiner lands on the live frame" [{:keys [browser browser-name base-url]} info]
+  (let [{:keys [cookie] :as fx} (api/fixture info)
         {:keys [room]} (<? (party/host! browser base-url browser-name fx))
         _ (<! (a/timeout (:late-head-start W)))
+        viewer (<? (party/open! browser base-url (:token room) {:nick "late"}))
+        page (:page viewer)
+        joined (<? (party/join! page (t browser-name :start-within)))
+        t1 (js/Date.now)
+        synced? (try (<p! (party/wait-synced! page (t browser-name :settled) (t browser-name :sync-within))) true
+                     (catch :default _ false))
+        sync-ms (- (js/Date.now) t1)
+        series (<? (m/sample page (:parked-window W)))
+        summary (m/summarize series 0)
+        end (last series)
+        server-drift (:drift (api/client (<p! (api/live base-url cookie (:id room))) "late"))]
+    (<p! (m/record! info summary series (assoc joined :sync-ms sync-ms :autostart (:autostart end)
+                                               :muted (:muted end) :server-drift server-drift)))
+    (-> (expect (:gesture joined) "joined without pressing play") (.toMatch #"^(autostart|touch)$"))
+    (-> (expect (:started-ms joined) "ms from open to started")
+        (.toBeLessThanOrEqual (party/touch-start-within)))
+    (-> (expect (:autostart end) "autostart outcome") (.toBe "audible"))
+    (-> (expect (:muted end) "element muted") (.toBe false))
+    (-> (expect synced? "settled after the start") (.toBe true))
+    (-> (expect sync-ms "ms from started to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))
+    (-> (expect (get-in end [:counters :rejected]) "rejected plays") (.toBe 0))
+    (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual (t browser-name :settled)))))
+
+(defjourney "a viewer parks on a paused room" [{:keys [browser browser-name base-url]} info]
+  (let [fx (api/fixture info)
+        {:keys [room host]} (<? (party/host! browser base-url browser-name fx))
+        _ (<! (a/timeout (:late-head-start W)))
+        _ (<p! (party/pause! (:page host)))
+        _ (<p! (party/wait-for! (:page host) "goobProbe().paused && goobProbe().playing === false"
+                                (t browser-name :sync-within)))
         viewer (<? (party/open! browser base-url (:token room) {:nick "late"}))
         page (:page viewer)
         _ (<p! (party/wait-parked! page))

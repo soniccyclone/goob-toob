@@ -105,10 +105,49 @@
               (str "you're " (int (- d)) "s behind the room — reload to jump to it")
               "")))))
 
-(defn- apply-state-msg! [^js st video msg]
+(defn- ready? [^js st ^js video]
+  (boolean (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st))
+                (>= (.-readyState video) 2))))
+
+(defn- begin! [^js st ^js video]
+  (set! (.-started st) true)
+  (mark-seek! st)
+  (set! (.-currentTime video) (expected-now st (.-room st))))
+
+(defn- outcome! [^js st token outcome ev data]
+  (when (not= outcome (.-autostart st))
+    (log! token ev data))
+  (set! (.-autostart st) outcome))
+
+(defn- autostart! [^js st token ^js video]
+  (set! (.-starting st) true)
+  (bump! st "autostarts")
+  (begin! st video)
+  (-> (.play video)
+      (.then (fn []
+               (set! (.-starting st) false)
+               (outcome! st token "audible" :autostart {})))
+      (.catch (fn [^js err]
+                (set! (.-starting st) false)
+                (set! (.-started st) false)
+                (outcome! st token "blocked" :autostart-blocked {:err (some-> err .-name)})
+                (park! st video)))))
+
+(defn- settle! [^js st token video]
+  (let [action (sc/start-action :state {:started? (boolean (.-started st))
+                                        :playing? (boolean (:playing (.-room st)))
+                                        :can-control? (boolean (.-cancontrol st))})]
+    (case action
+      :autostart (if (and (ready? st video) (not (.-starting st)))
+                   (autostart! st token video)
+                   (park! st video))
+      :park      (park! st video)
+      :none      nil)
+    action))
+
+(defn- apply-state-msg! [^js st token video msg]
   (set! (.-room st) msg)
-  (case (sc/start-action :state {:started? (boolean (.-started st))})
-    :park (park! st video)
+  (case (settle! st token video)
     :none (case (:op msg)
             "play"  (do (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg))
@@ -119,7 +158,8 @@
                         (set! (.-playbackRate video) 1.0))
             "seek"  (do (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg)))
-            nil)))
+            nil)
+    nil))
 
 (defn- resync! [^js st token video]
   (let [room (.-room st)
@@ -210,6 +250,7 @@
               (when-not (.-player st)
                 (set! (.-preservesPitch video) true)
                 (set! (.-webkitPreservesPitch video) true)
+                (.addEventListener video "loadeddata" #(settle! st token video))
                 (.addEventListener video "error"
                   #(log! token :video-error {:code (some-> (.-error video) .-code)
                                              :msg (some-> (.-error video) .-message)}))
@@ -220,12 +261,13 @@
                                                 :ua (.-userAgent js/navigator)})
                       (ui/clear! res-slot)
                       (ui/add! res-slot (res-menu st))
-                      (park! st video))))
+                      (set! (.-streamok st) true)
+                      (settle! st token video))))
                 ;; faults must be wired NOW, not on streamInitialized —
                 ;; a broken manifest never initializes, that's the point
                 (player/on-faults (.-player st)
                   (fn [d] (log! token (:ev d) (dissoc d :ev))))))
-          "state" (apply-state-msg! st video msg)
+          "state" (apply-state-msg! st token video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st token video lag-hint)
                       (render-peers! peers-el (:peers msg) (.-ishost st))
@@ -245,9 +287,7 @@
                         (log! token :clock-jump {:from (Math/round before) :to (Math/round after)
                                                  :rtt (Math/round (:rtt sample))}))
                       (set! (.-offset st) after))
-                    ;; the first pong is what makes `expected` trustworthy —
-                    ;; keep the parked frame live until the viewer presses play
-                    (when-not (.-started st) (park! st video)))
+                    (settle! st token video))
           "chat"  (append-chat! chat-log new-msgs msg)
           "peers" (render-peers! peers-el (:peers msg) (.-ishost st))
           "error" (set! (.-textContent title-el) (:message msg))
@@ -304,30 +344,31 @@
                  :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))
     (set! (.-onplay video)
       (fn []
-        (let [act      (.-userActivation js/navigator)
-              gesture? (or (nil? act) (boolean (.-isActive act)))
-              started? (boolean (.-started st))
-              room     (.-room st)
-              action   (sc/start-action :play {:started? started? :gesture? gesture?
-                                               :playing? (boolean (:playing room))
-                                               :can-control? (boolean (.-cancontrol st))})]
-          (when-not started?
-            (if gesture?
-              (do (set! (.-started st) true)
-                  (log! (unchecked-get st "token") :started
-                        {:activation (boolean (and act (.-isActive act)))}))
-              (do (bump! st "rejected")
-                  (log! (unchecked-get st "token") :play-rejected {}))))
-          (case action
-            :none       nil
-            :park       (park! st video)
-            :start      (do (mark-seek! st)
-                            (set! (.-currentTime video) (expected-now st room)))
-            :start-room (when room
-                          (mark-seek! st)
-                          (set! (.-currentTime video) (expected-now st room))
-                          (wsx/send! (.-ws st) {:type "cmd" :op "play"
-                                                 :pos (expected-now st room)}))))))
+        (when-not (.-starting st)
+          (let [act      (.-userActivation js/navigator)
+                gesture? (or (nil? act) (boolean (.-isActive act)))
+                started? (boolean (.-started st))
+                room     (.-room st)
+                action   (sc/start-action :play {:started? started? :gesture? gesture?
+                                                 :playing? (boolean (:playing room))
+                                                 :can-control? (boolean (.-cancontrol st))})]
+            (when-not started?
+              (if gesture?
+                (do (set! (.-started st) true)
+                    (log! (unchecked-get st "token") :started
+                          {:activation (boolean (and act (.-isActive act)))}))
+                (do (bump! st "rejected")
+                    (log! (unchecked-get st "token") :play-rejected {}))))
+            (case action
+              :none       nil
+              :park       (park! st video)
+              :start      (do (mark-seek! st)
+                              (set! (.-currentTime video) (expected-now st room)))
+              :start-room (when room
+                            (mark-seek! st)
+                            (set! (.-currentTime video) (expected-now st room))
+                            (wsx/send! (.-ws st) {:type "cmd" :op "play"
+                                                   :pos (expected-now st room)})))))))
     (set! (.-onkeydown chat-input) #(when (= "Enter" (.-key %)) (send-chat)))
     (set! (.-onclick new-msgs)
           #(do (set! (.-scrollTop chat-log) (.-scrollHeight chat-log))
@@ -409,13 +450,31 @@
                        :buf (buffered video)})))))
         4000))))
 
+(defn- mount! [^js st token root]
+  (let [refs (shell st)
+        started (js-obj "done" false)]
+    (connect! st token refs)
+    (js/setInterval
+      (fn []
+        (when (and (not (.-done started)) (.-room st))
+          (set! (.-done started) true)
+          (when (.-cancontrol st)
+            (set! (.-display (.-style (:host-row refs))) "flex")
+            (when-not (.-ishost st)
+              (set! (.-textContent (:badge refs)) "co-hosting")))
+          (loops! st refs)))
+      800)
+    (ui/add! root (:layout refs))))
+
 (defn page [token]
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none
                   "auto" true "qcap" nil "ourseek" 0
+                  "streamok" false "starting" false "autostart" nil
                   "counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0
-                                     "rejected" 0 "capsteps" 0))
-        saved-nick (ui/store-get "goob-nick")]
+                                     "rejected" 0 "capsteps" 0 "autostarts" 0))
+        saved-nick (ui/store-get "goob-nick")
+        root (h :div {})]
     (set! (.-goobProbe js/window)
           (fn []
             (let [room (.-room st) ^js v (ui/$ "video")]
@@ -426,6 +485,7 @@
                         :rate (some-> v .-playbackRate) :roomRate (:rate room)
                         :playing (:playing room) :paused (some-> v .-paused)
                         :muted (some-> v .-muted) :started (.-started st)
+                        :autostart (.-autostart st)
                         :mode (name (.-mode st)) :buffering (.-buffering st)
                         :bufferAhead (when v (buffer-ahead v))
                         :qcap (:cap (.-qcap st)) :offset (.-offset st)
@@ -438,29 +498,15 @@
                     (h :p "slime into the room — what's your name?")
                     input
                     join-btn)
-            overlay (h :div.overlay card)
             join! (fn []
                     (let [n (str/trim (.-value input))]
                       (when-not (empty? n)
                         (ui/store-set! "goob-nick" n)
-                        (.reload js/location))))]
+                        (set! (.-nick st) n)
+                        (mount! st token (ui/clear! root)))))]
         (set! (.-onclick join-btn) join!)
         (set! (.-onkeydown input) #(when (= "Enter" (.-key %)) (join!)))
-        overlay)
-      (do
-        (set! (.-nick st) saved-nick)
-        (let [refs (shell st)]
-          (connect! st token refs)
-          ;; once welcome lands: host chrome + steady loops (once)
-          (let [started (js-obj "done" false)]
-            (js/setInterval
-              (fn []
-                (when (and (not (.-done started)) (.-room st))
-                  (set! (.-done started) true)
-                  (when (.-cancontrol st)
-                    (set! (.-display (.-style (:host-row refs))) "flex")
-                    (when-not (.-ishost st)
-                      (set! (.-textContent (:badge refs)) "co-hosting")))
-                  (loops! st refs)))
-              800))
-          (:layout refs))))))
+        (ui/add! root (h :div.overlay card)))
+      (do (set! (.-nick st) saved-nick)
+          (mount! st token root)))
+    root))

@@ -30,7 +30,7 @@
 
 (defjourney "upload to lobby" [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie upload-clip]} (api/fixture info)
-        title (str "upload-" browser-name "-" (.-retry info))
+        title (str "upload-" (.. info -project -name) "-" (.-retry info))
         file (path/join (fs/mkdtempSync (path/join (os/tmpdir) "goob-up-")) (str title ".mp4"))
         _ (fs/copyFileSync upload-clip file)
         {^js admin :page} (<? (party/open-page! browser base-url "/admin" {:cookie cookie}))
