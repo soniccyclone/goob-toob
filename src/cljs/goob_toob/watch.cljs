@@ -114,48 +114,40 @@
   (mark-seek! st)
   (set! (.-currentTime video) (expected-now st (.-room st))))
 
-(defn- autostart! [^js st token ^js video ^js unmute]
+(defn- outcome! [^js st token outcome ev data]
+  (when (not= outcome (.-autostart st))
+    (log! token ev data))
+  (set! (.-autostart st) outcome))
+
+(defn- autostart! [^js st token ^js video]
   (set! (.-starting st) true)
   (bump! st "autostarts")
   (begin! st video)
-  (set! (.-muted video) false)
-  (let [done (fn [muted?]
+  (-> (.play video)
+      (.then (fn []
                (set! (.-starting st) false)
-               (set! (.-automuted st) muted?)
-               (set! (.-display (.-style unmute)) (if muted? "" "none"))
-               (set! (.-autostart st) (if muted? "muted" "audible"))
-               (log! token :autostart {:muted muted?}))
-        blocked (fn [^js err]
-                  (set! (.-starting st) false)
-                  (set! (.-started st) false)
-                  (set! (.-autostart st) "blocked")
-                  (log! token :autostart-blocked {:err (some-> err .-name)})
-                  (park! st video))]
-    (-> (.play video)
-        (.then #(done false))
-        (.catch (fn [^js err]
-                  (if (= "NotAllowedError" (some-> err .-name))
-                    (do (set! (.-muted video) true)
-                        (-> (.play video)
-                            (.then #(done true))
-                            (.catch blocked)))
-                    (blocked err)))))))
+               (outcome! st token "audible" :autostart {})))
+      (.catch (fn [^js err]
+                (set! (.-starting st) false)
+                (set! (.-started st) false)
+                (outcome! st token "blocked" :autostart-blocked {:err (some-> err .-name)})
+                (park! st video)))))
 
-(defn- settle! [^js st token video refs]
+(defn- settle! [^js st token video]
   (let [action (sc/start-action :state {:started? (boolean (.-started st))
                                         :playing? (boolean (:playing (.-room st)))
                                         :can-control? (boolean (.-cancontrol st))})]
     (case action
-      :autostart (if (and (ready? st video) (nil? (.-autostart st)))
-                   (autostart! st token video (:unmute refs))
+      :autostart (if (and (ready? st video) (not (.-starting st)))
+                   (autostart! st token video)
                    (park! st video))
       :park      (park! st video)
       :none      nil)
     action))
 
-(defn- apply-state-msg! [^js st token video refs msg]
+(defn- apply-state-msg! [^js st token video msg]
   (set! (.-room st) msg)
-  (case (settle! st token video refs)
+  (case (settle! st token video)
     :none (case (:op msg)
             "play"  (do (mark-seek! st)
                         (set! (.-currentTime video) (:pos msg))
@@ -258,7 +250,7 @@
               (when-not (.-player st)
                 (set! (.-preservesPitch video) true)
                 (set! (.-webkitPreservesPitch video) true)
-                (.addEventListener video "loadeddata" #(settle! st token video refs))
+                (.addEventListener video "loadeddata" #(settle! st token video))
                 (.addEventListener video "error"
                   #(log! token :video-error {:code (some-> (.-error video) .-code)
                                              :msg (some-> (.-error video) .-message)}))
@@ -270,12 +262,12 @@
                       (ui/clear! res-slot)
                       (ui/add! res-slot (res-menu st))
                       (set! (.-streamok st) true)
-                      (settle! st token video refs))))
+                      (settle! st token video))))
                 ;; faults must be wired NOW, not on streamInitialized —
                 ;; a broken manifest never initializes, that's the point
                 (player/on-faults (.-player st)
                   (fn [d] (log! token (:ev d) (dissoc d :ev))))))
-          "state" (apply-state-msg! st token video refs msg)
+          "state" (apply-state-msg! st token video msg)
           "beat"  (do (set! (.-room st) msg)
                       (apply-policy! st token video lag-hint)
                       (render-peers! peers-el (:peers msg) (.-ishost st))
@@ -295,7 +287,7 @@
                         (log! token :clock-jump {:from (Math/round before) :to (Math/round after)
                                                  :rtt (Math/round (:rtt sample))}))
                       (set! (.-offset st) after))
-                    (settle! st token video refs))
+                    (settle! st token video))
           "chat"  (append-chat! chat-log new-msgs msg)
           "peers" (render-peers! peers-el (:peers msg) (.-ishost st))
           "error" (set! (.-textContent title-el) (:message msg))
@@ -310,8 +302,7 @@
         _ (do (set! (.-className video) "stage")
               (.setAttribute video "controls" "")
               (.setAttribute video "playsinline" ""))
-        unmute (h :button.btn.unmute {:style "display:none"} "tap for sound")
-        stage-wrap (h :div.stage-wrap video unmute)
+        stage-wrap (h :div.stage-wrap video)
         lag-hint (h :span.muted {})
         slow-note (h :span.muted {})
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
@@ -351,11 +342,6 @@
                           (let [d (sc/drift (.-currentTime video) (expected-now st room))]
                             (/ (Math/round (* 10 d)) 10)))
                  :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))
-    (set! (.-onclick unmute) #(set! (.-muted video) false))
-    (set! (.-onvolumechange video)
-      #(when-not (.-muted video)
-         (set! (.-automuted st) false)
-         (set! (.-display (.-style unmute)) "none")))
     (set! (.-onplay video)
       (fn []
         (when-not (.-starting st)
@@ -424,7 +410,7 @@
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
      :chat-log chat-log :peers-el peers-el :host-row host-row
-     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note :unmute unmute}))
+     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
 (defn- loops! [^js st refs]
   (let [{:keys [video seek lag-hint]} refs
@@ -484,7 +470,7 @@
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none
                   "auto" true "qcap" nil "ourseek" 0
-                  "streamok" false "starting" false "automuted" false "autostart" nil
+                  "streamok" false "starting" false "autostart" nil
                   "counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
         saved-nick (ui/store-get "goob-nick")
