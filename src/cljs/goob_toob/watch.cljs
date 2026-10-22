@@ -462,6 +462,22 @@
                        :buf (buffered video)})))))
         4000))))
 
+(defn- mount! [^js st token root]
+  (let [refs (shell st)
+        started (js-obj "done" false)]
+    (connect! st token refs)
+    (js/setInterval
+      (fn []
+        (when (and (not (.-done started)) (.-room st))
+          (set! (.-done started) true)
+          (when (.-cancontrol st)
+            (set! (.-display (.-style (:host-row refs))) "flex")
+            (when-not (.-ishost st)
+              (set! (.-textContent (:badge refs)) "co-hosting")))
+          (loops! st refs)))
+      800)
+    (ui/add! root (:layout refs))))
+
 (defn page [token]
   (let [^js st (js-obj "offset" 0 "samples" [] "buffering" false "ishost" false
                   "cancontrol" false "started" false "token" token "mode" :none
@@ -469,7 +485,8 @@
                   "streamok" false "starting" false "automuted" false "autostart" nil
                   "counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
-        saved-nick (ui/store-get "goob-nick")]
+        saved-nick (ui/store-get "goob-nick")
+        root (h :div {})]
     (set! (.-goobProbe js/window)
           (fn []
             (let [room (.-room st) ^js v (ui/$ "video")]
@@ -493,29 +510,15 @@
                     (h :p "slime into the room — what's your name?")
                     input
                     join-btn)
-            overlay (h :div.overlay card)
             join! (fn []
                     (let [n (str/trim (.-value input))]
                       (when-not (empty? n)
                         (ui/store-set! "goob-nick" n)
-                        (.reload js/location))))]
+                        (set! (.-nick st) n)
+                        (mount! st token (ui/clear! root)))))]
         (set! (.-onclick join-btn) join!)
         (set! (.-onkeydown input) #(when (= "Enter" (.-key %)) (join!)))
-        overlay)
-      (do
-        (set! (.-nick st) saved-nick)
-        (let [refs (shell st)]
-          (connect! st token refs)
-          ;; once welcome lands: host chrome + steady loops (once)
-          (let [started (js-obj "done" false)]
-            (js/setInterval
-              (fn []
-                (when (and (not (.-done started)) (.-room st))
-                  (set! (.-done started) true)
-                  (when (.-cancontrol st)
-                    (set! (.-display (.-style (:host-row refs))) "flex")
-                    (when-not (.-ishost st)
-                      (set! (.-textContent (:badge refs)) "co-hosting")))
-                  (loops! st refs)))
-              800))
-          (:layout refs))))))
+        (ui/add! root (h :div.overlay card)))
+      (do (set! (.-nick st) saved-nick)
+          (mount! st token root)))
+    root))
