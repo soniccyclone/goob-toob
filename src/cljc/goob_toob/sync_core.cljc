@@ -90,11 +90,13 @@
 (defn start-action
   "What the watch page does with a start-related event. trigger is :play
   (the video element fired play) or :state (a room state arrived; also used
-  on stream-ready and first pong). gesture? is navigator.userActivation.isActive
-  at the :play. Returns :none, :park, :start or :start-room."
+  on stream-ready and every pong). gesture? is navigator.userActivation.isActive
+  at the :play. Returns :none, :park, :start, :start-room or :autostart."
   [trigger {:keys [started? gesture? playing? can-control?]}]
   (cond
-    (not= trigger :play) (if started? :none :park)
+    (not= trigger :play) (cond started? :none
+                               playing? :autostart
+                               :else    :park)
     started?             (if playing? :none :park)
     (not gesture?)       :park
     playing?             :start

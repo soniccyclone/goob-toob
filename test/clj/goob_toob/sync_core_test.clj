@@ -124,9 +124,14 @@
          (sc/room-rate 1.0 [{:nick "a" :drift -3.5 :age-ms 0 :behind-ms 0}
                             {:nick "b" :drift -5.0 :age-ms 0 :behind-ms 0}]))))
 
-(deftest start-action-parks-an-unstarted-viewer-on-state
-  (is (= :park (sc/start-action :state {:started? false})))
-  (is (= :none (sc/start-action :state {:started? true}))))
+(deftest start-action-autostarts-into-a-playing-room
+  (is (= :autostart (sc/start-action :state {:started? false :playing? true}))))
+
+(deftest start-action-parks-on-a-paused-room
+  (is (= :park (sc/start-action :state {:started? false :playing? false :can-control? true}))))
+
+(deftest start-action-does-nothing-once-started
+  (is (= :none (sc/start-action :state {:started? true :playing? true}))))
 
 (deftest start-action-refuses-a-play-without-a-gesture
   (is (= :park (sc/start-action :play {:started? false :gesture? false :playing? true}))))
