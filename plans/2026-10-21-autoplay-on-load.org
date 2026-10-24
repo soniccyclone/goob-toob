@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-21
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: approved 2026-10-21; implemented 2026-10-22 on autoplay-on-load (Chromium journeys only); muted fallback dropped the same day at Nathan's call, see Implementation notes.
+# Status: approved 2026-10-21; implemented 2026-10-22 on autoplay-on-load (Chromium journeys only); muted fallback dropped the same day at Nathan's call, see Implementation notes; shipped as v0.5.0 on 2026-10-24 (#48).
 
 * Goal
 When a viewer opens a room link and the host is already playing, the video

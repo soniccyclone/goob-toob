@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-24 Sat 11:37 -->
+<!-- 2026-10-24 Sat 12:36 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Autoplay on load: viewers join a playing room without pressing play</title>
@@ -30,33 +30,33 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orge3d5017">Goal</a></li>
-<li><a href="#org455a5c4">Findings</a>
+<li><a href="#org5082924">Goal</a></li>
+<li><a href="#orge4ebbd2">Findings</a>
 <ul>
-<li><a href="#org8e35527">How a viewer starts today</a></li>
-<li><a href="#orgdc0062a">What browsers allow (the constraint this plan is built around)</a></li>
+<li><a href="#orgcaef21d">How a viewer starts today</a></li>
+<li><a href="#org919da21">What browsers allow (the constraint this plan is built around)</a></li>
 </ul>
 </li>
-<li><a href="#orge52e7c5">Plan</a>
+<li><a href="#orga7eaa03">Plan</a>
 <ul>
-<li><a href="#orga977887">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></a></li>
-<li><a href="#org5b14bb1">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</a></li>
-<li><a href="#org5d46a30">3 · Unmute control</a></li>
-<li><a href="#orgcbe2201">4 · The nick prompt no longer reloads</a></li>
-<li><a href="#org9212418">5 · Diagnostics</a></li>
-<li><a href="#orgb2e7db8">6 · Tests</a></li>
-<li><a href="#orgefa93ad">7 · Release</a></li>
+<li><a href="#orgff8a10e">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></a></li>
+<li><a href="#org9aaf388">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</a></li>
+<li><a href="#orgfc79369">3 · Unmute control</a></li>
+<li><a href="#orgb3acd3c">4 · The nick prompt no longer reloads</a></li>
+<li><a href="#org91d9d3a">5 · Diagnostics</a></li>
+<li><a href="#org9782a4c">6 · Tests</a></li>
+<li><a href="#orga161093">7 · Release</a></li>
 </ul>
 </li>
-<li><a href="#org92e43e2">Risks and open questions</a></li>
-<li><a href="#org8568b19">Verification</a></li>
-<li><a href="#orgb8a4028">Implementation notes</a></li>
+<li><a href="#org1333793">Risks and open questions</a></li>
+<li><a href="#org890e63c">Verification</a></li>
+<li><a href="#org0f8cf0a">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orge3d5017" class="outline-2">
-<h2 id="orge3d5017">Goal</h2>
-<div class="outline-text-2" id="text-orge3d5017">
+<div id="outline-container-org5082924" class="outline-2">
+<h2 id="org5082924">Goal</h2>
+<div class="outline-text-2" id="text-org5082924">
 <p>
 When a viewer opens a room link and the host is already playing, the video
 starts on its own, in sync, instead of sitting parked behind the native play
@@ -77,13 +77,13 @@ remaining manual.
 </p>
 </div>
 </div>
-<div id="outline-container-org455a5c4" class="outline-2">
-<h2 id="org455a5c4">Findings</h2>
-<div class="outline-text-2" id="text-org455a5c4">
+<div id="outline-container-orge4ebbd2" class="outline-2">
+<h2 id="orge4ebbd2">Findings</h2>
+<div class="outline-text-2" id="text-orge4ebbd2">
 </div>
-<div id="outline-container-org8e35527" class="outline-3">
-<h3 id="org8e35527">How a viewer starts today</h3>
-<div class="outline-text-3" id="text-org8e35527">
+<div id="outline-container-orgcaef21d" class="outline-3">
+<h3 id="orgcaef21d">How a viewer starts today</h3>
+<div class="outline-text-3" id="text-orgcaef21d">
 <ul class="org-ul">
 <li><code>src/cljs/goob_toob/watch.cljs:186-199</code>: on <code>welcome</code> the dash player is
 created with <code>autoplay=false</code> (<code>player.cljs:17</code>) and on <code>streamInitialized</code>
@@ -110,9 +110,9 @@ gesture-less <code>play()</code>; nothing inspects why it failed.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgdc0062a" class="outline-3">
-<h3 id="orgdc0062a">What browsers allow (the constraint this plan is built around)</h3>
-<div class="outline-text-3" id="text-orgdc0062a">
+<div id="outline-container-org919da21" class="outline-3">
+<h3 id="org919da21">What browsers allow (the constraint this plan is built around)</h3>
+<div class="outline-text-3" id="text-org919da21">
 <ul class="org-ul">
 <li>Muted autoplay is allowed everywhere that matters (Chrome, Firefox,
 Safari incl. iOS with <code>playsinline</code>, which is already set at
@@ -148,13 +148,13 @@ way: it retries <code>play()</code> on every update and parks until it succeeds.
 </div>
 </div>
 </div>
-<div id="outline-container-orge52e7c5" class="outline-2">
-<h2 id="orge52e7c5">Plan</h2>
-<div class="outline-text-2" id="text-orge52e7c5">
+<div id="outline-container-orga7eaa03" class="outline-2">
+<h2 id="orga7eaa03">Plan</h2>
+<div class="outline-text-2" id="text-orga7eaa03">
 </div>
-<div id="outline-container-orga977887" class="outline-3">
-<h3 id="orga977887">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></h3>
-<div class="outline-text-3" id="text-orga977887">
+<div id="outline-container-orgff8a10e" class="outline-3">
+<h3 id="orgff8a10e">1 · <code>sync_core.cljc</code>: the decision gains <code>:autostart</code></h3>
+<div class="outline-text-3" id="text-orgff8a10e">
 <div class="org-src-container">
 <pre class="src src-clojure">(defn start-action
   "What the watch page does with a start-related event. trigger is :play
@@ -180,9 +180,9 @@ everyone is a deliberate act).
 </p>
 </div>
 </div>
-<div id="outline-container-org5b14bb1" class="outline-3">
-<h3 id="org5b14bb1">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</h3>
-<div class="outline-text-3" id="text-org5b14bb1">
+<div id="outline-container-org9aaf388" class="outline-3">
+<h3 id="org9aaf388">2 · <code>watch.cljs</code>: <code>autostart!</code> with the step-down ladder</h3>
+<div class="outline-text-3" id="text-org9aaf388">
 <p>
 New state on <code>st</code>: <code>"streamok" false</code> (set true in the dash on-ready),
 <code>"starting" false</code> (an attempt is in flight), <code>"automuted" false</code>,
@@ -270,9 +270,9 @@ point.
 </p>
 </div>
 </div>
-<div id="outline-container-org5d46a30" class="outline-3">
-<h3 id="org5d46a30">3 · Unmute control</h3>
-<div class="outline-text-3" id="text-org5d46a30">
+<div id="outline-container-orgfc79369" class="outline-3">
+<h3 id="orgfc79369">3 · Unmute control</h3>
+<div class="outline-text-3" id="text-orgfc79369">
 <p>
 In <code>shell</code>: <code>unmute (h :button.btn.unmute {:style "display:none"} "tap for sound")</code>
 placed inside <code>stage-wrap</code> (absolute, bottom-left, above the native bar).
@@ -291,9 +291,9 @@ Returned in <code>refs</code> as <code>:unmute</code>.
 </p>
 </div>
 </div>
-<div id="outline-container-orgcbe2201" class="outline-3">
-<h3 id="orgcbe2201">4 · The nick prompt no longer reloads</h3>
-<div class="outline-text-3" id="text-orgcbe2201">
+<div id="outline-container-orgb3acd3c" class="outline-3">
+<h3 id="orgb3acd3c">4 · The nick prompt no longer reloads</h3>
+<div class="outline-text-3" id="text-orgb3acd3c">
 <p>
 <code>watch.cljs:385-406</code>: <code>page</code> returns one root <code>div</code>. First visit: the root
 holds the overlay; <code>join!</code> stores the nick, clears the root, and mounts
@@ -305,9 +305,9 @@ browser grants; the muted fallback covers the rest.
 </p>
 </div>
 </div>
-<div id="outline-container-org9212418" class="outline-3">
-<h3 id="org9212418">5 · Diagnostics</h3>
-<div class="outline-text-3" id="text-org9212418">
+<div id="outline-container-org91d9d3a" class="outline-3">
+<h3 id="org91d9d3a">5 · Diagnostics</h3>
+<div class="outline-text-3" id="text-org91d9d3a">
 <p>
 Three new <code>clientlog</code> events, all already routed to <code>server.log</code>:
 <code>:autostart {:muted false}</code>, <code>:autostart {:muted true}</code>,
@@ -316,9 +316,9 @@ load; enough to see in the field which browsers land where.
 </p>
 </div>
 </div>
-<div id="outline-container-orgb2e7db8" class="outline-3">
-<h3 id="orgb2e7db8">6 · Tests</h3>
-<div class="outline-text-3" id="text-orgb2e7db8">
+<div id="outline-container-org9782a4c" class="outline-3">
+<h3 id="org9782a4c">6 · Tests</h3>
+<div class="outline-text-3" id="text-org9782a4c">
 <p>
 <code>test/clj/goob_toob/sync_core_test.clj</code>, replacing
 <code>start-action-parks-an-unstarted-viewer-on-state</code>:
@@ -359,9 +359,9 @@ The four other <code>start-action</code> tests from the lockdown stay and must s
 pass unchanged (the <code>:play</code> rows did not move).
 </p>
 </div>
-<div id="outline-container-org3781531" class="outline-4">
-<h4 id="org3781531">Journeys (the Playwright plan's harness)</h4>
-<div class="outline-text-4" id="text-org3781531">
+<div id="outline-container-orgc8787a1" class="outline-4">
+<h4 id="orgc8787a1">Journeys (the Playwright plan's harness)</h4>
+<div class="outline-text-4" id="text-orgc8787a1">
 <p>
 <code>e2e/src/goob_toob/e2e/config.cljs</code> gains two projects:
 <code>chromium-lenient</code> (<code>--autoplay-policy=no-user-gesture-required</code>) and
@@ -435,18 +435,18 @@ field.
 </div>
 </div>
 </div>
-<div id="outline-container-orgefa93ad" class="outline-3">
-<h3 id="orgefa93ad">7 · Release</h3>
-<div class="outline-text-3" id="text-orgefa93ad">
+<div id="outline-container-orga161093" class="outline-3">
+<h3 id="orga161093">7 · Release</h3>
+<div class="outline-text-3" id="text-orga161093">
 <p>
 Every viewer sees it: the merge's last commit carries <code>Release: minor</code>.
 </p>
 </div>
 </div>
 </div>
-<div id="outline-container-org92e43e2" class="outline-2">
-<h2 id="org92e43e2">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org92e43e2">
+<div id="outline-container-org1333793" class="outline-2">
+<h2 id="org1333793">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org1333793">
 <ul class="org-ul">
 <li><b>Muted starts are the common case for returning viewers.</b> A viewer who
 opened the link from a chat app, with a saved nick, will likely start
@@ -471,9 +471,9 @@ policy loop are unchanged.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org8568b19" class="outline-2">
-<h2 id="org8568b19">Verification</h2>
-<div class="outline-text-2" id="text-org8568b19">
+<div id="outline-container-org890e63c" class="outline-2">
+<h2 id="org890e63c">Verification</h2>
+<div class="outline-text-2" id="text-org890e63c">
 <ol class="org-ol">
 <li><code>make test</code>: the three new <code>start-action</code> rows plus the four existing
 ones pass; assertion audit on the new rows (flip <code>playing?</code> in the
@@ -493,9 +493,9 @@ implementation notes; it is the only check automation cannot do.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orgb8a4028" class="outline-2">
-<h2 id="orgb8a4028">Implementation notes</h2>
-<div class="outline-text-2" id="text-orgb8a4028">
+<div id="outline-container-org0f8cf0a" class="outline-2">
+<h2 id="org0f8cf0a">Implementation notes</h2>
+<div class="outline-text-2" id="text-org0f8cf0a">
 <p>
 Implemented 2026-10-22 on <code>autoplay-on-load</code> (PR #48), steps 1-6,
 Chromium only for the journeys (Firefox and WebKit were dropped from the
@@ -777,7 +777,7 @@ loop; they remain in the config) and the manual Safari check
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-21</p>
 <p class="author">Author: Code</p>
-<p class="date">Created: 2026-10-24 Sat 11:37</p>
+<p class="date">Created: 2026-10-24 Sat 12:36</p>
 </div>
 </body>
 </html>
