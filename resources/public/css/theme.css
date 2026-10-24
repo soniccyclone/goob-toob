@@ -109,6 +109,7 @@ video.stage {
   width: 100%;
   background: #000;
   box-shadow: 0 0 30px rgba(143, 224, 50, 0.25);
+  display: block;
 }
 /* ---- stage: the video's own controls are the play affordance ---- */
 .stage-wrap {
