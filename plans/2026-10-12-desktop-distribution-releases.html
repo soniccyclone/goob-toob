@@ -3,11 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-14 Wed 10:03 -->
+<!-- 2026-10-24 Sat 13:21 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Desktop distribution: Electron admin app, bundled cloudflared, sr.ht releases</title>
-<meta name="author" content="Nathan Barlow" />
+<meta name="author" content="Code" />
 <meta name="generator" content="Org Mode" />
 <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
 <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
@@ -30,27 +30,27 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org8869afc">Goal</a></li>
-<li><a href="#org275fe83">Findings</a></li>
-<li><a href="#org5620a4f">Plan</a>
+<li><a href="#org6c3befd">Goal</a></li>
+<li><a href="#org8014560">Findings</a></li>
+<li><a href="#org7fd159f">Plan</a>
 <ul>
-<li><a href="#org9ab163a">1 · Server: desktop mode with two ports</a></li>
-<li><a href="#orgc070090">2 · Build chain: uberjar + vendored binaries</a></li>
-<li><a href="#org68c5b95">3 · Electron shell (<code>desktop/</code>)</a></li>
-<li><a href="#orgc8e2164">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
-<li><a href="#orgb285786">5 · Front page</a></li>
+<li><a href="#orgee50633">1 · Server: desktop mode with two ports</a></li>
+<li><a href="#orge881100">2 · Build chain: uberjar + vendored binaries</a></li>
+<li><a href="#org919eeb5">3 · Electron shell (<code>desktop/</code>)</a></li>
+<li><a href="#orgbe2599f">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</a></li>
+<li><a href="#orgdb7ea78">5 · Front page</a></li>
 </ul>
 </li>
-<li><a href="#orgdd860d5">Sequence diagram</a></li>
-<li><a href="#orgcd997c2">Risks and open questions</a></li>
-<li><a href="#org3d4289e">Verification</a></li>
-<li><a href="#org54e3aea">Implementation notes</a></li>
+<li><a href="#org0cf3042">Sequence diagram</a></li>
+<li><a href="#org147a848">Risks and open questions</a></li>
+<li><a href="#orgd56de03">Verification</a></li>
+<li><a href="#org8ad1e5d">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org8869afc" class="outline-2">
-<h2 id="org8869afc">Goal</h2>
-<div class="outline-text-2" id="text-org8869afc">
+<div id="outline-container-org6c3befd" class="outline-2">
+<h2 id="org6c3befd">Goal</h2>
+<div class="outline-text-2" id="text-org6c3befd">
 <p>
 Turn goob-toob into a double-click desktop app for Windows (primary audience)
 and Linux. An Electron shell owns the Clojure server, a <b>vendored cloudflared</b>
@@ -61,9 +61,9 @@ published to srht.site and linked from the repo front page.
 </p>
 </div>
 </div>
-<div id="outline-container-org275fe83" class="outline-2">
-<h2 id="org275fe83">Findings</h2>
-<div class="outline-text-2" id="text-org275fe83">
+<div id="outline-container-org8014560" class="outline-2">
+<h2 id="org8014560">Findings</h2>
+<div class="outline-text-2" id="text-org8014560">
 <ul class="org-ul">
 <li>Boot today: <code>clojure -M:dev -m goob-toob.core</code> (<code>container/Containerfile:26</code>);
 <code>config/load!</code> <b>requires</b> <code>STORAGE_DIR</code> and <code>ADMIN_PASSWORD</code>
@@ -104,13 +104,13 @@ pointer), cloudflared (Apache-2.0), Electron (MIT). App itself is AGPL.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org5620a4f" class="outline-2">
-<h2 id="org5620a4f">Plan</h2>
-<div class="outline-text-2" id="text-org5620a4f">
+<div id="outline-container-org7fd159f" class="outline-2">
+<h2 id="org7fd159f">Plan</h2>
+<div class="outline-text-2" id="text-org7fd159f">
 </div>
-<div id="outline-container-org9ab163a" class="outline-3">
-<h3 id="org9ab163a">1 · Server: desktop mode with two ports</h3>
-<div class="outline-text-3" id="text-org9ab163a">
+<div id="outline-container-orgee50633" class="outline-3">
+<h3 id="orgee50633">1 · Server: desktop mode with two ports</h3>
+<div class="outline-text-3" id="text-orgee50633">
 <ol class="org-ol">
 <li><code>src/clj/goob_toob/config.clj</code>: <code>ADMIN_PASSWORD</code> becomes optional.
 Mode = <code>:desktop</code> when unset, <code>:container</code> when set (current behavior).
@@ -135,9 +135,9 @@ welcome said <code>:is-host</code> (it would 404 on the public port).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orgc070090" class="outline-3">
-<h3 id="orgc070090">2 · Build chain: uberjar + vendored binaries</h3>
-<div class="outline-text-3" id="text-orgc070090">
+<div id="outline-container-orge881100" class="outline-3">
+<h3 id="orge881100">2 · Build chain: uberjar + vendored binaries</h3>
+<div class="outline-text-3" id="text-orge881100">
 <ol class="org-ol">
 <li><code>deps.edn</code>: add <code>:build</code> alias (<code>io.github.clojure/tools.build</code>) +
 <code>build.clj</code> → <code>target/goob-toob.jar</code> uberjar.</li>
@@ -150,9 +150,9 @@ local dev loop).</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org68c5b95" class="outline-3">
-<h3 id="org68c5b95">3 · Electron shell (<code>desktop/</code>)</h3>
-<div class="outline-text-3" id="text-org68c5b95">
+<div id="outline-container-org919eeb5" class="outline-3">
+<h3 id="org919eeb5">3 · Electron shell (<code>desktop/</code>)</h3>
+<div class="outline-text-3" id="text-org919eeb5">
 <ol class="org-ol">
 <li><code>desktop/package.json</code> (electron, electron-builder, electron-store),
 <code>main.js</code>, <code>preload.js</code>, icon. Boot sequence:
@@ -181,9 +181,9 @@ ffmpeg, cloudflared, =THIRD-PARTY.org~ (licenses). No code signing.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-orgc8e2164" class="outline-3">
-<h3 id="orgc8e2164">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
-<div class="outline-text-3" id="text-orgc8e2164">
+<div id="outline-container-orgbe2599f" class="outline-3">
+<h3 id="orgbe2599f">4 · CI: <code>.builds/release.yml</code> (manual: <code>hut builds submit</code> after tagging)</h3>
+<div class="outline-text-3" id="text-orgbe2599f">
 <ol class="org-ol">
 <li>fedora image (java-25, nodejs, wine, zip, unzip — matches the container).
 Tasks: uberjar + <code>shadow-cljs release client</code> → vendor downloads (both
@@ -200,9 +200,9 @@ Stable filenames (<code>goob-toob-setup.exe</code>, <code>goob-toob.AppImage</co
 </ol>
 </div>
 </div>
-<div id="outline-container-orgb285786" class="outline-3">
-<h3 id="orgb285786">5 · Front page</h3>
-<div class="outline-text-3" id="text-orgb285786">
+<div id="outline-container-orgdb7ea78" class="outline-3">
+<h3 id="orgdb7ea78">5 · Front page</h3>
+<div class="outline-text-3" id="text-orgdb7ea78">
 <ol class="org-ol">
 <li><code>README.md</code>: a <b>Download</b> section at the very top — <b>Windows</b> →
 <code>goob-toob-setup.exe</code>, <b>Linux</b> → <code>goob-toob.AppImage</code>, each a direct
@@ -214,9 +214,9 @@ folks. <code>README.org</code>: desktop quickstart section.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-orgdd860d5" class="outline-2">
-<h2 id="orgdd860d5">Sequence diagram</h2>
-<div class="outline-text-2" id="text-orgdd860d5">
+<div id="outline-container-org0cf3042" class="outline-2">
+<h2 id="org0cf3042">Sequence diagram</h2>
+<div class="outline-text-2" id="text-org0cf3042">
 <style>
 .opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
 .opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -420,9 +420,9 @@ orgPlanSequence('journey', {
 </script>
 </div>
 </div>
-<div id="outline-container-orgcd997c2" class="outline-2">
-<h2 id="orgcd997c2">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgcd997c2">
+<div id="outline-container-org147a848" class="outline-2">
+<h2 id="org147a848">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org147a848">
 <ul class="org-ul">
 <li><b>srht.site budget</b>: 1 GiB per site shared with the plans site. Publishing
 only the AppImage + NSIS installer (the zip would duplicate the installer's
@@ -453,9 +453,9 @@ behavior, byte-for-byte.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org3d4289e" class="outline-2">
-<h2 id="org3d4289e">Verification</h2>
-<div class="outline-text-2" id="text-org3d4289e">
+<div id="outline-container-orgd56de03" class="outline-2">
+<h2 id="orgd56de03">Verification</h2>
+<div class="outline-text-2" id="text-orgd56de03">
 <ol class="org-ol">
 <li><code>make test</code> — new route tests: <code>app {:admin? false}</code> → <code>/api/admin/videos</code>
 404, <code>/login</code> 404; <code>app {:admin? true}</code> + <code>wrap-desktop-admin</code> → <code>/me</code>
@@ -477,9 +477,9 @@ mode) still logs in with <code>ADMIN_PASSWORD</code> as before.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org54e3aea" class="outline-2">
-<h2 id="org54e3aea">Implementation notes</h2>
-<div class="outline-text-2" id="text-org54e3aea">
+<div id="outline-container-org8ad1e5d" class="outline-2">
+<h2 id="org8ad1e5d">Implementation notes</h2>
+<div class="outline-text-2" id="text-org8ad1e5d">
 <p>
 Shipped same day. Deviations and found issues:
 </p>
@@ -538,6 +538,25 @@ shows only on <code>ready-to-show</code>, retries <code>did-fail-load</code>, re
 <code>render-process-gone</code>. Wine repro note: JDK 25's WEPoll NPEs under wine
 (both selector workarounds fail), so wine cannot run the server — wine
 is only good for launching the shell, not for end-to-end checks.</li>
+<li><b>v0.1.5</b>: devtools escape hatch — F12 / Ctrl+Shift+I toggles devtools on
+any window, <code>GOOB_DEVTOOLS=1</code> auto-opens them. Added after the wine verdict
+(the real Windows exe under wine plays the watch page perfectly: 786
+frames, zero console/network errors — so the spinner is environment-
+specific and needs the actual renderer console to diagnose).</li>
+<li><b>v0.1.6</b>: playback diagnostics logged server-side instead of asking users
+to open devtools. The watch page POSTs dash.js faults (error /
+manifestLoadingError / fragLoadingError wired immediately, not on
+streamInitialized — a broken manifest never initializes), video-element
+errors, and a 10s stall watchdog snapshot (t, readyState, paused,
+networkState, buffered ranges) to <code>POST /api/clientlog</code> (public, rate-
+limited 120/min per token), which println's into server.log. Verified
+end-to-end: happy path logs stream-init + playback-started; deleting a
+video's dash dir produced dash-error + repeated :stalled lines with the
+room token. Gotchas: ring's <code>wrap-json-params</code> lands in <code>:params</code> not
+<code>:body</code>; Closure renames <code>.-token</code> property reads but not <code>js-obj</code> string
+keys — read back with <code>unchecked-get</code>; dash.js <code>e.error</code> is a DashJSError
+VO whose <code>.data</code> holds circular request objects (JSON.stringify throws —
+stringify code/message/data separately).</li>
 <li><b>CI moved to GitHub Actions</b>: srht.site serves the installers at ~2 MB/s
 (measured), so releases moved to GitHub Releases
 (<code>.github/workflows/release.yml</code>: jar built once, AppImage on ubuntu +
@@ -555,15 +574,51 @@ actually updated. <code>GOOB_VERSION</code> env (Electron passes <code>app.getVe
 wins, else the <code>goob-toob.version</code> resource stamped into the jar by
 <code>build.clj</code> (<code>VERSION</code> env or <code>git describe</code>), else <code>dev</code>. Gotcha:
 <code>b/write-file</code> pr-prints strings (writes them quoted) — use <code>spit</code>.</li>
+<li><b>after v0.2.0 (#9)</b>: Windows ships the portable exe only; the NSIS
+one-click installer is gone from <code>package.json</code> targets and from
+<code>release.yml</code> (build, rename, upload, release notes), READMEs point at
+<code>goob-toob-win-x64-portable.exe</code>. The portable target is itself an NSIS
+self-extractor, so <code>makensis</code> still runs on the windows runner. The leg
+reproduces locally without wine on the host:
+<code>podman run --rm -v $PWD:/project:z -w /project/desktop
+  docker.io/electronuserland/builder:wine sh -c "npm install &amp;&amp; npx
+  electron-builder --win portable"</code> after <code>make uberjar</code> and
+<code>sh scripts/fetch-vendor.sh windows</code>.</li>
+<li><b>after v0.2.0 (#12)</b>: CI cuts the tags. <code>ci.yml</code> has a <code>tag</code> job after a
+green <code>test</code> on a <code>main</code> push: <code>scripts/next-version.sh</code> gives the next
+patch tag, or minor/major when any commit since the last tag carries a
+<code>Release: minor</code> / <code>Release: major</code> trailer, or <code>skip</code> on <code>Release: skip</code>
+(bracket markers in prose cut a <code>v1.0.0</code> on the first run, #14; trailers
+parse only the trailer block); the job pushes the
+tag and <code>gh workflow run release.yml --ref &lt;tag&gt;</code>. <code>release.yml</code> sets
+<code>desktop/package.json</code> from the tag with <code>npm version</code> at build time;
+the file carries <code>0.0.0-dev</code> and the bump commit is gone. Gotcha: a tag
+pushed with <code>GITHUB_TOKEN</code> never fires <code>on: push: tags</code> (GitHub blocks
+token-triggered runs); <code>workflow_dispatch</code> via the API is exempt, hence
+the explicit dispatch. Also noticed: the <code>plans</code> job has been skipping
+its build/publish steps since the GitHub Actions move because the
+<code>SRHT_TOKEN</code> secret is not set on the repo.</li>
+<li><b>after v0.2.1 (#16)</b>: the plans site moved to GitHub Pages
+(<a href="https://soniccyclone.github.io/goob-toob/">https://soniccyclone.github.io/goob-toob/</a>, Actions source): the <code>plans</code>
+job builds on every <code>main</code> push and deploys with
+<code>upload-pages-artifact</code> + <code>deploy-pages</code>; the <code>SRHT_TOKEN</code> gate is gone.
+Found on the way: <code>build-plans-site.sh</code> used <code>set -o pipefail</code> under
+<code>sh</code>, which is dash on the runner, so it is a bash script now.</li>
+<li><b>after v0.5.0</b>: the artifact names carry the version
+(<code>goob-toob-&lt;version&gt;-linux-x86_64.AppImage</code>,
+<code>goob-toob-&lt;version&gt;-win-x64-portable.exe</code>), stamped by electron-builder
+from the <code>npm version</code> the release job sets from the tag. This reverses
+the stable-filename choice in 4: a <code>releases/latest/download/&lt;name&gt;</code> link
+needs an exact asset name, so the README's download links now go to the
+latest release page instead of straight to the file.</li>
 </ul>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-12</p>
-<p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-14 Wed 10:03</p>
-<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+<p class="author">Author: Code</p>
+<p class="date">Created: 2026-10-24 Sat 13:21</p>
 </div>
 </body>
 </html>

@@ -10,9 +10,13 @@ and catch themselves up when their internet wobbles.
 
 ## Download
 
-**[goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)** — Windows, no install: just run it
+**[Windows portable exe](https://github.com/soniccyclone/goob-toob/releases/latest)** — no install: just run it
 &nbsp;&nbsp;·&nbsp;&nbsp;
-**[goob-toob-linux-x86_64.AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage)** — Linux
+**[Linux AppImage](https://github.com/soniccyclone/goob-toob/releases/latest)**
+
+Both are on the [latest release](https://github.com/soniccyclone/goob-toob/releases/latest) page as
+`goob-toob-<version>-win-x64-portable.exe` and
+`goob-toob-<version>-linux-x86_64.AppImage`.
 
 The desktop app bundles everything (JRE, ffmpeg, cloudflared): run it, pick
 a video folder, and it hands you a public link to toss at your friends. No
@@ -24,7 +28,8 @@ Prefer a container? `make image && make run` below.
 ## Windows: first party
 
 1. **Download**
-   [goob-toob-win-x64-portable.exe](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-win-x64-portable.exe)
+   `goob-toob-<version>-win-x64-portable.exe` from the
+   [latest release](https://github.com/soniccyclone/goob-toob/releases/latest)
    (~250 MB — it carries its own JRE, ffmpeg, and cloudflared, so there is
    nothing else to install). Put it wherever you like; nothing is written
    outside its own folder except your videos and a small config in
@@ -64,8 +69,8 @@ Good to know:
 
 ## Linux
 
-Download the
-[AppImage](https://github.com/soniccyclone/goob-toob/releases/latest/download/goob-toob-linux-x86_64.AppImage),
+Download `goob-toob-<version>-linux-x86_64.AppImage` from the
+[latest release](https://github.com/soniccyclone/goob-toob/releases/latest),
 `chmod +x` it, and run it — same first-run folder picker and sharing card as
 Windows, steps 3–7 above apply.
 

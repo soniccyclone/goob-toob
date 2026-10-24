@@ -357,3 +357,10 @@ Shipped same day. Deviations and found issues:
   =upload-pages-artifact= + =deploy-pages=; the =SRHT_TOKEN= gate is gone.
   Found on the way: =build-plans-site.sh= used =set -o pipefail= under
   =sh=, which is dash on the runner, so it is a bash script now.
+- *after v0.5.0*: the artifact names carry the version
+  (=goob-toob-<version>-linux-x86_64.AppImage=,
+  =goob-toob-<version>-win-x64-portable.exe=), stamped by electron-builder
+  from the =npm version= the release job sets from the tag. This reverses
+  the stable-filename choice in 4: a =releases/latest/download/<name>= link
+  needs an exact asset name, so the README's download links now go to the
+  latest release page instead of straight to the file.

@@ -24,7 +24,7 @@
     ],
     "linux": {
       "target": "AppImage",
-      "artifactName": "goob-toob.AppImage",
+      "artifactName": "goob-toob-${version}-linux-x86_64.${ext}",
       "category": "Video",
       "extraResources": [
         { "from": "../vendor/linux/jre", "to": "jre" },
@@ -44,7 +44,7 @@
       ]
     },
     "portable": {
-      "artifactName": "goob-toob-win-x64-portable.exe"
+      "artifactName": "goob-toob-${version}-win-x64-portable.${ext}"
     }
   }
 }
