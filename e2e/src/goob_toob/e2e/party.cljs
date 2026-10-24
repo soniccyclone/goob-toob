@@ -130,7 +130,9 @@
   (.waitForFunction page expr nil #js {:timeout timeout :polling 100}))
 
 (def ^:private start-settled
-  "(() => { const p = goobProbe(); return p.started || p.autostart === 'blocked' || !p.playing; })()")
+  "Started with no autostart attempt still in flight: begin! sets started
+  before play() resolves, and the outcome only lands when it does."
+  "(() => { const p = goobProbe(); return (p.started && !p.starting) || p.autostart === 'blocked' || !p.playing; })()")
 
 (defn touch!
   "A harmless real click (the chat input): gives the document sticky

@@ -485,7 +485,7 @@
                         :rate (some-> v .-playbackRate) :roomRate (:rate room)
                         :playing (:playing room) :paused (some-> v .-paused)
                         :muted (some-> v .-muted) :started (.-started st)
-                        :autostart (.-autostart st)
+                        :autostart (.-autostart st) :starting (.-starting st)
                         :mode (name (.-mode st)) :buffering (.-buffering st)
                         :bufferAhead (when v (buffer-ahead v))
                         :qcap (:cap (.-qcap st)) :offset (.-offset st)

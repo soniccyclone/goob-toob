@@ -378,6 +378,17 @@ loop). Landed with one design change and these additions:
   For that, the journey's "started"/"audible" assertions were moved ahead
   of its timing assertion (the timing one failed first on a null); the
   reordered spec passed once more in both projects after the three runs.
+- *CI run (Verification 4), 2026-10-24.* The first PR run failed
+  =solo pause and play keep the join= in both Chromium projects on
+  "autostart outcome" (expected null, received "audible"). The harness's
+  =start-settled= predicate took =started= alone as the end of the
+  autostart, but =begin!= sets =started= before =play()= resolves and the
+  outcome lands only when it does; on the CI runner that gap was ~160 ms
+  and =join!= returned inside it every time, so the journey's "before"
+  probe read a null outcome. Locally the gap was too small to hit.
+  =goobProbe()= now reports =:starting= and =start-settled= requires
+  =started && !starting=. The client's order (=started= first, then
+  =play()=) is unchanged, as section 2 intends.
 - *Not done here*: the Firefox and WebKit projects (dropped from the
-  loop; they remain in the config), the CI run and the manual Safari
-  check (Verification 4 and 5).
+  loop; they remain in the config) and the manual Safari check
+  (Verification 5).
