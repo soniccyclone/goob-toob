@@ -30,7 +30,8 @@ tunnel has no admin surface at all (see
 [[file:plans/2026-10-12-desktop-distribution-releases.org][the distribution plan]]).
 
 ** Windows: first party
-1. Download =goob-toob-win-x64-portable.exe= (~250 MB; carries its own JRE,
+1. Download =goob-toob-<version>-win-x64-portable.exe= from the
+   [[https://github.com/soniccyclone/goob-toob/releases/latest][latest release]] (~250 MB; carries its own JRE,
    ffmpeg, and cloudflared — nothing else to install). Put it anywhere;
    nothing is written outside its folder except your videos and a small
    config in =%APPDATA%=.

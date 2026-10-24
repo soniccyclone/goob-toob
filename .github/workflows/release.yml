@@ -4,7 +4,10 @@ name: release
 # main and dispatches this workflow at it; a hand-pushed tag works too):
 # builds the Linux AppImage + Windows portable exe and attaches both to a
 # GitHub Release. desktop/package.json carries no real version; it is set
-# from the tag at build time.
+# from the tag at build time, and electron-builder stamps it into the
+# artifact names (goob-toob-<version>-linux-x86_64.AppImage,
+# goob-toob-<version>-win-x64-portable.exe), so the steps below glob
+# rather than name them.
 on:
   push:
     tags: ['v*']
@@ -60,7 +63,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: desktop/dist/goob-toob.AppImage
+          path: desktop/dist/goob-toob-*-linux-x86_64.AppImage
+          if-no-files-found: error
 
   windows:
     needs: jar
@@ -86,7 +90,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: desktop/dist/goob-toob-win-x64-portable.exe
+          path: desktop/dist/goob-toob-*-win-x64-portable.exe
+          if-no-files-found: error
 
   release:
     needs: [linux, windows]
@@ -102,12 +107,12 @@ jobs:
           path: dist
       - name: Publish GitHub Release
         run: |
-          mv dist/goob-toob.AppImage dist/goob-toob-linux-x86_64.AppImage
+          ls -l dist
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "goob-toob $GITHUB_REF_NAME" \
             --notes "Desktop builds for goob-toob $GITHUB_REF_NAME. Windows: the portable exe, just run it (no install). SmartScreen will squint at it (no code signing) — 'More info' → 'Run anyway'." \
-            dist/goob-toob-linux-x86_64.AppImage \
-            dist/goob-toob-win-x64-portable.exe
+            dist/goob-toob-*-linux-x86_64.AppImage \
+            dist/goob-toob-*-win-x64-portable.exe
         env:
           GH_TOKEN: ${{ github.token }}
