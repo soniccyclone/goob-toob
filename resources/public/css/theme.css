@@ -106,13 +106,16 @@ input:focus, select:focus { box-shadow: 0 0 0 3px rgba(143, 224, 50, 0.4); }
 @media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
 
 video.stage {
-  width: 100%; border-radius: var(--radius);
+  width: 100%;
   background: #000;
-  border: 3px solid var(--slime);
   box-shadow: 0 0 30px rgba(143, 224, 50, 0.25);
 }
 /* ---- stage: the video's own controls are the play affordance ---- */
-.stage-wrap { position: relative; display: block; }
+.stage-wrap {
+  position: relative;
+  border: 3px solid var(--slime);
+  display: block;
+}
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {
