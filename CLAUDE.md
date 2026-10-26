@@ -30,3 +30,24 @@ viewable.
   `plans/` for the migration plan). No `[:raw ...]` in query code either —
   if the DSL lacks a form, register one with `sql/register-fn!` in `db.clj`
   (see `[:now]`) and use that.
+
+## Sync design: hard rules (Nathan's, not up for revision in a fix)
+These are design decisions, not bugs. Do not "fix" them, do not propose
+fixes that bend them, and do not plan around them without asking first.
+- **The sync policy never seeks a viewer to close drift.** Drift is closed
+  by playback rate only (`sync_core.cljc` `policy`: catch-up 1.05,
+  nudge-slow 0.95, room slow-down 0.97) or not at all. No re-anchoring
+  seeks, no "seek instead of a long nudge", no seek on return to 1.0.
+  The one automatic seek on the books is the existing `:seek-back` for a
+  viewer that ran *ahead* past `:seek-ahead`; it never seeks forward, and
+  nothing new gets added beside it.
+- **Lag is allowed.** A viewer who falls noticeably behind has two remedies,
+  both deliberate: they reload the page (the lag hint already says so), or
+  the host issues a seek, which moves everyone and is the room's one
+  "force sync" control. Automation does neither on their behalf.
+- **Pitch preservation stays on.** `preservesPitch` is never turned off,
+  not even briefly during a nudge. Any audible pitch change is a
+  regression.
+- **ffmpeg stays a static build** on Linux (see the closed #33); a
+  glibc-linked ffmpeg is not an acceptable swap, whatever the download
+  flake of the day is.
