@@ -3,11 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-16 Fri 18:21 -->
+<!-- 2026-10-26 Mon 15:52 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sync slew: room slow-down, gentle catch-up, no forward seeks</title>
-<meta name="author" content="root" />
+<meta name="author" content="Nathan Barlow" />
 <meta name="generator" content="Org Mode" />
 <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
 <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
@@ -30,27 +30,26 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org864c33d">Goal</a></li>
-<li><a href="#orgf6c26f2">Findings</a></li>
-<li><a href="#org59e8954">Plan</a>
+<li><a href="#orgf855461">Goal</a></li>
+<li><a href="#orgfd605a2">Findings</a></li>
+<li><a href="#org85636d1">Plan</a>
 <ul>
-<li><a href="#org34e4e49">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</a></li>
-<li><a href="#orge6e2779">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</a></li>
-<li><a href="#org5cf2431">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</a></li>
-<li><a href="#orgebc8efe">4 · Tests</a></li>
-<li><a href="#orgd55b65b">5 · Release</a></li>
+<li><a href="#orgff0cf32">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</a></li>
+<li><a href="#org0fcacef">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</a></li>
+<li><a href="#orge8c067b">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</a></li>
+<li><a href="#org7e37116">4 · Tests</a></li>
+<li><a href="#org07511af">5 · Release</a></li>
 </ul>
 </li>
-<li><a href="#org966fe56">Risks and open questions</a></li>
-<li><a href="#orgd9f19f4">Verification</a></li>
-<li><a href="#orgb0c2f6f">Implementation notes</a></li>
+<li><a href="#org3174007">Risks and open questions</a></li>
+<li><a href="#org9cb46e6">Verification</a></li>
+<li><a href="#orgd7f860e">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-
-<div id="outline-container-org864c33d" class="outline-2">
-<h2 id="org864c33d">Goal</h2>
-<div class="outline-text-2" id="text-org864c33d">
+<div id="outline-container-orgf855461" class="outline-2">
+<h2 id="orgf855461">Goal</h2>
+<div class="outline-text-2" id="text-orgf855461">
 <p>
 Stop the catch-up spiral for viewers on slow or jittery connections. Today a
 viewer 0.3 s behind is pushed to play faster, up to 1.5x, which pulls 1.5x
@@ -64,15 +63,16 @@ rates stay inside the band humans do not notice.
 
 <p>
 Decisions already taken on #8: room slow-down on by default; laggards only
-slew; reload is the jump; #7 (sync-aware quality cap, ladder bitrates) comes
-after this and is out of scope here.
+slew; reload is the jump; the room gives up on a chronic laggard after a fixed
+window (catch-up assumes the link can improve; if it cannot, they stay a
+laggard and #7 is their remedy); #7 (sync-aware quality cap, ladder bitrates)
+comes after this and is out of scope here.
 </p>
 </div>
 </div>
-
-<div id="outline-container-orgf6c26f2" class="outline-2">
-<h2 id="orgf6c26f2">Findings</h2>
-<div class="outline-text-2" id="text-orgf6c26f2">
+<div id="outline-container-orgfd605a2" class="outline-2">
+<h2 id="orgfd605a2">Findings</h2>
+<div class="outline-text-2" id="text-orgfd605a2">
 <ul class="org-ul">
 <li>The server already carries a room rate and never uses it. <code>room-for</code> sets
 <code>:rate 1.0</code> (<code>src/clj/goob_toob/services/sync.clj:20</code>), <code>state-msg</code>
@@ -118,76 +118,79 @@ speed. With the room at 0.97 and the laggard at 1.05 the gap closes at
 </ul>
 </div>
 </div>
-
-<div id="outline-container-org59e8954" class="outline-2">
-<h2 id="org59e8954">Plan</h2>
-<div class="outline-text-2" id="text-org59e8954">
+<div id="outline-container-org85636d1" class="outline-2">
+<h2 id="org85636d1">Plan</h2>
+<div class="outline-text-2" id="text-org85636d1">
 </div>
-<div id="outline-container-org34e4e49" class="outline-3">
-<h3 id="org34e4e49">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</h3>
-<div class="outline-text-3" id="text-org34e4e49">
+<div id="outline-container-orgff0cf32" class="outline-3">
+<h3 id="orgff0cf32">1 · sync_core.cljc: tuning map, stateful policy, room-rate (pure)</h3>
+<div class="outline-text-3" id="text-orgff0cf32">
 <p>
 Replace <code>policy</code>, <code>catch-rate</code>, <code>nudge-slow-rate</code> and <code>settle-threshold</code>
 with the following. Everything is data in, data out; no platform calls.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-clojure">(def tuning
-  {:dead-band       1.0    ; behind by less than this: do nothing
-   :settle          0.15   ; hysteresis exit for catch-up and nudge
-   :nudge-enter     0.5    ; ahead by more than this: slow to :nudge-rate
-   :seek-ahead      1.5    ; ahead by more than this: seek back (buffer has it)
-   :catch-rate      1.05   ; absolute playbackRate while catching up
-   :nudge-rate      0.95   ; absolute playbackRate while ahead
-   :runway          8.0    ; seconds of buffered media required to catch up
-   :room-slow-rate  0.97
-   :room-slow-enter 3.0    ; someone this far behind: room slows
-   :room-slow-exit  1.0    ; everyone within this: room back to 1.0
-   :status-fresh-ms 15000  ; older status reports do not count
-   :gone-after-s    60.0}) ; this far behind is "reload me", not "wait for me"
-
-(defn policy
-  "prev is the mode from the last tick, d is local - expected in seconds
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">tuning</span>
+  <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:dead-band</span>       1.0    <span class="org-comment">; behind by less than this: do nothing
+</span>   <span class="org-clojure-keyword">:settle</span>          0.15   <span class="org-comment">; hysteresis exit for catch-up and nudge
+</span>   <span class="org-clojure-keyword">:nudge-enter</span>     0.5    <span class="org-comment">; ahead by more than this: slow to :nudge-rate
+</span>   <span class="org-clojure-keyword">:seek-ahead</span>      1.5    <span class="org-comment">; ahead by more than this: seek back (buffer has it)
+</span>   <span class="org-clojure-keyword">:catch-rate</span>      1.05   <span class="org-comment">; absolute playbackRate while catching up
+</span>   <span class="org-clojure-keyword">:nudge-rate</span>      0.95   <span class="org-comment">; absolute playbackRate while ahead
+</span>   <span class="org-clojure-keyword">:runway</span>          8.0    <span class="org-comment">; seconds of buffered media required to catch up
+</span>   <span class="org-clojure-keyword">:room-slow-rate</span>  0.97
+   <span class="org-clojure-keyword">:room-slow-enter</span> 3.0    <span class="org-comment">; someone this far behind: room slows
+</span>   <span class="org-clojure-keyword">:room-slow-exit</span>  1.0    <span class="org-comment">; everyone within this: room back to 1.0
+</span>   <span class="org-clojure-keyword">:status-fresh-ms</span> 15000  <span class="org-comment">; older status reports do not count
+</span>   <span class="org-clojure-keyword">:gone-after-s</span>    60.0   <span class="org-comment">; this far behind is "reload me", not "wait for me"
+</span>   <span class="org-clojure-keyword">:give-up-ms</span>      180000<span class="org-rainbow-delimiters-depth-2">}</span><span class="org-rainbow-delimiters-depth-1">)</span> <span class="org-comment">; behind for this long continuously: stop slowing for them
+</span>
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">policy</span>
+  <span class="org-doc">"prev is the mode from the last tick, d is local - expected in seconds
   (negative = behind), runway is buffered seconds ahead of currentTime.
-  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."
-  [prev d runway]
-  (let [{:keys [dead-band settle nudge-enter seek-ahead] runway-min :runway} tuning]
-    (cond
-      (&gt; d seek-ahead)                                        :seek-back
-      (or (&gt; d nudge-enter) (and (= prev :nudge-slow) (&gt; d settle))) :nudge-slow
-      (and (&gt;= runway runway-min)
-           (or (&lt; d (- dead-band))
-               (and (= prev :catch-up) (&lt; d (- settle)))))    :catch-up
-      :else                                                   :none)))
+  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>prev d runway<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-5">[</span>dead-band settle nudge-enter seek-ahead<span class="org-rainbow-delimiters-depth-5">]</span> runway-min <span class="org-clojure-keyword">:runway</span><span class="org-rainbow-delimiters-depth-4">}</span> tuning<span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">cond</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>&gt; d seek-ahead<span class="org-rainbow-delimiters-depth-4">)</span>                                        <span class="org-clojure-keyword">:seek-back</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-5">(</span>&gt; d nudge-enter<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-6">(</span>= prev <span class="org-clojure-keyword">:nudge-slow</span><span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-rainbow-delimiters-depth-6">(</span>&gt; d settle<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-clojure-keyword">:nudge-slow</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-5">(</span>&gt;= runway runway-min<span class="org-rainbow-delimiters-depth-5">)</span>
+           <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-6">(</span>&lt; d <span class="org-rainbow-delimiters-depth-7">(</span>- dead-band<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span>
+               <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-7">(</span>= prev <span class="org-clojure-keyword">:catch-up</span><span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-rainbow-delimiters-depth-7">(</span>&lt; d <span class="org-rainbow-delimiters-depth-8">(</span>- settle<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>    <span class="org-clojure-keyword">:catch-up</span>
+      <span class="org-clojure-keyword">:else</span>                                                   <span class="org-clojure-keyword">:none</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
-(defn rate-for [mode room-rate]
-  (case mode
-    :catch-up   (:catch-rate tuning)
-    :nudge-slow (:nudge-rate tuning)
-    room-rate))
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">rate-for</span> <span class="org-rainbow-delimiters-depth-2">[</span>mode room-rate<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">case</span> mode
+    <span class="org-clojure-keyword">:catch-up</span>   <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-clojure-keyword">:catch-rate</span> tuning<span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-clojure-keyword">:nudge-slow</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-clojure-keyword">:nudge-rate</span> tuning<span class="org-rainbow-delimiters-depth-3">)</span>
+    room-rate<span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
-(defn room-rate
-  "prev is the room's current rate. clients is a seq of
-  {:nick s :drift d :age-ms n} where drift is pos - expected (negative =
-  behind) and age-ms is how old the report is. Returns {:rate r :for nick}
-  with :for the worst eligible laggard while slowed, else nil."
-  [prev clients]
-  (let [{:keys [room-slow-rate room-slow-enter room-slow-exit
-                status-fresh-ms gone-after-s]} tuning
-        eligible (filter #(and (&lt;= (:age-ms %) status-fresh-ms)
-                               (&lt;= (- (:drift %)) gone-after-s))
-                         clients)
-        worst (apply max-key #(- (:drift %)) {:drift 0.0 :nick nil} eligible)
-        behind (- (:drift worst))]
-    (cond
-      (&gt;= behind room-slow-enter) {:rate room-slow-rate :for (:nick worst)}
-      (&lt;= behind room-slow-exit)  {:rate 1.0 :for nil}
-      :else {:rate prev :for (when (= prev room-slow-rate) (:nick worst))})))
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">room-rate</span>
+  <span class="org-doc">"prev is the room's current rate. clients is a seq of
+  {:nick s :drift d :age-ms n :behind-ms m} where drift is pos - expected
+  (negative = behind), age-ms is how old the report is and behind-ms is how
+  long this client has continuously been at or past :room-slow-enter (0 when
+  not). Returns {:rate r :for nick} with :for the worst eligible laggard
+  while slowed, else nil. A client past :give-up-ms no longer counts."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>prev clients<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-5">[</span>room-slow-rate room-slow-enter room-slow-exit
+                status-fresh-ms gone-after-s give-up-ms<span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">}</span> tuning
+        eligible <span class="org-rainbow-delimiters-depth-4">(</span>filter #<span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-6">(</span>&lt;= <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-clojure-keyword">:age-ms</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-7">)</span> status-fresh-ms<span class="org-rainbow-delimiters-depth-6">)</span>
+                               <span class="org-rainbow-delimiters-depth-6">(</span>&lt;= <span class="org-rainbow-delimiters-depth-7">(</span>- <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-clojure-keyword">:drift</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span> gone-after-s<span class="org-rainbow-delimiters-depth-6">)</span>
+                               <span class="org-rainbow-delimiters-depth-6">(</span>&lt;= <span class="org-rainbow-delimiters-depth-7">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-clojure-keyword">:behind-ms</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-8">)</span> 0<span class="org-rainbow-delimiters-depth-7">)</span> give-up-ms<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+                         clients<span class="org-rainbow-delimiters-depth-4">)</span>
+        worst <span class="org-rainbow-delimiters-depth-4">(</span>apply max-key #<span class="org-rainbow-delimiters-depth-5">(</span>- <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:drift</span> <span class="org-variable-name">%</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">{</span><span class="org-clojure-keyword">:drift</span> 0.0 <span class="org-clojure-keyword">:nick</span> <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-5">}</span> eligible<span class="org-rainbow-delimiters-depth-4">)</span>
+        behind <span class="org-rainbow-delimiters-depth-4">(</span>- <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:drift</span> worst<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">cond</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>&gt;= behind room-slow-enter<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:rate</span> room-slow-rate <span class="org-clojure-keyword">:for</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:nick</span> worst<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">}</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>&lt;= behind room-slow-exit<span class="org-rainbow-delimiters-depth-4">)</span>  <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:rate</span> 1.0 <span class="org-clojure-keyword">:for</span> <span class="org-constant">nil</span><span class="org-rainbow-delimiters-depth-4">}</span>
+      <span class="org-clojure-keyword">:else</span> <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:rate</span> prev <span class="org-clojure-keyword">:for</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-6">(</span>= prev room-slow-rate<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:nick</span> worst<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">}</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
-(defn reanchor
-  "Change a playing room's rate without moving its position."
-  [room now rate]
-  (assoc room :pos (expected-pos (assoc room :now now)) :t0 now :rate rate))
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">reanchor</span>
+  <span class="org-doc">"Change a playing room's rate without moving its position."</span>
+  <span class="org-rainbow-delimiters-depth-2">[</span>room now rate<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span>assoc room <span class="org-clojure-keyword">:pos</span> <span class="org-rainbow-delimiters-depth-3">(</span>expected-pos <span class="org-rainbow-delimiters-depth-4">(</span>assoc room <span class="org-clojure-keyword">:now</span> now<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span> <span class="org-clojure-keyword">:t0</span> now <span class="org-clojure-keyword">:rate</span> rate<span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div>
 
@@ -200,37 +203,42 @@ live in <code>tuning</code> now) and fix the two callers in <code>watch.cljs</co
 </p>
 </div>
 </div>
-
-<div id="outline-container-orge6e2779" class="outline-3">
-<h3 id="orge6e2779">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</h3>
-<div class="outline-text-3" id="text-orge6e2779">
+<div id="outline-container-org0fcacef" class="outline-3">
+<h3 id="org0fcacef">2 · sync.clj: lag sign, status age, beat-time rate control, peers on the beat</h3>
+<div class="outline-text-3" id="text-org0fcacef">
 <ul class="org-ul">
 <li><code>status!</code>: store <code>:drift (- pos expected)</code> and <code>:at (mono-ms)</code> instead of
 <code>:lag</code>. Positive now means ahead, matching <code>sc/drift</code>. <code>peers-list</code> emits
 <code>:lag (:drift c)</code> so the wire name and <code>ui/fmt-lag</code> stay as they are and the
-display sign comes out right.</li>
+display sign comes out right. Also maintain <code>:behind-since</code>: set to <code>now</code>
+when it is nil and <code>(- drift)</code> is at or past <code>:room-slow-enter</code>; set to nil
+when <code>(- drift)</code> is at or below <code>:room-slow-exit</code>; otherwise leave it.
+<code>client-drifts</code> derives <code>:behind-ms (if behind-since (- now behind-since) 0)</code>.
+Giving up is therefore per viewer and resets only when they get back
+inside the exit band (a reload also resets it: new cid).</li>
 <li><code>host-cmd!</code>: every op (<code>play</code>, <code>pause</code>, <code>seek</code>) also sets <code>:rate 1.0</code>. The
 lag data is stale after a host action; the beat re-evaluates within 2 s.</li>
 <li><p>
 New <code>tick-room!</code>:
 </p>
 <div class="org-src-container">
-<pre class="src src-clojure">(defn- client-drifts [room now]
-  (for [[_ c] (:clients room)]
-    {:nick (:nick c) :drift (or (:drift c) 0.0) :age-ms (- now (or (:at c) 0))}))
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">client-drifts</span> <span class="org-rainbow-delimiters-depth-2">[</span>room now<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">for</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-rainbow-delimiters-depth-4">[</span>_ c<span class="org-rainbow-delimiters-depth-4">]</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:clients</span> room<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">{</span><span class="org-clojure-keyword">:nick</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-clojure-keyword">:nick</span> c<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-clojure-keyword">:drift</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:drift</span> c<span class="org-rainbow-delimiters-depth-5">)</span> 0.0<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-clojure-keyword">:age-ms</span> <span class="org-rainbow-delimiters-depth-4">(</span>- now <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">or</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:at</span> c<span class="org-rainbow-delimiters-depth-6">)</span> 0<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+     <span class="org-clojure-keyword">:behind-ms</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">if-let</span> <span class="org-rainbow-delimiters-depth-5">[</span>t <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:behind-since</span> c<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">]</span> <span class="org-rainbow-delimiters-depth-5">(</span>- now t<span class="org-rainbow-delimiters-depth-5">)</span> 0<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">}</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 
-(defn- tick-room! [room-id]
-  (let [now (mono-ms)
-        room (get @rooms* room-id)
-        {:keys [rate for]} (sc/room-rate (:rate room) (client-drifts room now))]
-    (when (and (:playing? room) (not= rate (:rate room)))
-      (swap! rooms* update room-id sc/reanchor now rate)
-      (println "room" room-id "rate" rate (if for (str "for " for) ""))
-      (broadcast room-id (assoc (state-msg (get @rooms* room-id)) :op "rate")))
-    (let [room (get @rooms* room-id)]
-      (broadcast room-id (assoc (beat-msg room)
-                                :slow-for (when (= (:rate room) (:room-slow-rate sc/tuning)) for)
-                                :peers (peers-list room))))))
+<span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">tick-room!</span> <span class="org-rainbow-delimiters-depth-2">[</span>room-id<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>now <span class="org-rainbow-delimiters-depth-4">(</span>mono-ms<span class="org-rainbow-delimiters-depth-4">)</span>
+        room <span class="org-rainbow-delimiters-depth-4">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-4">)</span>
+        <span class="org-rainbow-delimiters-depth-4">{</span><span class="org-clojure-keyword">:keys</span> <span class="org-rainbow-delimiters-depth-5">[</span>rate for<span class="org-rainbow-delimiters-depth-5">]</span><span class="org-rainbow-delimiters-depth-4">}</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-type">sc</span>/room-rate <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:rate</span> room<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span>client-drifts room now<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-clojure-keyword">:playing?</span> room<span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span>not= rate <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:rate</span> room<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>swap! rooms* update room-id <span class="org-type">sc</span>/reanchor now rate<span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>println <span class="org-string">"room"</span> room-id <span class="org-string">"rate"</span> rate <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">if</span> for <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"for "</span> for<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-string">""</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>broadcast room-id <span class="org-rainbow-delimiters-depth-5">(</span>assoc <span class="org-rainbow-delimiters-depth-6">(</span>state-msg <span class="org-rainbow-delimiters-depth-7">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-clojure-keyword">:op</span> <span class="org-string">"rate"</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-4">[</span>room <span class="org-rainbow-delimiters-depth-5">(</span>get @rooms* room-id<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">]</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span>broadcast room-id <span class="org-rainbow-delimiters-depth-5">(</span>assoc <span class="org-rainbow-delimiters-depth-6">(</span>beat-msg room<span class="org-rainbow-delimiters-depth-6">)</span>
+                                <span class="org-clojure-keyword">:slow-for</span> <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-7">(</span>= <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-clojure-keyword">:rate</span> room<span class="org-rainbow-delimiters-depth-8">)</span> <span class="org-rainbow-delimiters-depth-8">(</span><span class="org-clojure-keyword">:room-slow-rate</span> <span class="org-type">sc</span>/tuning<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span> for<span class="org-rainbow-delimiters-depth-6">)</span>
+                                <span class="org-clojure-keyword">:peers</span> <span class="org-rainbow-delimiters-depth-6">(</span>peers-list room<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div>
 <p>
@@ -242,43 +250,42 @@ of broadcasting <code>beat-msg</code> directly. A paused room never changes rate
 </ul>
 </div>
 </div>
-
-<div id="outline-container-org5cf2431" class="outline-3">
-<h3 id="org5cf2431">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</h3>
-<div class="outline-text-3" id="text-org5cf2431">
+<div id="outline-container-orge8c067b" class="outline-3">
+<h3 id="orge8c067b">3 · watch.cljs: room-relative rate, policy memory, runway, status cadence</h3>
+<div class="outline-text-3" id="text-orge8c067b">
 <ul class="org-ul">
 <li><code>st</code> gains <code>"mode"</code> (init <code>:none</code>).</li>
 <li><p>
 New <code>buffer-ahead</code>:
 </p>
 <div class="org-src-container">
-<pre class="src src-clojure">(defn- buffer-ahead [video]
-  (let [b (.-buffered video) t (.-currentTime video)]
-    (loop [i 0]
-      (cond (&gt;= i (.-length b)) 0.0
-            (and (&lt;= (.start b i) t) (&lt;= t (.end b i))) (- (.end b i) t)
-            :else (recur (inc i))))))
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">buffer-ahead</span> <span class="org-rainbow-delimiters-depth-2">[</span>video<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-3">[</span>b <span class="org-rainbow-delimiters-depth-4">(</span>.-buffered video<span class="org-rainbow-delimiters-depth-4">)</span> t <span class="org-rainbow-delimiters-depth-4">(</span>.-currentTime video<span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">]</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">loop</span> <span class="org-rainbow-delimiters-depth-4">[</span>i 0<span class="org-rainbow-delimiters-depth-4">]</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">cond</span> <span class="org-rainbow-delimiters-depth-5">(</span>&gt;= i <span class="org-rainbow-delimiters-depth-6">(</span>.-length b<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> 0.0
+            <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-6">(</span>&lt;= <span class="org-rainbow-delimiters-depth-7">(</span>.start b i<span class="org-rainbow-delimiters-depth-7">)</span> t<span class="org-rainbow-delimiters-depth-6">)</span> <span class="org-rainbow-delimiters-depth-6">(</span>&lt;= t <span class="org-rainbow-delimiters-depth-7">(</span>.end b i<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span>- <span class="org-rainbow-delimiters-depth-6">(</span>.end b i<span class="org-rainbow-delimiters-depth-6">)</span> t<span class="org-rainbow-delimiters-depth-5">)</span>
+            <span class="org-clojure-keyword">:else</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">recur</span> <span class="org-rainbow-delimiters-depth-6">(</span>inc i<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div></li>
 <li><p>
 <code>apply-policy!</code> becomes:
 </p>
 <div class="org-src-container">
-<pre class="src src-clojure">(defn- apply-policy! [st video]
-  (when (and (.-started st) (.-room st) (not (.-buffering st)))
-    (let [room (.-room st)
-          expected (expected-now st room)
-          d (sc/drift (.-currentTime video) expected)
-          mode (sc/policy (.-mode st) d (buffer-ahead video))
-          rate (sc/rate-for mode (:rate room))]
-      (set! (.-mode st) mode)
-      (when (= mode :seek-back) (set! (.-currentTime video) expected))
-      (when (&gt; (sc/abs (- (.-playbackRate video) rate)) 0.001)
-        (set! (.-playbackRate video) rate))
-      (set! (.-textContent lag-hint)
-            (if (&lt; d -10.0)
-              (str "you're " (int (- d)) "s behind the room — reload to jump to it")
-              "")))))
+<pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn-</span> <span class="org-function-name">apply-policy!</span> <span class="org-rainbow-delimiters-depth-2">[</span>st video<span class="org-rainbow-delimiters-depth-2">]</span>
+  <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">and</span> <span class="org-rainbow-delimiters-depth-4">(</span>.-started st<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span>.-room st<span class="org-rainbow-delimiters-depth-4">)</span> <span class="org-rainbow-delimiters-depth-4">(</span>not <span class="org-rainbow-delimiters-depth-5">(</span>.-buffering st<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span>
+    <span class="org-rainbow-delimiters-depth-3">(</span><span class="org-keyword">let</span> <span class="org-rainbow-delimiters-depth-4">[</span>room <span class="org-rainbow-delimiters-depth-5">(</span>.-room st<span class="org-rainbow-delimiters-depth-5">)</span>
+          expected <span class="org-rainbow-delimiters-depth-5">(</span>expected-now st room<span class="org-rainbow-delimiters-depth-5">)</span>
+          d <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">sc</span>/drift <span class="org-rainbow-delimiters-depth-6">(</span>.-currentTime video<span class="org-rainbow-delimiters-depth-6">)</span> expected<span class="org-rainbow-delimiters-depth-5">)</span>
+          mode <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">sc</span>/policy <span class="org-rainbow-delimiters-depth-6">(</span>.-mode st<span class="org-rainbow-delimiters-depth-6">)</span> d <span class="org-rainbow-delimiters-depth-6">(</span>buffer-ahead video<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span>
+          rate <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-type">sc</span>/rate-for mode <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-clojure-keyword">:rate</span> room<span class="org-rainbow-delimiters-depth-6">)</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">]</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-5">(</span>.-mode st<span class="org-rainbow-delimiters-depth-5">)</span> mode<span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-5">(</span>= mode <span class="org-clojure-keyword">:seek-back</span><span class="org-rainbow-delimiters-depth-5">)</span> <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-currentTime video<span class="org-rainbow-delimiters-depth-6">)</span> expected<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">when</span> <span class="org-rainbow-delimiters-depth-5">(</span>&gt; <span class="org-rainbow-delimiters-depth-6">(</span><span class="org-type">sc</span>/abs <span class="org-rainbow-delimiters-depth-7">(</span>- <span class="org-rainbow-delimiters-depth-8">(</span>.-playbackRate video<span class="org-rainbow-delimiters-depth-8">)</span> rate<span class="org-rainbow-delimiters-depth-7">)</span><span class="org-rainbow-delimiters-depth-6">)</span> 0.001<span class="org-rainbow-delimiters-depth-5">)</span>
+        <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-6">(</span>.-playbackRate video<span class="org-rainbow-delimiters-depth-6">)</span> rate<span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span>
+      <span class="org-rainbow-delimiters-depth-4">(</span><span class="org-keyword">set!</span> <span class="org-rainbow-delimiters-depth-5">(</span>.-textContent lag-hint<span class="org-rainbow-delimiters-depth-5">)</span>
+            <span class="org-rainbow-delimiters-depth-5">(</span><span class="org-keyword">if</span> <span class="org-rainbow-delimiters-depth-6">(</span>&lt; d -10.0<span class="org-rainbow-delimiters-depth-6">)</span>
+              <span class="org-rainbow-delimiters-depth-6">(</span>str <span class="org-string">"you're "</span> <span class="org-rainbow-delimiters-depth-7">(</span>int <span class="org-rainbow-delimiters-depth-8">(</span>- d<span class="org-rainbow-delimiters-depth-8">)</span><span class="org-rainbow-delimiters-depth-7">)</span> <span class="org-string">"s behind the room &#8212; reload to jump to it"</span><span class="org-rainbow-delimiters-depth-6">)</span>
+              <span class="org-string">""</span><span class="org-rainbow-delimiters-depth-5">)</span><span class="org-rainbow-delimiters-depth-4">)</span><span class="org-rainbow-delimiters-depth-3">)</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
 </pre>
 </div>
 <p>
@@ -298,10 +305,9 @@ policy tick stays.</li>
 </ul>
 </div>
 </div>
-
-<div id="outline-container-orgebc8efe" class="outline-3">
-<h3 id="orgebc8efe">4 · Tests</h3>
-<div class="outline-text-3" id="text-orgebc8efe">
+<div id="outline-container-org7e37116" class="outline-3">
+<h3 id="org7e37116">4 · Tests</h3>
+<div class="outline-text-3" id="text-org7e37116">
 <p>
 <code>test/clj/goob_toob/sync_core_test.clj</code>: replace <code>policy-thresholds</code> and
 <code>catch-rate-ramps-continuously</code> with the following, one <code>deftest</code> each, names
@@ -378,6 +384,11 @@ as given. Each must fail alone when its branch is broken (see Verification).
 </tr>
 
 <tr>
+<td class="org-left"><code>room-rate-gives-up-on-a-chronic-laggard</code></td>
+<td class="org-left">prev 0.97, drift <code>-4.0</code> age 0 behind-ms 200000 → <code>:rate 1.0 :for nil</code>; same with behind-ms 100000 → 0.97</td>
+</tr>
+
+<tr>
 <td class="org-left"><code>reanchor-does-not-move-the-position</code></td>
 <td class="org-left">room pos 10 t0 1000 playing rate 1.0, now 5000, new rate 0.97 → pos 14.0, t0 5000, rate 0.97</td>
 </tr>
@@ -387,12 +398,65 @@ as given. Each must fail alone when its branch is broken (see Verification).
 Keep <code>expected-pos-moves-with-clock</code>, <code>ntp-offset-estimates-server-skew</code>,
 <code>best-offset-prefers-lowest-rtt</code> as they are.
 </p>
-</div>
-</div>
 
-<div id="outline-container-orgd55b65b" class="outline-3">
-<h3 id="orgd55b65b">5 · Release</h3>
-<div class="outline-text-3" id="text-orgd55b65b">
+<p>
+New <code>test/clj/goob_toob/sync_service_test.clj</code> exercising <code>sync.clj</code> on the
+JVM without sockets (<code>rooms*</code> is an atom; <code>join!</code>, <code>status!</code> and the new
+<code>tick-room!</code> are plain functions; <code>mono-ms</code> can be redefined with
+<code>with-redefs</code> to drive time). Use the <code>with-tmp</code> fixture pattern from
+<code>repos_test.clj</code> and a room row from <code>rooms/create!</code>:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">test name</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>tick-slows-a-playing-room-for-a-laggard-and-recovers</code></td>
+<td class="org-left">host play; client status 4 s behind; tick → room <code>:rate 0.97</code>, <code>:pos</code> equals the expected position at that instant (re-anchored, not moved); client status 0.5 s behind; tick → <code>:rate 1.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>tick-leaves-a-paused-room-alone</code></td>
+<td class="org-left">same laggard, room paused → rate stays 1.0</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>tick-gives-up-after-the-window</code></td>
+<td class="org-left">laggard 4 s behind at t; ticks at t+10 s and t+200 s with the same drift → 0.97 then 1.0</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>host-command-resets-the-rate</code></td>
+<td class="org-left">room at 0.97; <code>host-cmd! "seek"</code> → <code>:rate 1.0</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>status-records-drift-with-behind-meaning-negative</code></td>
+<td class="org-left">client 4 s behind → stored <code>:drift</code> is about <code>-4.0</code> and <code>peers-list</code> <code>:lag</code> is negative</td>
+</tr>
+</tbody>
+</table>
+<p>
+<code>tick-room!</code> must therefore be public (drop the <code>defn-</code>). Capture
+<code>broadcast</code> with <code>with-redefs</code> to assert the <code>"rate"</code> op message is sent
+exactly once per change.
+</p>
+</div>
+</div>
+<div id="outline-container-org07511af" class="outline-3">
+<h3 id="org07511af">5 · Release</h3>
+<div class="outline-text-3" id="text-org07511af">
 <p>
 Behaviour change visible to every viewer: the merge's last commit carries
 <code>Release: minor</code> so CI cuts v0.3.0.
@@ -400,20 +464,27 @@ Behaviour change visible to every viewer: the merge's last commit carries
 </div>
 </div>
 </div>
-
-<div id="outline-container-org966fe56" class="outline-2">
-<h2 id="org966fe56">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org966fe56">
+<div id="outline-container-org3174007" class="outline-2">
+<h2 id="org3174007">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org3174007">
 <ul class="org-ul">
-<li><b>A single flaky viewer slows the room.</b> Bounded three ways: the 3 s enter
-threshold, the 60 s "gone" cut-off, the 15 s staleness cut-off. If it still
-annoys, the knob is <code>:room-slow-enter</code>. A host-side toggle is deliberately
-not in this plan; add it only if a real party asks.</li>
+<li><b>A single flaky viewer slows the room.</b> Bounded four ways: the 3 s enter
+threshold, the 15 s staleness cut-off, the 60 s "gone" cut-off, and the
+3-minute give-up per viewer (decided). At 0.08 s/s closing (room 0.97,
+laggard 1.05) three minutes heals 14 s; a viewer still 3 s or more behind
+after that is not closing and the room stops paying for them. They keep
+the reload hint. The remaining knob is <code>:room-slow-enter</code>.</li>
+<li><b>The host is a client too.</b> When the room slows, the host's element runs
+0.97x like everyone else, and every host play/pause/seek snaps the rate to
+1.0 with the beat re-evaluating within 2 s. Expect <code>server.log</code> to show
+<code>rate 1.0</code> then <code>rate 0.97</code> around each host action while a laggard is
+present; that flapping is by design, not a bug.</li>
 <li><b>Audio at 0.95-1.05x.</b> <code>preservesPitch</code> makes it inaudible in Chrome and
 Firefox; old Safari pitch-shifts slightly. Accepted.</li>
 <li><b>Catch-up needs runway, runway needs bandwidth.</b> A viewer who can never
-buffer 8 s ahead never catches up on their own; the room's 0.97 and a
-reload are their tools until #7 lowers their rung.</li>
+buffer 8 s ahead never catches up on their own; the room's 0.97 (for three
+minutes) and a reload are their tools. By decision no further effort goes
+here: #7 lowers their rung, which is the actual remedy.</li>
 <li><b>Two sources of truth for rate on the client.</b> The element's
 <code>playbackRate</code> is written only from <code>apply-policy!</code> and the pause handler;
 nothing else touches it. Keep it that way.</li>
@@ -421,13 +492,12 @@ nothing else touches it. Keep it that way.</li>
 </ul>
 </div>
 </div>
-
-<div id="outline-container-orgd9f19f4" class="outline-2">
-<h2 id="orgd9f19f4">Verification</h2>
-<div class="outline-text-2" id="text-orgd9f19f4">
+<div id="outline-container-org9cb46e6" class="outline-2">
+<h2 id="org9cb46e6">Verification</h2>
+<div class="outline-text-2" id="text-org9cb46e6">
 <ol class="org-ol">
-<li><code>make test</code>: expected tail <code>Ran 25 tests containing N assertions. 0 failures</code>
-(12 new sync-core tests replace 2). Assertion audit: for each new test,
+<li><code>make test</code>: expected tail <code>Ran 31 tests containing N assertions. 0 failures</code>
+(13 new sync-core tests replace 2; 5 new service tests). Assertion audit: for each new test,
 break the branch it guards (flip the comparison in <code>policy</code> / <code>room-rate</code>,
 or drop the <code>reanchor</code> pos update), run the suite, confirm that test and
 only that test fails, restore. Report which were audited.</li>
@@ -452,20 +522,52 @@ audible rate change at the host.</li>
 </ol>
 </div>
 </div>
-
-<div id="outline-container-orgb0c2f6f" class="outline-2">
-<h2 id="orgb0c2f6f">Implementation notes</h2>
-<div class="outline-text-2" id="text-orgb0c2f6f">
+<div id="outline-container-orgd7f860e" class="outline-2">
+<h2 id="orgd7f860e">Implementation notes</h2>
+<div class="outline-text-2" id="text-orgd7f860e">
 <p>
-(filled in when it ships)
+Shipped 2026-10-16 (PR for #8, cut as v0.3.0 by CI). Implemented by an Opus
+subagent from this plan; reviewed, extended and verified by the planning
+session. Landed as specced, plus:
 </p>
+
+<ul class="org-ul">
+<li><b>Pause position vs rate reset</b>: the first cut of <code>host-cmd!</code> reset
+<code>:rate</code> to 1.0 before "pause" derived its position from the clock, so a
+pause without an explicit <code>pos</code> advanced the room as if it had run at 1.0
+since the last anchor. Fixed (compute, then reset) with a test.</li>
+<li><b>Give-up reset was untested</b>: the assertion audit found no test covering
+<code>:behind-since</code> clearing once a viewer is back inside the exit band; added
+<code>give-up-resets-once-the-viewer-is-back-in-band</code>.</li>
+<li><b><code>apply-policy!</code> takes <code>lag-hint</code></b> as a third argument (the plan's body used
+it without saying where it came from); <code>tick-room!</code> binds <code>:for</code> to
+<code>laggard</code> to avoid shadowing <code>clojure.core/for</code>; the <code>st</code> and <code>video</code>
+bindings in <code>watch.cljs</code> are tagged <code>^js</code>, which took the release build
+from 46 inference warnings to 4 (all in <code>admin.cljs</code>, untouched).</li>
+<li><b>Verified</b>: <code>make test</code> 35 tests / 84 assertions, every new test audited
+to fail alone; <code>make compile</code> clean for <code>watch.cljs</code>; and a two-client
+run over the real websocket against the container (co-host plays, a
+scripted laggard reports 4 s behind, then 0.3 s): room to 0.97 with
+<code>slow-for</code> and peer lag <code>-4.00</code> within one beat, back to 1.0 within one
+beat of recovery, both logged by the server. The browser steps in
+Verification (rate following on the element, the hint, the slow note)
+were not run in the implementing environment; they are the reviewer's.</li>
+<li><b>2026-10-26, seek-back removed (Nathan's call).</b> <code>policy</code> no longer
+returns <code>:seek-back</code>; a viewer ahead by any amount is nudged at 0.95
+until it settles, and <code>:seek-ahead</code> is gone from <code>tuning</code>. The sync
+policy never seeks: a viewer cannot get ahead of the host in practice,
+and one that somehow does affects no one else. The remedies for any
+viewer who cares are a reload or a host seek. The rule is in
+<code>CLAUDE.md</code>, "Sync design: hard rules".</li>
+</ul>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-16</p>
-<p class="author">Author: root</p>
-<p class="date">Created: 2026-10-16 Fri 18:21</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-26 Mon 15:52</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
 </html>

@@ -578,3 +578,8 @@ for #40. Landed as specced, plus:
   =:catch-rate 1.0= failed the laggard journey on the closing-rate
   assertion in Chromium (0.0275) and Firefox (0.0269) and nothing else.
   =make test= 106 tests, 220 assertions.
+- *2026-10-26, seek-back removed.* =an early viewer is pulled back once=
+  became =a far-ahead viewer is slowed, never seeked= (inject +3 s; asserts
+  no policy seek, the nudge rate reached, drift closing by the end of the
+  window). The =seekbacks= counter, metric column and thresholds
+  (=:pullback-within=, =:pullback-seekbacks=) are gone.

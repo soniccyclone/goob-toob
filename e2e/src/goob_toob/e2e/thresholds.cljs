@@ -16,7 +16,6 @@
    :room-slow-rate    0.97
    :room-slow-within  6000
    :closing-min       0.05
-   :pullback-within   3000
    :rate-agreement    0.01
    :resync-within     15000
    :chat-within       2000
@@ -25,7 +24,6 @@
    :transcode-within  90000
    :still-playing     1.0
    :reconnect-seeks   1
-   :pullback-seekbacks 1
    :autostart-within  6000})
 
 (def per-engine {})

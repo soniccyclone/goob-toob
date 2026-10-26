@@ -30,7 +30,6 @@
   {:dead-band       1.0
    :settle          0.15
    :nudge-enter     0.5
-   :seek-ahead      1.5
    :catch-rate      1.05
    :nudge-rate      0.95
    :runway          8.0
@@ -44,11 +43,12 @@
 (defn policy
   "prev is the mode from the last tick, d is local - expected in seconds
   (negative = behind), runway is buffered seconds ahead of currentTime.
-  Returns :none, :catch-up, :nudge-slow or :seek-back. Never seeks forward."
+  Returns :none, :catch-up or :nudge-slow. Never seeks: drift is closed by
+  rate or not at all (a viewer who cares reloads; the host can seek the
+  room). See CLAUDE.md, \"Sync design: hard rules\"."
   [prev d runway]
-  (let [{:keys [dead-band settle nudge-enter seek-ahead] runway-min :runway} tuning]
+  (let [{:keys [dead-band settle nudge-enter] runway-min :runway} tuning]
     (cond
-      (> d seek-ahead)                                               :seek-back
       (or (> d nudge-enter) (and (= prev :nudge-slow) (> d settle))) :nudge-slow
       (and (>= runway runway-min)
            (or (< d (- dead-band))

@@ -60,7 +60,6 @@
      :rate-max (when (seq rates) (apply max rates))
      :stalls (counter-delta series :stalls)
      :seeks (counter-delta series :seeks)
-     :seekbacks (counter-delta series :seekbacks)
      :muted (:muted (last series))
      :started-at (first-at :started series)}))
 
@@ -72,12 +71,12 @@
     :else (str x)))
 
 (def ^:private columns
-  [:drift-abs-p95 :drift-abs-max :drift-final :rate-min :rate-max :seeks :stalls :seekbacks :started-at])
+  [:drift-abs-p95 :drift-abs-max :drift-final :rate-min :rate-max :seeks :stalls :started-at])
 
 (def ^:private header
   (str "| project | spec | journey | drift p95 | drift max | drift final | rate min | rate max"
-       " | seeks | stalls | seekbacks | started at ms | extra |\n"
-       "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"))
+       " | seeks | stalls | started at ms | extra |\n"
+       "|---|---|---|---|---|---|---|---|---|---|---|---|\n"))
 
 (defn metrics-dir [^js full-config]
   (path/join (api/e2e-dir full-config) "metrics"))

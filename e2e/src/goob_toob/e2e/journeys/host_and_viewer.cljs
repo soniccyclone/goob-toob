@@ -43,8 +43,7 @@
     (-> (expect (:drift-abs-p95 summary) "drift p95 after settle")
         (.toBeLessThanOrEqual (t browser-name :steady-p95)))
     (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual settled))
-    (-> (expect (:seeks summary) "seeks after join") (.toBe 0))
-    (-> (expect (:seekbacks summary) "seekbacks") (.toBe 0))))
+    (-> (expect (:seeks summary) "seeks after join") (.toBe 0))))
 
 (defn- both-at [pos tol]
   (str "(() => { const p = goobProbe(); return p.paused && Math.abs(p.currentTime - " pos ") <= " tol "; })()"))
