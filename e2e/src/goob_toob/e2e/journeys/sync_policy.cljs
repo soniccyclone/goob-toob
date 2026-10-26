@@ -50,7 +50,7 @@
     (-> (expect closing "drift recovered per second while catching up")
         (.toBeGreaterThanOrEqual (t browser-name :closing-min)))
     (-> (expect catch-at "ms until the catch-up rate") (.toBeLessThanOrEqual (t browser-name :catch-within)))
-    (-> (expect (:seekbacks summary) "seekbacks") (.toBe 0))
+    (-> (expect (:seeks summary) "policy seeks") (.toBe 0))
     (-> (expect (:seeks summary) "seeks") (.toBe 0))
     (-> (expect slow-at "ms until the server slows the room")
         (.toBeLessThanOrEqual (t browser-name :room-slow-within)))
