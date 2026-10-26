@@ -30,8 +30,9 @@
   (is (= :nudge-slow (sc/policy :nudge-slow 0.2 20)))
   (is (= :none (sc/policy :nudge-slow 0.1 20))))
 
-(deftest policy-seeks-back-only-when-far-ahead
-  (is (= :seek-back (sc/policy :none 1.6 20)))
+(deftest policy-never-seeks-however-far-ahead
+  (is (= :nudge-slow (sc/policy :none 1.6 20)))
+  (is (= :nudge-slow (sc/policy :none 100.0 20)))
   (is (= :nudge-slow (sc/policy :none 1.4 20))))
 
 (deftest rate-for-is-relative-to-the-room-rate

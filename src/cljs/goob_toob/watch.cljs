@@ -91,13 +91,6 @@
       (when (and (= mode :catch-up) (not= (.-mode st) :catch-up))
         (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
-      (when (= mode :seek-back)
-        (bump! st "seekbacks")
-        (log! token :seek-back {:drift (/ (Math/round (* 10 d)) 10)
-                                :offset (Math/round (.-offset st))
-                                :rate (:rate room)})
-        (mark-seek! st)
-        (set! (.-currentTime video) expected))
       (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
         (set! (.-playbackRate video) rate))
       (set! (.-textContent lag-hint)
@@ -471,7 +464,7 @@
                   "cancontrol" false "started" false "token" token "mode" :none
                   "auto" true "qcap" nil "ourseek" 0
                   "streamok" false "starting" false "autostart" nil
-                  "counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0
+                  "counters" (js-obj "seeks" 0 "stalls" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
         saved-nick (ui/store-get "goob-nick")
         root (h :div {})]

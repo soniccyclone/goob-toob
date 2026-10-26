@@ -56,22 +56,20 @@
         (.toBeLessThanOrEqual (t browser-name :room-slow-within)))
     (-> (expect named? "host's slow note names the viewer") (.toBe true))))
 
-(defjourney "an early viewer is pulled back once" [{:keys [browser browser-name base-url]} info]
+(defjourney "a far-ahead viewer is slowed, never seeked" [{:keys [browser browser-name base-url]} info]
   (let [fx (api/fixture info)
         {:keys [viewer]} (<? (party/pair! browser base-url browser-name fx))
         vp (:page viewer)
         _ (<p! (party/inject! vp (:early-inject W)))
         series (<? (m/sample vp (:early-window W)))
         summary (m/summarize series 0)
-        settled (t browser-name :settled)
-        back-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series)
-        end (last series)
-        rate-gap (m/abs* (- (:rate end) (:roomRate end)))]
-    (<p! (m/record! info summary series {:back-at back-at :rate-gap rate-gap
-                                         :drift-start (:drift (first series))}))
-    (-> (expect (:seekbacks summary) "seekbacks") (.toBe (t browser-name :pullback-seekbacks)))
-    (-> (expect back-at "ms until settled") (.toBeLessThanOrEqual (t browser-name :pullback-within)))
-    (-> (expect rate-gap "rate vs room rate at the end") (.toBeLessThanOrEqual (t browser-name :rate-agreement)))))
+        drift-start (:drift (first series))
+        nudge-at (m/first-at #(in-range? (t browser-name :nudge-rate) (:rate %)) series)]
+    (<p! (m/record! info summary series {:nudge-at nudge-at :drift-start drift-start}))
+    (-> (expect (:seeks summary) "policy seeks") (.toBe 0))
+    (-> (expect nudge-at "ms until the nudge rate") (.not.toBeNull))
+    (-> (expect (:drift-final summary) "drift at the end, closing")
+        (.toBeLessThan (- drift-start 0.2)))))
 
 (defjourney "a slightly early viewer is nudged, not seeked" [{:keys [browser browser-name base-url]} info]
   (let [fx (api/fixture info)
@@ -82,7 +80,7 @@
         summary (m/summarize series 0)
         nudge-at (m/first-at #(in-range? (t browser-name :nudge-rate) (:rate %)) series)]
     (<p! (m/record! info summary series {:nudge-at nudge-at :drift-start (:drift (first series))}))
-    (-> (expect (:seekbacks summary) "seekbacks") (.toBe 0))
+    (-> (expect (:seeks summary) "policy seeks") (.toBe 0))
     (-> (expect nudge-at "ms until the nudge rate") (.not.toBeNull))
     (-> (expect (m/abs* (:drift-final summary)) "drift at the end") (.toBeLessThanOrEqual (t browser-name :settled)))))
 

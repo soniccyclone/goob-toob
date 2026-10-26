@@ -331,3 +331,10 @@ session. Landed as specced, plus:
   beat of recovery, both logged by the server. The browser steps in
   Verification (rate following on the element, the hint, the slow note)
   were not run in the implementing environment; they are the reviewer's.
+- *2026-10-26, seek-back removed (Nathan's call).* =policy= no longer
+  returns =:seek-back=; a viewer ahead by any amount is nudged at 0.95
+  until it settles, and =:seek-ahead= is gone from =tuning=. The sync
+  policy never seeks: a viewer cannot get ahead of the host in practice,
+  and one that somehow does affects no one else. The remedies for any
+  viewer who cares are a reload or a host seek. The rule is in
+  =CLAUDE.md=, "Sync design: hard rules".

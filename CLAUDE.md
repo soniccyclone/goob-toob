@@ -37,10 +37,11 @@ fixes that bend them, and do not plan around them without asking first.
 - **The sync policy never seeks a viewer to close drift.** Drift is closed
   by playback rate only (`sync_core.cljc` `policy`: catch-up 1.05,
   nudge-slow 0.95, room slow-down 0.97) or not at all. No re-anchoring
-  seeks, no "seek instead of a long nudge", no seek on return to 1.0.
-  The one automatic seek on the books is the existing `:seek-back` for a
-  viewer that ran *ahead* past `:seek-ahead`; it never seeks forward, and
-  nothing new gets added beside it.
+  seeks, no "seek instead of a long nudge", no seek on return to 1.0, and
+  no seek-back for a viewer that ran ahead either (removed 2026-10-26: a
+  viewer cannot get ahead of the host in practice, and one that somehow
+  does affects nobody else). `policy` returns only `:none`, `:catch-up`
+  and `:nudge-slow`.
 - **Lag is allowed.** A viewer who falls noticeably behind has two remedies,
   both deliberate: they reload the page (the lag hint already says so), or
   the host issues a seek, which moves everyone and is the room's one
