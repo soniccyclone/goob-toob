@@ -18,8 +18,9 @@
 ;; Every started viewer samples its playback once a second and uploads ONE
 ;; chunk every tele-chunk-ms (5 min) to /api/telemetry, plus one sendBeacon
 ;; with the unsent tail on pagehide. Nothing is ever sent more often: the
-;; "sound out of sync?" button and the auto trigger only drop markers into
-;; the stream, and they leave with the next chunk. Budget: a sample is one
+;; auto trigger only drops a marker into the stream, and it leaves with the
+;; next chunk. There is no "report" button: every session is recorded, so
+;; the analysis finds the episode without anyone pressing anything. Budget: a sample is one
 ;; 16-column positional row (tele-header), ~60 B as JSON; a full 300-sample
 ;; chunk is ~18 KB; 12 requests and ~220 KB per viewer per hour at most.
 ;; Paused or not started: one "idle" marker, then no samples until playback
@@ -260,25 +261,6 @@
                              :body body})
               (.catch (fn [_] nil))))
         (catch js/Error _ nil)))))
-
-(def ^:private report-label "sound out of sync?")
-
-(defn- report-btn
-  "A marker in the telemetry stream for the moment the viewer noticed; the
-  host matches it against the samples around it. Nothing is uploaded on
-  the press (the chunk cadence rules), so the copy says noted, not sent."
-  []
-  (let [btn (h :button.btn.ghost.report
-               {:title "the sound doesn't match the picture? press this and the moment gets a marker in the playback log for the host to look at"}
-               report-label)]
-    ;; like the transport buttons: the click must not keep focus
-    (set! (.-onmousedown btn) #(.preventDefault %))
-    (set! (.-onclick btn)
-          (fn []
-            (event! "mark" {:note "viewer pressed the button"})
-            (set! (.-textContent btn) "noted, thanks")
-            (js/setTimeout #(set! (.-textContent btn) report-label) 4000)))
-    btn))
 
 (defn- note-rate! [^js st token ^js video from to mode d]
   ;; the policy is about to move the element's rate from -> to
@@ -1247,7 +1229,6 @@
     (stage! stage-wrap video fs-btn)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality")
              (volume-control st) (fs-setting st fs-chat))
-    (ui/add! viewer-row (report-btn))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
     {:video video

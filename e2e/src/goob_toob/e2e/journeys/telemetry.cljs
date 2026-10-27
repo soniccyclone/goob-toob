@@ -54,12 +54,6 @@
         ^js vp (:page viewer)
         series (<? (m/sample vp (:telemetry-window W)))
         before (:telemetry (<? (party/probe vp)))
-        ;; by class, not by name: the press changes the label
-        btn (.locator vp "button.report")
-        _ (<p! (-> (expect btn) (.toHaveText "sound out of sync?")))
-        _ (<p! (.click btn))
-        _ (<p! (-> (expect btn) (.toHaveText "noted, thanks")))
-        after (:telemetry (<? (party/probe vp)))
         ;; the viewer leaves for the lobby: pagehide, and the beacon carries the tail
         _ (<p! (.goto vp "/"))
         file (<? (wait-recorded! base-url cookie (:id room) "viewer" (:telemetry-min-samples W) (:ready-timeout W)))
@@ -67,23 +61,20 @@
         cs (chunks text)
         rows (mapcat :samples cs)
         row-bytes (map #(.-length (js/JSON.stringify (clj->js %))) rows)
-        marks (filter #(= "mark" (:type %)) (mapcat :events cs))
         {an-status :status an :data} (if file
                                        (<p! (api/telemetry-analysis base-url cookie (:day file) (:id room)))
                                        {:status 0 :data nil})]
     (<p! (m/record! info (m/summarize series 0) series
-                    {:pending (:pending before) :events-before (:events before) :events-after (:events after)
+                    {:pending (:pending before) :events (:events before)
                      :file (:name file) :bytes (:size file) :chunks (count cs) :samples (:samples file)
                      :bytes-per-sample (when (seq row-bytes) (/ (reduce + row-bytes) (count row-bytes)))
                      :envelope-bytes (when file (- (:size file) (reduce + 0 row-bytes)))
-                     :marks (count marks) :clients (mapv :nick (:clients an))
+                     :clients (mapv :nick (:clients an))
                      :episodes (mapv :type (:episodes an))}))
     (-> (expect (:pending before) "samples pending on the page before it left") (.toBeGreaterThanOrEqual (:telemetry-min-samples W)))
-    (-> (expect (:events after) "events pending after the press") (.toBeGreaterThan (:events before)))
     (-> (expect (some? file) "a file for the room with enough samples") (.toBe true))
     (-> (expect (count cs) "chunks in the file") (.toBeGreaterThanOrEqual 1))
     (-> (expect (reduce + (map #(count (:samples %)) cs)) "samples in the file") (.toBeGreaterThanOrEqual (:telemetry-min-samples W)))
-    (-> (expect (count marks) "mark events in the file") (.toBe 1))
     (-> (expect an-status "analysis status") (.toBe 200))
     (-> (expect (vector? (:episodes an)) "episodes vector") (.toBe true))
     (-> (expect (clj->js (mapv :nick (:clients an))) "clients analysed") (.toContain "viewer"))))
