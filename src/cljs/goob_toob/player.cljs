@@ -88,8 +88,26 @@
     (.on ctx "manifestLoadingError"
          (fn [e] (fire "manifest-failed" {:url (jstr (.-url e)) :http (jstr (.-code e))
                                           :msg (jstr (.-message e))})))
-    (.on ctx "fragLoadingError"
-         (fn [e] (fire "frag-failed" {:url (jstr (some-> (.-request e) (.-url)))
-                                      :http (jstr (.-code e))})))
+    ;; dash.js 4.7.4 has no "fragLoadingError" event (#46). The only thing it
+    ;; emits per failed segment *attempt* is the ISO 23009-1 HttpList metric
+    ;; HTTPLoader records before scheduling the retry; "error" (code 27/28)
+    ;; and "fragmentLoadingCompleted"-with-error fire only once retries are
+    ;; exhausted, which never happens with the unlimited retries in `create`.
+    ;; A failure record has a numeric non-2xx responsecode (0 = network
+    ;; error) and, per the spec note in MetricsModel.addHttpRequest, no
+    ;; `trace` key -- an ABR abort keeps its traces, a redirect stub has a
+    ;; null responsecode, so both are skipped.
+    (.on ctx "metricAdded"
+         (fn [e]
+           (let [vo (.-value e)]
+             (when (and (= "HttpList" (.-metric e))
+                        (some? vo)
+                        (contains? #{"MediaSegment" "InitializationSegment" "IndexSegment"}
+                                   (.-type vo))
+                        (number? (.-responsecode vo))
+                        (not (<= 200 (.-responsecode vo) 299))
+                        (undefined? (.-trace vo)))
+               (fire "frag-failed" {:url (jstr (.-url vo))
+                                    :http (jstr (.-responsecode vo))})))))
     (.on ctx "playbackStalled" (fn [_] (fire "dash-stalled" {})))
     (.on ctx "playbackStarted" (fn [_] (fire "playback-started" {})))))
