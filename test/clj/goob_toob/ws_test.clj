@@ -95,6 +95,19 @@
 (deftest unknown-token-is-refused
   (is (thrown? CompletionException (ws-client @port "nope" "x" nil))))
 
+(deftest a-plain-get-is-refused-without-joining
+  (let [room (room!)
+        resp (.send (HttpClient/newHttpClient)
+                    (.build (HttpRequest/newBuilder
+                             (URI. (str "http://127.0.0.1:" @port "/ws/room/" (:token room)))))
+                    (HttpResponse$BodyHandlers/ofString))]
+    (is (= 426 (.statusCode resp)))
+    (is (= {:error "websocket upgrade required"} (json/parse-string (.body resp) true)))
+    (is (empty? (get-in @sync/rooms* [(:id room) :clients])))
+    (is (empty? @sync/conns*))
+    ;; the room is still fine for a real socket, and the ghost is not in its peers
+    (is (= ["ann"] (map :nick (:peers (:welcome (connect! room "ann"))))))))
+
 (deftest nick-is-trimmed-and-clamped
   (let [room (room!)]
     (is (= [(apply str (repeat 32 "a"))]
