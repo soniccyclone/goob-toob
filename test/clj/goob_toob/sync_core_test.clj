@@ -149,3 +149,18 @@
 (deftest start-action-blocks-solo-play-after-joining
   (is (= :park (sc/start-action :play {:started? true :playing? false})))
   (is (= :none (sc/start-action :play {:started? true :playing? true}))))
+
+(deftest neighbour-walks-the-queue
+  (let [ids ["a" "b" "c"]]
+    (is (= "c" (sc/neighbour ids "b" :next)))
+    (is (= "a" (sc/neighbour ids "b" :prev)))
+    (is (nil? (sc/neighbour ids "c" :next)))
+    (is (nil? (sc/neighbour ids "a" :prev)))
+    (is (nil? (sc/neighbour ids "x" :next)))))
+
+(deftest ended-needs-a-playing-room-past-its-duration
+  (let [room {:playing? true :duration 10 :pos 0 :t0 0 :rate 1.0}]
+    (is (true? (sc/ended? room 10000)))
+    (is (false? (sc/ended? room 9999)))
+    (is (false? (sc/ended? (assoc room :playing? false :pos 10) 10000)))
+    (is (false? (sc/ended? (dissoc room :duration) 10000)))))

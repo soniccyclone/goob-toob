@@ -27,11 +27,16 @@
   [room-id]
   (= 1 (:allow-control (rooms/get-by-id room-id))))
 
+(def ^:private item-ops #{"next" "prev" "jump"})
+
 (defn- handle-msg [{:keys [room-id cid admin? send!]} m]
   (case (:type m)
     "ping"   (send! {:type "pong" :t (:t m) :st (sync/mono-ms)})
+    ;; skipping is playback control: same gate as play/pause/seek
     "cmd"    (when (or admin? (control-allowed? room-id))
-               (sync/host-cmd! room-id (:op m) (num (:pos m)) (:nick m)))
+               (if (item-ops (:op m))
+                 (sync/item-cmd! room-id (:op m) (:video m) (:nick m))
+                 (sync/host-cmd! room-id (:op m) (num (:pos m)) (:nick m))))
     "chat"   (let [text (clamp-text (:text m) 500)]
                (when-not (str/blank? text)
                  (sync/broadcast room-id {:type "chat" :from (:nick m) :text text
@@ -48,19 +53,21 @@
                                 str/trim not-empty (#(apply str (take 32 %))))
                         "guest")
             admin?  (boolean (or (:goob/admin req) (get-in req [:session :admin])))
-            room-id (:id room-row)
-            video   (videos/get-by-id (:video-id room-row))]
+            room-id (:id room-row)]
         (wa/go-websocket [in out]
           (let [send! #(a/put! out (json/generate-string %))]
             (swap! sync/conns* assoc cid {:send #(a/put! out %) ; takes a json string
                                           :room-id room-id :host? admin? :nick nick})
             (sync/join! room-id cid nick)
-            (let [room (sync/room-for room-id)]
+            ;; the live room's current video, not the row's: a reconnect
+            ;; during an item change lands on the right one
+            (let [room  (sync/room-for room-id)
+                  video (videos/get-by-id (:video-id room))]
               (send! {:type "welcome" :you cid :is-host admin?
                       :can-control (or admin? (= 1 (:allow-control room-row)))
-                      :video {:id (:id video) :title (:title video)
-                              :duration (:duration video)
-                              :dash (str "/dash/" (:id video) "/manifest.mpd")}
+                      :video (sync/video-descriptor video)
+                      :video-id (:video-id room)
+                      :queue (rooms/queue room-id)
                       :start-kbps (sc/start-kbps (:ladder (config/cfg)))
                       :state (sync/state-msg room)
                       :peers (sync/peers-list room)}))

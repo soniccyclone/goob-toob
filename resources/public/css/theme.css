@@ -216,3 +216,16 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
 @keyframes toast-in { from { transform: translateY(16px); opacity: 0; } }
 .cohost { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; }
 .cohost input { accent-color: var(--slime); width: 1.05rem; height: 1.05rem; }
+
+/* ---- admin: room rename + queue editor ---- */
+.editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }
+.room-title { width: 100%; max-width: 16rem; }
+details.queue summary { cursor: pointer; white-space: nowrap; }
+.queue-editor { margin-top: 0.5rem; min-width: 22rem; }
+.qitem { display: flex; align-items: center; gap: 0.6rem; padding: 0.25rem 0; }
+.qitem .pos { opacity: 0.6; min-width: 1.2rem; text-align: right; }
+.qitem .qtitle { flex: 1; }
+.qitem.now .qtitle { color: var(--slime); font-weight: 800; }
+.qitem .btn, .qadd .btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+.qadd { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+.qadd select { flex: 1; }

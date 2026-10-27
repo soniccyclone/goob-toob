@@ -74,36 +74,86 @@
 
 (defn public-rooms [_]
   (response (for [r (rooms/list-all) :when (= "ready" (:status r))]
-              {:token (:token r) :title (:title r)})))
+              {:token (:token r) :title (:title r) :now (:video-title r) :items (:items r)})))
 
-(defn admin-rooms [_] (response (rooms/list-all)))
+(defn admin-rooms [_]
+  (response (map #(assoc % :queue (rooms/queue (:id %))) (rooms/list-all))))
 
 (defn create-room [{:keys [params]}]
-  (try
-    (let [r (rooms/create! (:video-id params))]
-      (-> (response {:token (:token r) :url (str "/watch/" (:token r))}) (status 201)))
-    (catch Exception e
-      (-> (response {:error (.getMessage e)}) (status 400)))))
+  (let [r (rooms/create! (:video-id params) :title (:title params))]
+    (-> (response {:token (:token r) :url (str "/watch/" (:token r))}) (status 201))))
 
 (defn delete-room [{:keys [params]}]
   (rooms/delete! (:id params))
   (response {:ok true}))
 
-(defn update-room [{:keys [params]}]
-  (rooms/set-control! (:id params) (boolean (:allow-control params)))
-  (response {:ok true}))
+(defn- room-or-404
+  "The room row, or a :not-found that wrap-conflicts turns into a 404 (an
+  unknown room would otherwise surface as a raw SQLite foreign-key error
+  from the item repos)."
+  [id]
+  (or (rooms/get-by-id id)
+      (throw (ex-info "no such room" {:type :not-found :room-id id}))))
+
+(defn update-room
+  "Each key optional: :allow-control flips co-host control, :title renames
+  (blank clears it)."
+  [{:keys [params]}]
+  (let [id (:id (room-or-404 (:id params)))]
+    (when (contains? params :allow-control)
+      (rooms/set-control! id (boolean (:allow-control params))))
+    (when (contains? params :title)
+      (rooms/set-title! id (:title params)))
+    (response {:ok true})))
+
+(defn- queue-response [room-id code]
+  (-> (response {:queue (rooms/queue room-id)
+                 :video-id (:video-id (rooms/get-by-id room-id))})
+      (status code)))
+
+(defn add-item [{:keys [params]}]
+  (let [id (:id (room-or-404 (:id params)))]
+    (rooms/add-item! id (:video-id params))
+    (sync/queue-changed! id)
+    (queue-response id 201)))
+
+(defn remove-item [{:keys [params]}]
+  (let [id (:id (room-or-404 (:id params)))]
+    (rooms/remove-item! id (:video-id params))
+    (sync/queue-changed! id)
+    (queue-response id 200)))
+
+(defn reorder-items [{:keys [params]}]
+  (let [id (:id (room-or-404 (:id params)))]
+    (rooms/reorder! id (vec (:order params)))
+    (sync/queue-changed! id)
+    (queue-response id 200)))
 
 (defn room-live [{:keys [params]}]
   (if-let [view (sync/live-view (:id params))]
     (response view)
     (-> (response {:error "no such room"}) (status 404))))
 
-(defn delete-video [{:keys [params]}]
+(defn delete-video
+  "409 (from wrap-conflicts) while any room has the video queued."
+  [{:keys [params]}]
   (let [id (:id params)]
     (when-let [v (videos/get-by-id id)]
       (videos/delete! id)
       (storage/delete-video-files! id))
     (response {:ok true})))
+
+(defn wrap-conflicts
+  "The repos refuse with ex-info: :conflict -> 409, :bad-request -> 400,
+  :not-found -> 404, each as {:error message}. Anything else propagates."
+  [handler]
+  (fn [req]
+    (try (handler req)
+         (catch clojure.lang.ExceptionInfo e
+           (if-let [code ({:conflict 409 :bad-request 400 :not-found 404}
+                          (:type (ex-data e)))]
+             (-> (response {:error (ex-message e)}) (status code))
+             (throw e))))))
 
 (defn upload [{:keys [params]}]
   (let [{:keys [tempfile filename size]} (:file params)]
@@ -237,7 +287,7 @@
                              ["/clientlog" {:post clientlog}]])
               login? (into [["/login" {:post login}]
                             ["/logout" {:post logout}]])
-              admin? (into [["/admin" {:middleware [require-admin]}
+              admin? (into [["/admin" {:middleware [require-admin wrap-conflicts]}
                              ["/me" {:get whoami}]
                              ["/videos" {:get admin-videos}]
                              ["/videos/:id" {:delete delete-video}]
@@ -246,6 +296,8 @@
                              ["/info" {:get storage-info}]
                              ["/rooms" {:get admin-rooms :post create-room}]
                              ["/rooms/:id" {:delete delete-room :patch update-room}]
+                             ["/rooms/:id/items" {:post add-item :put reorder-items}]
+                             ["/rooms/:id/items/:video-id" {:delete remove-item}]
                              ["/rooms/:id/live" {:get room-live}]]]))
         router
         (ring/router
