@@ -85,5 +85,9 @@
    :autostart-window  12000
    :control-idle      5000
    :pong-every        5000
-   :parked-hold       6000})
+   :parked-hold       6000
+   ;; #57 telemetry: the viewer plays this long before leaving, and the
+   ;; file read back must hold at least this many 1 Hz samples
+   :telemetry-window  25000
+   :telemetry-min-samples 20})
 

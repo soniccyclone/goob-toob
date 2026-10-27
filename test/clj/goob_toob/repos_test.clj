@@ -8,6 +8,7 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.test-util :refer [with-tmp]]))
 
 (use-fixtures :each with-tmp)
@@ -239,3 +240,19 @@
   (is (not (.exists (io/file (config/storage-dir) "dash" "v1"))))
   (is (not (.exists (io/file (config/storage-dir) "uploads" "v1.mkv"))))
   (is (.isDirectory (io/file (config/storage-dir) "uploads"))))
+
+;; ---- settings (006) -------------------------------------------------------------
+
+(deftest settings-read-as-defaults-until-set
+  (is (= {:telemetry true} (settings/all)))
+  (is (true? (settings/telemetry?)))
+  (is (false? (settings/set! :telemetry false)))
+  (is (false? (settings/telemetry?)))
+  (is (= {:telemetry false} (settings/all)))
+  (is (true? (settings/set! :telemetry true)) "set again overwrites the row")
+  (is (true? (settings/telemetry?))))
+
+(deftest settings-refuse-an-unknown-key
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown setting"
+                        (settings/set! :volume 11)))
+  (is (= {:telemetry true} (settings/all))))

@@ -10,15 +10,18 @@
             [ring.util.response :refer [response file-response content-type header status]]
             [clojure.string :as str]
             [clojure.java.io :as io]
+            [cheshire.core :as json]
             [goob-toob.config :as config]
             [goob-toob.log :as log]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.db :as db]
             [goob-toob.services.sync :as sync]
             [goob-toob.services.transcode :as transcode]
             [goob-toob.session-store :as session-store]
+            [goob-toob.telemetry :as telemetry]
             [goob-toob.ws :as ws])
   (:import [java.io RandomAccessFile]
            [java.security MessageDigest]))
@@ -193,14 +196,19 @@
 
 (defn- clip [s n] (subs s 0 (min n (count s))))
 
-(defn- clientlog-allow? [tok now]
-  (let [[n _] (get (swap! clientlog-hits
+(defn- allow?
+  "At most limit hits per key per minute, counted in hits (key -> [count
+  window-start-ms]); the window restarts a minute after its first hit."
+  [hits k now limit]
+  (let [[n _] (get (swap! hits
                           (fn [m]
-                            (let [[n t] (get m tok [0 now])
+                            (let [[n t] (get m k [0 now])
                                   fresh (>= (- now t) 60000)]
-                              (assoc m tok [(if fresh 1 (inc n)) (if fresh now t)]))))
-                   tok)]
-    (<= n 120)))
+                              (assoc m k [(if fresh 1 (inc n)) (if fresh now t)]))))
+                   k)]
+    (<= n limit)))
+
+(defn- clientlog-allow? [tok now] (allow? clientlog-hits tok now 120))
 
 (defn clientlog [{:keys [params]}]
   (let [{:keys [token msg]} params
@@ -208,6 +216,91 @@
     (when (and msg (clientlog-allow? tok (System/currentTimeMillis)))
       (log/info "client" (clip tok 8) ":" (clip (str msg) 400)))
     (response {:ok true})))
+
+;; ---- telemetry (#57) -----------------------------------------------------------
+;; Every started viewer uploads one chunk of 1 Hz samples per 5 min (the
+;; telemetry block in watch.cljs has the budget); each lands as one line in
+;; <storage>/telemetry/<day>/<room-id>/<session>-<nick>.jsonl, named from
+;; the room row and sanitised fields, never from a client path. A chunk
+;; over 64 KB is 413; more than two a minute per viewer (token + session:
+;; the 5 min chunk and a pagehide beacon that may follow it inside the
+;; minute; one room's viewers do not hold each other back) is 429. The
+;; client drops either and carries on. One log line per new file, none per
+;; chunk. goob-toob.telemetry reads the files back.
+
+(def telemetry-hits (atom {})) ;; token/session -> [count window-start-ms]
+(def ^:private telemetry-max-bytes 65536)
+
+(defn- telemetry-allow? [k now] (allow? telemetry-hits k now 2))
+
+(defn- wrap-body-limit
+  "413 for a request body over max-bytes, read before any JSON parsing."
+  [handler max-bytes]
+  (fn [req]
+    (if-let [^java.io.InputStream in (:body req)]
+      (let [bytes (.readNBytes in (inc (int max-bytes)))]
+        (if (> (alength bytes) max-bytes)
+          (-> (response {:error "chunk too big"}) (status 413))
+          (handler (assoc req :body (java.io.ByteArrayInputStream. bytes)))))
+      (handler req))))
+
+(defn admin-settings [_]
+  (response (settings/all)))
+
+(defn update-settings
+  "Each known key optional; :telemetry true/false switches the playback
+  recording globally (the welcome tells every viewer, the route refuses)."
+  [{:keys [params]}]
+  (when-let [unknown (seq (remove (set (keys settings/defaults)) (keys params)))]
+    (throw (ex-info (str "unknown setting " (name (first unknown))) {:type :bad-request})))
+  (doseq [[k v] params]
+    (settings/set! k (boolean v)))
+  (response (settings/all)))
+
+(defn telemetry [{:keys [params]}]
+  (let [{:keys [token session nick samples]} params]
+    (if-not (settings/telemetry?)
+      (-> (response {:error "telemetry is off"}) (status 403))
+    (if-not (and (string? token) (string? session) (vector? samples) (seq samples))
+      (-> (response {:error "token, session and samples required"}) (status 400))
+      (if-let [room (rooms/get-by-token token)]
+        (if (telemetry-allow? (str (clip token 64) "/" (clip session 32)) (System/currentTimeMillis))
+          (let [line (json/generate-string (-> params
+                                               (dissoc :token)
+                                               (assoc :room (:id room)
+                                                      :received (System/currentTimeMillis))))
+                {:keys [file new?]} (storage/append-telemetry! (:id room) session nick line)]
+            (when new? (log/info "telemetry: new file" (.getPath ^java.io.File file)))
+            (response {:ok true}))
+          (-> (response {:error "two chunks a minute per viewer"}) (status 429)))
+        (-> (response {:error "no such room"}) (status 404)))))))
+
+(defn admin-telemetry
+  "Days newest first, their rooms (with the title while the room exists)
+  and each file's size, chunks, samples, first and last sample time."
+  [_]
+  (response (for [{:keys [day rooms]} (storage/list-telemetry)]
+              {:day day
+               :rooms (for [{:keys [id files]} rooms]
+                        {:id id
+                         :title (:title (rooms/get-by-id id))
+                         :files (map telemetry/file-info files)})})))
+
+(defn admin-telemetry-file
+  "GET .../<day>/<room>/<file>.jsonl downloads the file; .../analysis runs
+  goob-toob.telemetry over the room's files for that day."
+  [{:keys [params]}]
+  (let [{:keys [day room file]} params]
+    (if (= "analysis" file)
+      (if-let [files (seq (storage/telemetry-files day room))]
+        (response (telemetry/analyse (mapcat telemetry/read-file files)))
+        (-> (response {:error "no telemetry there"}) (status 404)))
+      (if-let [f (storage/telemetry-file day room file)]
+        (-> (response (io/input-stream f))
+            (content-type "application/x-ndjson")
+            (header "Content-Length" (str (.length ^java.io.File f)))
+            (header "Content-Disposition" (str "attachment; filename=\"" file "\"")))
+        (-> (response {:error "no such file"}) (status 404))))))
 
 ;; ---- DASH serving (with Range support) -------------------------------------
 
@@ -304,15 +397,24 @@
                              ["/upload" {:post upload
                                          :middleware [wrap-multipart-params wrap-keyword-params]}]
                              ["/info" {:get storage-info}]
+                             ["/settings" {:get admin-settings :put update-settings}]
                              ["/rooms" {:get admin-rooms :post create-room}]
                              ["/rooms/:id" {:delete delete-room :patch update-room}]
                              ["/rooms/:id/items" {:post add-item :put reorder-items}]
                              ["/rooms/:id/items/:video-id" {:delete remove-item}]
-                             ["/rooms/:id/live" {:get room-live}]]]))
+                             ["/rooms/:id/live" {:get room-live}]
+                             ["/telemetry" {:get admin-telemetry}]
+                             ["/telemetry/:day/:room/:file" {:get admin-telemetry-file}]]]))
+        ;; outside the /api group so the size cap runs before the JSON parse
+        telemetry-route ["/api/telemetry" {:post telemetry
+                                           :middleware [wrap-json-response
+                                                        #(wrap-body-limit % telemetry-max-bytes)
+                                                        json-body]}]
         router
         (ring/router
          (cond-> ["" {:middleware (common (session-store/sql-store db/db))}
                   api
+                  telemetry-route
                   ["/dash/:video-id/*path" {:get dash-file}]
                   ["/ws/room/:token" {:get ws/endpoint}]
                   ["/" {:get spa}]

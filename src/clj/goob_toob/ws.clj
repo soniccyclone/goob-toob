@@ -13,6 +13,7 @@
             [cheshire.core :as json]
             [clojure.string :as str]
             [goob-toob.config :as config]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.log :as log]
             [goob-toob.services.sync :as sync]
             [goob-toob.sync-core :as sc]
@@ -81,6 +82,7 @@
                       :video-id (:video-id room)
                       :queue (rooms/queue room-id)
                       :start-kbps (sc/start-kbps (:ladder (config/cfg)))
+                      :telemetry (settings/telemetry?)
                       :state (sync/state-msg room)
                       :peers (sync/peers-list room)}))
             (sync/broadcast-peers room-id)

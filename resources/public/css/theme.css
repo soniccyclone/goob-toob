@@ -299,3 +299,8 @@ details.queue summary { cursor: pointer; white-space: nowrap; }
 .qitem .btn, .qadd .btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
 .qadd { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
 .qadd select { flex: 1; }
+
+/* #57: admin telemetry listing */
+.tele-room { padding: 0.4rem 0; border-bottom: 1px solid rgba(31,200,219,0.2); }
+.tele-room ul { margin: 0.3rem 0 0 1.2rem; padding: 0; }
+.tele-day summary { cursor: pointer; font-weight: 700; }

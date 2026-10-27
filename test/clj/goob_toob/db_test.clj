@@ -24,7 +24,7 @@
                           (sql/format {:select [:name] :from [:sqlite_master]
                                        :where [:= :type "table"]}))
                       (mapcat vals) (map name) set)]
-      (is (every? tables ["videos" "rooms" "room_items" "sessions" "schema_migrations"])))))
+      (is (every? tables ["videos" "rooms" "room_items" "sessions" "settings" "schema_migrations"])))))
 
 (deftest init-is-idempotent
   (let [path (str (tmp-dir) "/goob-toob.db")]
