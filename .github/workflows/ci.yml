@@ -77,12 +77,15 @@ jobs:
       options: --ipc=host
     strategy:
       fail-fast: false
-      # one runner per (project, shard): Playwright splits the spec files
-      # across the shards, so the ~18 min of wall-clock sampling the
-      # journeys need runs as eight ~3 min slices instead of one serial run
+      # One runner per (project, group). The journeys are ~9 min of
+      # wall-clock sampling per project by design; a runner costs ~1.5 min
+      # to cold start, so two balanced groups per project (~4.5 min each)
+      # is the sweet spot: four runners, ~6 min wall, not an explosion of
+      # jobs. The groups are spec files, totals balanced from the metrics;
+      # the guard step fails the job if a spec file is in neither group.
       matrix:
         project: [chromium, chromium-lenient]
-        shard: [1, 2, 3, 4]
+        group: [a, b]
     env:
       CI: "1"
       HOME: /root
@@ -97,18 +100,28 @@ jobs:
         run: |
           export GOOB_E2E_STORAGE="$RUNNER_TEMP/goob"
           mkdir -p "$GOOB_E2E_STORAGE"
-          npx playwright test -c out/config.js --project=${{ matrix.project }} --shard=${{ matrix.shard }}/4
+          case "${{ matrix.group }}" in
+            a) SPECS="sync-policy host-and-viewer control lobby-admin-chat" ;;
+            b) SPECS="playlists autoplay resilience telemetry" ;;
+          esac
+          ALL="sync-policy host-and-viewer control lobby-admin-chat playlists autoplay resilience telemetry"
+          for f in out/*.js; do
+            n=$(basename "$f" .js)
+            case "$n" in config|setup) continue ;; esac
+            case " $ALL " in *" $n "*) ;; *) echo "spec $n is in no e2e group (ci.yml)"; exit 1 ;; esac
+          done
+          npx playwright test -c out/config.js --project=${{ matrix.project }} $SPECS
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ matrix.project }}-${{ matrix.shard }}
+          name: e2e-${{ matrix.project }}-${{ matrix.group }}
           path: |
             e2e/metrics
             e2e/report
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ matrix.project }}-${{ matrix.shard }}-test-results
+          name: e2e-${{ matrix.project }}-${{ matrix.group }}-test-results
           path: e2e/test-results
       - if: always()
         run: if [ -f e2e/metrics/summary.md ]; then cat e2e/metrics/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
