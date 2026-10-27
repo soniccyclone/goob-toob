@@ -235,8 +235,22 @@
   the element's native seek and the page scroll from firing first. A viewer
   who cannot control gets nothing from the arrows (the native seek would only
   desync them) and Space stays as it is, the join gesture. Repeats are
-  dropped so holding a key does not flood the socket."
+  dropped so holding a key does not flood the socket.
+
+  Chromium's native controls toggle play on Space *keyup*, at the target,
+  and no keydown preventDefault reaches that. Left alone it races the room:
+  the play command goes out on the keydown, and when its state lands before
+  the release (a LAN round trip fits inside a human keypress) the release
+  pauses the host's own element while the room plays on, the spinner at
+  0:00. A capture-phase keyup preventDefault is what Chromium honours, so a
+  controller's Space is ours end to end; a viewer who cannot control keeps
+  the native toggle as the join gesture."
   [^js st ^js video]
+  (.addEventListener js/document "keyup"
+    (fn [^js e]
+      (when (and (.-cancontrol st) (= " " (.-key e)) (not (owns-key? (.-target e) " ")))
+        (.preventDefault e)))
+    true)
   (.addEventListener js/document "keydown"
     (fn [^js e]
       (let [k (.-key e)]

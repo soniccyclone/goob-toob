@@ -373,9 +373,23 @@ all three projects unless marked.
 *** =host_and_viewer.cljs=
 | journey                             | steps                                                                  | asserts                                                                                             |
 |-------------------------------------+------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------|
-| =host starts the party=             | host joins (gesture), play; sample 6 s                                 | =started= within =:start-within=; =currentTime= advances ≥ 4 s in 6 s; server =playing= true; 0 stalls |
+| =host starts the party=             | host joins (gesture), play; wait for the landing; sample 6 s           | =started= within =:start-within=; landed (started, playing, past the landing stall) within =:sync-within=; =currentTime= advances ≥ 4 s in 6 s; server =playing= true; 0 stalls |
+| =a held Space does not pause the host= | host opens the room; Space held until the room plays and the element is unpaused; release; wait for the landing; sample 6 s | room playing with Space held; landed after the release; no sample with the element paused; =currentTime= advances ≥ 4 s in 6 s |
 | =viewer joins a playing room in sync= | host playing 5 s in; viewer opens page; wait for parked; join; sample 20 s | parked drift ≤ =:park-drift=; drift ≤ =:settled= within =:sync-within=; =:drift-abs-p95= ≤ =:steady-p95= after settle; server drift for the viewer ≤ =:settled= at the end; seeks after join = 0; seekbacks = 0 |
 | =pause, seek and resume agree=      | both playing; host pause; host seek +30 s; host play; sample 10 s       | after pause both =paused=, =currentTime= within =:pause-agreement=; after seek both within =:pause-agreement= of the seek target; after play the viewer's p95 ≤ =:steady-p95= |
+Note (2026-10-27): Chromium's native controls toggle play on Space
+/keyup/, at the target, and a keydown preventDefault does not reach it.
+The host's keydown sends the room's play; when that state landed before
+the release (a LAN round trip fits inside a human keypress) the release
+paused the host's own element while the room played on, the "spinner at
+0:00". The watch page now cancels the native toggle with a capture-phase
+keyup preventDefault for a client that can control (a viewer who cannot
+keeps it as the join gesture); "a held Space does not pause the host"
+reproduces the race on purpose. In the same change "host starts the
+party" opens its window only once the landing is over (=wait-landed!=:
+started, not paused, not buffering): the landing stall used to fall
+inside the window by timing luck and fail "0 stalls" (6 of 12 local runs,
+1 in 18 on CI).
 *** =sync_policy.cljs=
 | journey                                   | steps                                                        | asserts                                                                                              |
 |-------------------------------------------+--------------------------------------------------------------+------------------------------------------------------------------------------------------------------|
