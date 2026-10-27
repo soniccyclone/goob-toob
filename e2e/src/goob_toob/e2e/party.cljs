@@ -227,7 +227,7 @@
           viewer (<? (open! browser base-url (:token room) {:nick "viewer"}))
           joined (<? (join! (:page viewer) (t engine :start-within)))
           t0 (js/Date.now)]
-      (<p! (wait-synced! (:page viewer) (t engine :settled) (t engine :sync-within)))
+      (<p! (wait-synced! (:page viewer) (t engine :landed) (t engine :sync-within)))
       (assoc scene :viewer viewer :joined joined :synced-ms (- (js/Date.now) t0)))))
 
 (defn droppable!

@@ -1,4 +1,5 @@
-(ns goob-toob.e2e.thresholds)
+(ns goob-toob.e2e.thresholds
+  (:require [goob-toob.sync-core :as sc]))
 
 (def T
   {:start-within      5000
@@ -7,6 +8,13 @@
    :park-live-within  7000
    :park-track        5.5
    :sync-within       8000
+   ;; A landing (join, late join, resync, resume) is a seek followed by a
+   ;; stall while the player buffers there, and the element comes back
+   ;; behind by that stall. The policy leaves anything inside its dead band
+   ;; alone (CLAUDE.md, "Sync design: hard rules"), so a landing is in sync
+   ;; once it is inside the band, and no gate may ask for less: it would
+   ;; wait for a correction that never comes.
+   :landed            (:dead-band sc/tuning)
    :settled           0.5
    :steady-p95        0.5
    :pause-agreement   0.3

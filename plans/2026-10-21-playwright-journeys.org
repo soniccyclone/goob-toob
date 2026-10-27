@@ -358,6 +358,14 @@ budget, fail with the row's =error= text otherwise); write
    :resync-within    15000   ; ms after the network returns
    :chat-within      2000})
 #+end_src
+Note (2026-10-27): every gate on a /landing/ (join, late join, reconnect
+resync, resume after a seek) now uses =:landed=, read from the policy's
+=:dead-band= (1.0 s); =:settled= 0.5 stays for drift after a policy action
+(the nudge journey). A landing is a seek plus a buffering stall, and the
+element comes back behind by that stall; the policy never corrects a lag
+inside the dead band, so a 0.5 s gate could not be met from a 0.66 s
+landing and "a late joiner lands on the live frame" failed its first
+attempt in 3 of 18 main runs (and both attempts on two PRs).
 ** 3 · Journeys
 Each journey records its summary per engine; the assertions column is
 what fails it. "server" means the live endpoint. Every journey runs in

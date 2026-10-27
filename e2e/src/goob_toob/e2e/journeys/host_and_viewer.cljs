@@ -34,14 +34,14 @@
         joined (<? (party/join! page (t browser-name :start-within)))
         series (<? (m/sample page (:join-window W)
                              {:live #(api/live base-url cookie (:id room))}))
-        settled (t browser-name :settled)
+        settled (t browser-name :landed)
         sync-at (m/first-at #(and (:started %) (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series)
         summary (m/summarize series sync-at)
         server-drift (:drift (api/client (<p! (api/live base-url cookie (:id room))) "viewer"))]
     (<p! (m/record! info summary series (assoc joined :sync-at sync-at :server-drift server-drift)))
     (-> (expect sync-at "ms from join to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))
     (-> (expect (:drift-abs-p95 summary) "drift p95 after settle")
-        (.toBeLessThanOrEqual (t browser-name :steady-p95)))
+        (.toBeLessThanOrEqual (t browser-name :landed)))
     (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual settled))
     (-> (expect (:seeks summary) "seeks after join") (.toBe 0))))
 
@@ -68,7 +68,7 @@
         vseek (<? (party/probe vp))
         _ (<p! (party/play! hp))
         series (<? (m/sample vp (:resume-window W)))
-        sync-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) (t browser-name :settled))) series)
+        sync-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) (t browser-name :landed))) series)
         summary (m/summarize series sync-at)
         extra {:pause-gap pause-gap :target target
                :host-seek-gap (m/abs* (- (:currentTime hseek) target))
@@ -81,4 +81,4 @@
     (-> (expect (:viewer-seek-gap extra) "viewer distance from the seek target") (.toBeLessThanOrEqual tol))
     (-> (expect sync-at "ms from resume to settled") (.not.toBeNull))
     (-> (expect (:drift-abs-p95 summary) "viewer drift p95 after resume")
-        (.toBeLessThanOrEqual (t browser-name :steady-p95)))))
+        (.toBeLessThanOrEqual (t browser-name :landed)))))
