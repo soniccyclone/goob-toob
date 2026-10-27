@@ -1,7 +1,7 @@
 (ns goob-toob.routes-test
   "The two-port security invariant: whatever the tunnel can reach (public
   port) must have NO admin surface; the loopback admin port is always-admin."
-  (:require [clojure.test :refer [deftest is use-fixtures]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cheshire.core :as json]
@@ -12,7 +12,8 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.routes :as routes]
             [goob-toob.services.sync :as sync]
-            [goob-toob.test-util :refer [with-tmp]]))
+            [goob-toob.test-util :refer [with-tmp]])
+  (:import [java.time LocalDate]))
 
 (use-fixtures :each with-tmp)
 
@@ -319,3 +320,125 @@
     (call app :patch path :cookie cookie :body {:title "  "})
     (is (= "S01E01" (title)))
     (is (= 1 (:allow-control (rooms/get-by-id id))))))
+
+;; ---- telemetry (#57) -----------------------------------------------------------
+
+(def ^:private header ["t" "ct" "exp" "d" "r" "rr" "p" "b" "rs" "ab" "vb" "df" "tf" "q" "qc" "fs"])
+
+(defn- tele-chunk
+  "A chunk as the watch page uploads it: positional rows under a header."
+  [token & {:keys [session nick seq-no samples] :or {session "abc123" nick "viewer" seq-no 0}}]
+  {:v 1 :token token :nick nick :vid "v1" :session session :seq seq-no :t0 1761500000000 :ua "test"
+   :header header
+   :samples (or samples [[0 10.0 10.0 0.0 1 1 0 0 4 12.0 10.0 3 30 2 nil 0]
+                         [1000 11.0 11.0 0.0 1 1 0 0 4 12.0 10.0 3 60 2 nil 0]])
+   :events [{:t 1761500000500 :type "mark" :note "viewer pressed the button"}]})
+
+(defn- today-dir [room-id]
+  (io/file (config/storage-dir) "telemetry" (str (LocalDate/now)) room-id))
+
+(defn- lines [f] (mapv #(json/parse-string % true) (str/split-lines (slurp f))))
+
+(deftest telemetry-chunks-append-to-one-file-per-session
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app  (container-app)
+        room (rooms/create! "v1")
+        tok  (:token room)]
+    (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk tok)))))
+    (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk tok :seq-no 1)))))
+    (let [files (seq (.listFiles (today-dir (:id room))))
+          f     (first files)
+          ls    (lines f)]
+      (is (= 1 (count files)))
+      (is (= "abc123-viewer.jsonl" (.getName f)))
+      (is (= [0 1] (mapv :seq ls)))
+      (is (= (:id room) (:room (first ls))) "the room id is stamped in")
+      (is (not (contains? (first ls) :token)) "the token is not")
+      (is (number? (:received (first ls))))
+      (is (= 2 (count (:samples (first ls)))))
+      (is (= "mark" (get-in ls [0 :events 0 :type]))))))
+
+(deftest telemetry-names-come-from-the-server-not-the-client
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app  (container-app)
+        room (rooms/create! "v1")]
+    (is (= 200 (:status (call app :post "/api/telemetry"
+                              :body (tele-chunk (:token room) :session "../../x" :nick "../etc/passwd nick")))))
+    (is (= ["x-etc-passwd-nick.jsonl"] (mapv #(.getName ^java.io.File %) (.listFiles (today-dir (:id room))))))))
+
+(deftest telemetry-rejects-unknown-rooms-and-empty-chunks
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app  (container-app)
+        room (rooms/create! "v1")]
+    (is (= 404 (:status (call app :post "/api/telemetry" :body (tele-chunk "nope")))))
+    (is (= 400 (:status (call app :post "/api/telemetry" :body (tele-chunk (:token room) :samples [])))))
+    (is (= 400 (:status (call app :post "/api/telemetry" :body (dissoc (tele-chunk (:token room)) :session)))))
+    (is (not (.exists (today-dir (:id room)))))))
+
+(deftest telemetry-is-two-chunks-a-minute-per-viewer
+  (reset! routes/telemetry-hits {})
+  (is (true? (#'routes/telemetry-allow? "tok/s1" 0)))
+  (is (true? (#'routes/telemetry-allow? "tok/s1" 1000)) "the beacon after a chunk")
+  (is (false? (#'routes/telemetry-allow? "tok/s1" 2000)))
+  (is (true? (#'routes/telemetry-allow? "tok/s2" 2000)) "another viewer in the room is not held back")
+  (is (true? (#'routes/telemetry-allow? "tok/s1" 60000)))
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app  (container-app)
+        room (rooms/create! "v1")]
+    (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk (:token room))))))
+    (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk (:token room) :seq-no 1)))))
+    (is (= 429 (:status (call app :post "/api/telemetry" :body (tele-chunk (:token room) :seq-no 2)))))
+    (is (= 2 (count (lines (first (.listFiles (today-dir (:id room))))))) "the 429'd chunk is dropped")))
+
+(deftest telemetry-caps-a-chunk-at-64-kb
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app  (container-app)
+        room (rooms/create! "v1")
+        big  (assoc (tele-chunk (:token room)) :ua (apply str (repeat 70000 "x")))
+        resp (call app :post "/api/telemetry" :body big)]
+    (is (= 413 (:status resp)))
+    (is (= "chunk too big" (get-in resp [:body :error])))
+    (is (not (.exists (today-dir (:id room)))))))
+
+(deftest telemetry-admin-listing-download-and-analysis
+  (video! "v1" :title "S01E01")
+  (reset! routes/telemetry-hits {})
+  (let [app    (container-app)
+        room   (rooms/create! "v1" :title "Season 1")
+        day    (str (LocalDate/now))
+        base   (str "/api/admin/telemetry/" day "/" (:id room))
+        _      (call app :post "/api/telemetry" :body (tele-chunk (:token room)))
+        cookie (login! app)]
+    (is (= 401 (:status (call app :get "/api/admin/telemetry"))))
+    (is (= 401 (:status (call app :get (str base "/abc123-viewer.jsonl")))))
+    (is (= 401 (:status (call app :get (str base "/analysis")))))
+    (let [listing (vec (:body (call app :get "/api/admin/telemetry" :cookie cookie)))
+          room-e  (first (:rooms (first listing)))
+          f       (first (:files room-e))]
+      (is (= [day] (mapv :day listing)))
+      (is (= {:id (:id room) :title "Season 1"} (select-keys room-e [:id :title])))
+      (is (= {:name "abc123-viewer.jsonl" :chunks 1 :samples 2
+              :first 1761500000000 :last 1761500001000}
+             (dissoc f :size)))
+      (is (pos? (:size f))))
+    (let [dl (call app :get (str base "/abc123-viewer.jsonl") :cookie cookie)]
+      (is (= 200 (:status dl)))
+      (is (= "application/x-ndjson" (get-in dl [:headers "Content-Type"])))
+      (is (str/includes? (get-in dl [:headers "Content-Disposition"]) "abc123-viewer.jsonl"))
+      (is (= 1 (count (str/split-lines (slurp (:body dl)))))))
+    (let [an (call app :get (str base "/analysis") :cookie cookie)]
+      (is (= 200 (:status an)))
+      (is (= ["viewer"] (mapv :nick (get-in an [:body :clients]))))
+      (is (= 2 (:samples (first (get-in an [:body :clients])))))
+      (is (= ["mark"] (mapv :type (:marks (first (get-in an [:body :clients]))))))
+      (is (= [] (get-in an [:body :episodes]))))
+    (testing "names that are not ours are 404, traversal included"
+      (is (= 404 (:status (call app :get (str base "/nope.jsonl") :cookie cookie))))
+      (is (= 404 (:status (call app :get (str base "/..%2F..%2F..%2Ftest.db") :cookie cookie))))
+      (is (= 404 (:status (call app :get (str "/api/admin/telemetry/" day "/..%2F..%2Fdash/analysis") :cookie cookie))))
+      (is (= 404 (:status (call app :get (str "/api/admin/telemetry/2000-01-01/" (:id room) "/analysis") :cookie cookie)))))))

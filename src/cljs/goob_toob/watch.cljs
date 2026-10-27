@@ -14,9 +14,49 @@
   ;; button supplies one. Swallow the rejection anyway (e.g. autoplay-blocked).
   (try (.catch (.play video) (fn [_] nil)) (catch js/Error _ nil)))
 
+;; ---- #57 telemetry: the playback stream, on a budget ----
+;; Every started viewer samples its playback once a second and uploads ONE
+;; chunk every tele-chunk-ms (5 min) to /api/telemetry, plus one sendBeacon
+;; with the unsent tail on pagehide. Nothing is ever sent more often: the
+;; "sound out of sync?" button and the auto trigger only drop markers into
+;; the stream, and they leave with the next chunk. Budget: a sample is one
+;; 16-column positional row (tele-header), ~60 B as JSON; a full 300-sample
+;; chunk is ~18 KB; 12 requests and ~220 KB per viewer per hour at most.
+;; Paused or not started: one "idle" marker, then no samples until playback
+;; resumes, and a chunk with no new samples is not sent. A 413 or 429 from
+;; the server drops the chunk; nothing retries. One watch page per
+;; document, so the state lives here and log! can mark the stream.
+
+(def ^:private tele-chunk-ms 300000)
+(def ^:private tele-max-rows 600)    ; ~36 KB: a chunk stays under the server's 64 KB cap however long the interval slips
+(def ^:private tele-max-events 60)   ; ~15 KB at most: a dash.js fault storm must not bloat a chunk either
+(def ^:private tele-event-chars 240) ; a clientlog line's data, as text, clipped
+
+(def ^:private tele-header
+  ;; ms since the chunk's t0, currentTime, expected, drift, rate, room rate,
+  ;; paused, buffering, readyState, audio/video buffer s, dropped/total
+  ;; frames, quality index, quality cap, fullscreen (booleans as 0/1)
+  ["t" "ct" "exp" "d" "r" "rr" "p" "b" "rs" "ab" "vb" "df" "tf" "q" "qc" "fs"])
+
+(def ^:private tele
+  (js-obj "session" (.slice (.toString (js/Math.random) 36) 2 12)
+          "t0" nil "rows" (array) "events" (array) "seq" 0 "sent" 0
+          "active" false "idled" false "recent" (array)
+          "autoat" nil "autofired" (js-obj)))
+
+(defn- event!
+  "A marker in the telemetry stream: every clientlog line, the button, the
+  auto trigger, idle/resume. m is merged in (:data, :note, :reason)."
+  [type m]
+  (let [evs (.-events tele)]
+    (when (< (.-length evs) tele-max-events)
+      (.push evs (merge {:t (js/Date.now) :type type} m)))))
+
 (defn- log! [token ev data]
   ;; Fire-and-forget playback diagnostics -> server.log (see routes/clientlog):
-  ;; the user just sends the log file, no devtools required.
+  ;; the user just sends the log file, no devtools required. The same line
+  ;; marks the telemetry stream (#57).
+  (event! (if (keyword? ev) (name ev) (str ev)) {:data (.slice (pr-str data) 0 tele-event-chars)})
   (try
     (-> (js/fetch "/api/clientlog"
                   #js {:method "post"
@@ -101,6 +141,144 @@
   (when-let [since (.-offsince st)]
     (set! (.-offrate st) (+ (.-offrate st) (- now since)))
     (set! (.-offsince st) nil)))
+
+(defn- quality-now [^js st]
+  ;; dash.js throws on its quality index between an attach and stream-init
+  (when (and (.-player st) (.-streamok st))
+    (try (player/current-quality (.-player st)) (catch js/Error _ nil))))
+
+(defn- snapshot
+  "The per-second readout goobProbe() and the telemetry sampler share."
+  [^js st ^js video]
+  (let [room (.-room st)
+        e (when room (expected-now st room))]
+    (merge (av-probe st video)
+           {:currentTime (.-currentTime video)
+            :expected e
+            :drift (when e (sc/drift (.-currentTime video) e))
+            :rate (.-playbackRate video) :roomRate (:rate room)
+            :paused (.-paused video) :buffering (boolean (.-buffering st))
+            :readyState (.-readyState video)
+            :quality (quality-now st) :qcap (:cap (.-qcap st))
+            :fullscreen (boolean (.-fullscreen st))})))
+
+(defn- bit [x] (if x 1 0))
+(defn- round2 [x] (/ (Math/round (* 100 x)) 100))
+
+(defn- tele-row
+  "A snapshot as a tele-header row (av-probe already rounds the buffers)."
+  [t0 now s]
+  [(- now t0) (round2 (:currentTime s)) (some-> (:expected s) round2) (some-> (:drift s) round3)
+   (round3 (:rate s)) (some-> (:roomRate s) round3) (bit (:paused s)) (bit (:buffering s))
+   (:readyState s) (:audio-buffer s) (:video-buffer s) (:dropped-frames s) (:total-frames s)
+   (:quality s) (:qcap s) (bit (:fullscreen s))])
+
+(def ^:private auto-every-ms 600000)
+
+(defn- auto-reason
+  "A plausible desync, from the cumulative off-rate time and the last 30 s
+  of samples: a minute off 1.0x in total, where the pitch-preserving
+  stretcher has had its chance (#57 suspect 1); or 30+ dropped frames over
+  30 s of unbroken playback with the audio buffer healthy (>= 2 s), the
+  picture failing to keep up with the sound."
+  [recent off-s]
+  (cond
+    (>= off-s 60) "off-rate-60s"
+    (and (>= (count recent) 30)
+         (every? #(and (not (:paused %)) (not (:buffering %))
+                       (>= (or (:audio-buffer %) 0) 2))
+                 recent)
+         (>= (- (or (:dropped-frames (last recent)) 0)
+                (or (:dropped-frames (first recent)) 0))
+             30))
+    "dropped-frames-30s"))
+
+(defn- auto-mark! [reason]
+  ;; each reason once per page, and never two auto markers inside 10 min
+  (let [now (js/Date.now)]
+    (when (and (not (unchecked-get (.-autofired tele) reason))
+               (or (nil? (.-autoat tele)) (> (- now (.-autoat tele)) auto-every-ms)))
+      (unchecked-set (.-autofired tele) reason true)
+      (set! (.-autoat tele) now)
+      (event! "auto" {:reason reason}))))
+
+(defn- tele-sample! [^js st ^js video]
+  (let [now (js/Date.now)
+        s (snapshot st video)
+        rows (.-rows tele)
+        recent (.-recent tele)]
+    (when-not (.-t0 tele) (set! (.-t0 tele) now))
+    (when (< (.-length rows) tele-max-rows)
+      (.push rows (tele-row (.-t0 tele) now s)))
+    (.push recent s)
+    (when (> (.-length recent) 30) (.shift recent))
+    (when-let [reason (auto-reason (array-seq recent) (off-rate-s st))]
+      (auto-mark! reason))))
+
+(defn- tele-tick!
+  "Once a second: a sample while started and playing; on the way into a
+  pause (or an item switch's restart) one idle marker, and a resume
+  marker on the way back."
+  [^js st ^js video]
+  (let [active? (boolean (and (.-started st) (.-vid st) (not (.-paused video))))]
+    (cond
+      active?
+      (do (when (and (not (.-active tele)) (.-idled tele)) (event! "resume" {}))
+          (set! (.-active tele) true)
+          (tele-sample! st video))
+
+      (.-active tele)
+      (do (set! (.-active tele) false)
+          (set! (.-idled tele) true)
+          (event! "idle" {})))))
+
+(defn- tele-flush!
+  "The unsent rows and markers as one chunk; nothing when no row is new.
+  beacon? is the pagehide path (sendBeacon survives the unload). The
+  envelope carries once what every sample would repeat (nick, vid, ua)."
+  [^js st token beacon?]
+  (when (pos? (.-length (.-rows tele)))
+    (let [body (js/JSON.stringify
+                 (clj->js {:v 1 :token token :nick (.-nick st) :vid (.-vid st)
+                           :session (.-session tele) :seq (.-seq tele) :t0 (.-t0 tele)
+                           :ua (.-userAgent js/navigator)
+                           :header tele-header
+                           :samples (vec (array-seq (.-rows tele)))
+                           :events (vec (array-seq (.-events tele)))}))]
+      (set! (.-rows tele) (array))
+      (set! (.-events tele) (array))
+      (set! (.-t0 tele) nil)
+      (set! (.-seq tele) (inc (.-seq tele)))
+      (set! (.-sent tele) (+ (.-sent tele) (.-length body)))
+      (try
+        (if beacon?
+          (.sendBeacon js/navigator "/api/telemetry"
+                       (js/Blob. #js [body] #js {:type "application/json"}))
+          (-> (js/fetch "/api/telemetry"
+                        #js {:method "post"
+                             :headers #js {"Content-Type" "application/json"}
+                             :body body})
+              (.catch (fn [_] nil))))
+        (catch js/Error _ nil)))))
+
+(def ^:private report-label "sound out of sync?")
+
+(defn- report-btn
+  "A marker in the telemetry stream for the moment the viewer noticed; the
+  host matches it against the samples around it. Nothing is uploaded on
+  the press (the chunk cadence rules), so the copy says noted, not sent."
+  []
+  (let [btn (h :button.btn.ghost.report
+               {:title "the sound doesn't match the picture? press this and the moment gets a marker in the playback log for the host to look at"}
+               report-label)]
+    ;; like the transport buttons: the click must not keep focus
+    (set! (.-onmousedown btn) #(.preventDefault %))
+    (set! (.-onclick btn)
+          (fn []
+            (event! "mark" {:note "viewer pressed the button"})
+            (set! (.-textContent btn) "noted, thanks")
+            (js/setTimeout #(set! (.-textContent btn) report-label) 4000)))
+    btn))
 
 (defn- note-rate! [^js st token ^js video from to mode d]
   ;; the policy is about to move the element's rate from -> to
@@ -1069,6 +1247,7 @@
     (stage! stage-wrap video fs-btn)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality")
              (volume-control st) (fs-setting st fs-chat))
+    (ui/add! viewer-row (report-btn))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
     {:video video
@@ -1131,6 +1310,11 @@
   (let [{:keys [video seek lag-hint]} refs
         token (unchecked-get st "token")]
     (watch-fullscreen! st token video)
+    ;; #57 telemetry: 1 Hz samples, one chunk per tele-chunk-ms, the tail
+    ;; by beacon when the page goes
+    (js/setInterval #(tele-tick! st video) 1000)
+    (js/setInterval #(tele-flush! st token false) tele-chunk-ms)
+    (.addEventListener js/window "pagehide" #(tele-flush! st token true))
     (js/setInterval #(wsx/send! (.-ws st) {:type "ping" :t (ui/perf-now)}) 5000)
     (js/setInterval #(wsx/send! (.-ws st) {:type "status"
                                             :pos (.-currentTime video)
@@ -1201,26 +1385,30 @@
           (fn []
             (let [room (.-room st) ^js v (ui/$ "video")]
               (clj->js (merge
-                        (when v (av-probe st v)) ; :dropped-frames :total-frames :audio-buffer :video-buffer
-                       {:t (ui/perf-now)
-                        :currentTime (some-> v .-currentTime)
-                        :expected (when room (expected-now st room))
-                        :drift (when (and room v) (sc/drift (.-currentTime v) (expected-now st room)))
-                        :rate (some-> v .-playbackRate) :roomRate (:rate room)
-                        :playing (:playing room) :paused (some-> v .-paused)
-                        :muted (some-> v .-muted) :started (.-started st)
-                        :volume (some-> v .-volume)
-                        :gain (some-> ^js (.-gainnode ^js (.-audio st)) .-gain .-value)
-                        :autostart (.-autostart st) :starting (.-starting st)
-                        :mode (name (.-mode st)) :buffering (.-buffering st)
-                        :bufferAhead (when v (buffer-ahead v))
-                        :qcap (:cap (.-qcap st)) :offset (.-offset st)
-                        :rate-changed-ms (when-let [t (.-ratechanged st)]
-                                           (Math/round (- (ui/perf-now) t)))
-                        :off-rate-s (off-rate-s st)
-                        :fullscreen (boolean (.-fullscreen st))
-                        :vid (.-vid st) :ended (boolean (.-ended st))
-                        :counters (js->clj (.-counters st))})))))
+                        ;; :currentTime :expected :drift :rate :roomRate :paused
+                        ;; :buffering :readyState :quality :qcap :fullscreen and
+                        ;; av-probe's :dropped-frames :total-frames :audio-buffer
+                        ;; :video-buffer — the telemetry sampler's row, unrounded
+                        (when v (snapshot st v))
+                        {:t (ui/perf-now)
+                         :expected (when room (expected-now st room))
+                         :playing (:playing room)
+                         :muted (some-> v .-muted) :started (.-started st)
+                         :volume (some-> v .-volume)
+                         :gain (some-> ^js (.-gainnode ^js (.-audio st)) .-gain .-value)
+                         :autostart (.-autostart st) :starting (.-starting st)
+                         :mode (name (.-mode st)) :buffering (.-buffering st)
+                         :bufferAhead (when v (buffer-ahead v))
+                         :qcap (:cap (.-qcap st)) :offset (.-offset st)
+                         :rate-changed-ms (when-let [t (.-ratechanged st)]
+                                            (Math/round (- (ui/perf-now) t)))
+                         :off-rate-s (off-rate-s st)
+                         :fullscreen (boolean (.-fullscreen st))
+                         :vid (.-vid st) :ended (boolean (.-ended st))
+                         :telemetry {:pending (.-length (.-rows tele)) :events (.-length (.-events tele))
+                                     :chunks (.-seq tele) :sent-bytes (.-sent tele)
+                                     :active (.-active tele)}
+                         :counters (js->clj (.-counters st))})))))
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
             join-btn (h :button.btn "join the goo")

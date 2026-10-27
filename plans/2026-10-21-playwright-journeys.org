@@ -468,6 +468,20 @@ volume at the focused =<video>=, and ArrowDown there would drop it to
 | =the volume slider sets the gain and a reload remembers it= | host playing; touch; slider to 200 % (value + input event); reload, join, touch; double-click the slider; sample 6 s | =:gain= 1 at native, 2 at 200 % with the label "200 %"; after the reload =:gain= 2, the slider "200", =goob-volume= "200", element =volume= 1 and not muted; 1 after the double-click; the window's drift and rate are recorded |
 | =ArrowUp and ArrowDown step the volume, not the element=    | host playing; touch; slider to 100 %; focus the video; ArrowUp; ArrowDown; focus the chat input; ArrowUp | =:gain= 1.05 within =:chat-within= with the label "105 %" and element =volume= 1; 1.0 after ArrowDown with element =volume= still 1 (native would say 0.9); the ArrowUp typed into the chat input leaves =:gain= at 1 |
 
+*** =telemetry.cljs= (added 2026-10-27, #57 telemetry)
+Every started viewer samples its playback once a second and uploads one
+chunk per five minutes (the tail by =sendBeacon= on =pagehide=); the
+server files them per day, room and viewer, and =goob-toob.telemetry=
+flags episodes. The journey cannot wait five minutes, so the viewer
+leaves the page (a =goto= to the lobby fires =pagehide=) and the beacon
+carries the tail; =goobProbe()= gains =:telemetry= (=:pending= rows,
+=:events=, =:chunks=, =:sent-bytes=, =:active=). =api.cljs= gains
+=telemetry= (the admin listing), =telemetry-file= and
+=telemetry-analysis=.
+| journey                        | steps                                                                                                   | asserts                                                                                                                                                                                                                                                              |
+|--------------------------------+---------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =every session is recorded=    | host and viewer synced; sample the viewer =:telemetry-window= (25 s); press "sound out of sync?"; the viewer leaves for the lobby; poll the admin listing | the probe's pending rows ≥ =:telemetry-min-samples= before leaving, and the press adds an event; the room's listing gains a =-viewer.jsonl= file with ≥ 1 chunk and ≥ 20 samples; the file holds exactly one =mark= event; the analysis endpoint answers 200 with an episodes vector (none required on a clean run) and lists the viewer |
+
 About a dozen journeys; three engines; target under ten minutes in the
 container, with the engines run as separate CI matrix legs so each is
 under four.

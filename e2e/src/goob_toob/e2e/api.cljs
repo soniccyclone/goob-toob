@@ -87,3 +87,18 @@
 
 (defn client [live-view nick]
   (first (filter #(= nick (:nick %)) (:clients live-view))))
+
+;; #57 telemetry: the admin listing, a file as text and the analysis of a
+;; room's day
+(defn telemetry [base cookie]
+  (.then (req base cookie "GET" "/api/admin/telemetry") #(:data %)))
+
+(defn telemetry-file
+  "The file's text (parse would read a one-line jsonl as JSON)."
+  [base cookie day room-id name]
+  (-> (js/fetch (str base "/api/admin/telemetry/" day "/" room-id "/" name)
+                #js {:headers #js {"Cookie" cookie}})
+      (.then (fn [^js res] (.text res)))))
+
+(defn telemetry-analysis [base cookie day room-id]
+  (req base cookie "GET" (str "/api/admin/telemetry/" day "/" room-id "/analysis")))

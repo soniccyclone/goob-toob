@@ -1,7 +1,7 @@
 (ns goob-toob.admin
   "Admin console: login, drag-and-drop upload with per-file cards, library
   with transcode status, rooms with shareable links, co-host control, a
-  rename and the queue editor."
+  rename, the queue editor and the telemetry files with their analysis."
   (:require [goob-toob.ui :as ui :refer [h]]
             [goob-toob.api :as api]))
 
@@ -233,6 +233,84 @@
                                    (.then (fn [_] (toast "room closed") ((.-refresh acts))))))}
                   "delete"))))))))
 
+;; ---- telemetry (#57) ------------------------------------------------------------
+;; Every started viewer uploads its playback numbers once every five minutes
+;; (watch.cljs, the telemetry block); the server files them per day, room and
+;; viewer. This card lists them with download links and runs the analysis
+;; (goob-toob.telemetry) over a room's day on demand.
+
+(defn- fmt-bytes [n]
+  (cond (> n 1048576) (str (.toFixed (/ n 1048576) 1) " MB")
+        (> n 1024)    (str (js/Math.round (/ n 1024)) " KB")
+        :else         (str n " B")))
+
+(defn- clock [ms]
+  (if (number? ms)
+    (.toLocaleTimeString (js/Date. ms) js/undefined #js {:hour "2-digit" :minute "2-digit" :second "2-digit"})
+    "?"))
+
+(defn- episode-tables
+  "The analysis as two tables: a row per client, a row per flagged episode."
+  [{:keys [clients episodes]}]
+  (h :div.row-gap
+     (h :table.lib
+        (h :thead (h :tr (h :th "who") (h :th "samples") (h :th "span") (h :th "drift p95 / max")
+                         (h :th "off 1.0×") (h :th "stalls") (h :th "dropped") (h :th "marks")))
+        (apply h :tbody
+               (for [c clients]
+                 (h :tr (h :td (:nick c))
+                        (h :td (str (:samples c)))
+                        (h :td (str (:span-s c) " s"))
+                        (h :td (str (:drift-abs-p95 c) " / " (:drift-abs-max c)))
+                        (h :td (str (:off-rate-s c) " s"))
+                        (h :td (str (:stalls c)))
+                        (h :td (str (:dropped c)))
+                        (h :td (apply str (interpose ", " (map #(str (clock (:t %)) " " (:type %)) (:marks c)))))))))
+     (if (empty? episodes)
+       (h :p.muted "no episodes flagged — a clean run")
+       (h :table.lib
+          (h :thead (h :tr (h :th "from") (h :th "to") (h :th "what") (h :th "who") (h :th "length") (h :th "evidence")))
+          (apply h :tbody
+                 (for [e episodes]
+                   (h :tr (h :td (clock (:start e)))
+                          (h :td (clock (:end e)))
+                          (h :td (:type e))
+                          (h :td (:nick e))
+                          (h :td (str (:duration-s e) " s"))
+                          (h :td.muted (pr-str (:evidence e))))))))))
+
+(defn- telemetry-room [day {:keys [id title files]}]
+  (let [base    (str "/api/admin/telemetry/" day "/" id)
+        slot    (h :div {})
+        analyse (h :button.btn.ghost "analyse")]
+    (set! (.-onclick analyse)
+          #(-> (api/get-json (str base "/analysis"))
+               (.then (fn [{:keys [status data]}]
+                        (ui/clear! slot)
+                        (ui/add! slot (if (= 200 status)
+                                        (episode-tables data)
+                                        (h :p.muted "the analysis failed")))))))
+    (h :div.tele-room
+       (h :div.row (h :strong (or title (str "room " (subs id 0 8) "…")))
+                   (h :span.muted (str (count files) " viewer file(s)"))
+                   analyse)
+       (apply h :ul.muted
+              (for [f files]
+                (h :li (h :a {:href (str base "/" (:name f)) :download (:name f)} (:name f))
+                       (str " · " (fmt-bytes (:size f)) " · " (:chunks f) " chunk(s) · " (:samples f)
+                            " samples · " (clock (:first f)) " – " (clock (:last f))))))
+       slot)))
+
+(defn- render-telemetry [slot days]
+  (ui/clear! slot)
+  (if (empty? days)
+    (ui/add! slot (h :p.muted "nothing recorded yet — every viewer who pressed play sends their playback numbers once every five minutes"))
+    (doseq [[i {:keys [day rooms]}] (map-indexed vector days)]
+      (ui/add! slot
+        (h :details.tele-day {:open (when (zero? i) true)}
+           (h :summary day)
+           (apply h :div.row-gap (map #(telemetry-room day %) rooms)))))))
+
 (defn- editing-in?
   "A text field or select inside node has focus: a periodic re-render would
   pull it out from under the admin."
@@ -245,6 +323,9 @@
 (defn- render-admin [body]
   (ui/clear! body)
   (let [info-slot   (h :div.muted "")
+        tele-slot   (h :div.row-gap {})
+        refresh-t   #(-> (api/get-json "/api/admin/telemetry")
+                         (.then (fn [{:keys [data]}] (render-telemetry tele-slot data))))
         file-input  (h :input {:type "file" :multiple true :style "display:none"})
         uploads     (h :div.row-gap {})
         vtbody      (h :tbody {})
@@ -333,6 +414,11 @@
            (h :table.lib
               (h :thead (h :tr (h :th "title") (h :th "link") (h :th "queue") (h :th "co-hosts") (h :th "")))
               rtbody))
+        (h :div.card.row-gap
+           (h :h3 "telemetry")
+           (h :p.muted "every viewer who pressed play sends their playback numbers once every five minutes (and the tail when the tab closes): one file per viewer, per room, per day, kept 30 days. \"analyse\" flags the episodes — stretches off 1.0×, drift, stall clusters, dropped frames, starved buffers, the A/V desync signatures — and a viewer's \"sound out of sync?\" press shows up as a mark.")
+           (h :div.goo (h :button.btn.ghost {:onclick (fn [_] (refresh-t))} "refresh"))
+           tele-slot)
         (when-not (.-goob js/window)
           (h :div.goo
              (h :button.btn.ghost {:onclick #(-> (api/post! "/api/logout" {})
@@ -345,6 +431,7 @@
                             " free · " (:workers data) " transcode worker(s)")))))
     (refresh-v)
     (refresh-r)
+    (refresh-t) ; on demand after that: a periodic re-render would close an open analysis
     (js/setInterval refresh-v 2500)
     (js/setInterval refresh-r 10000)))
 

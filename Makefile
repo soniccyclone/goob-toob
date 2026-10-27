@@ -21,7 +21,7 @@ desktop: ## package the Electron desktop app (dir build) -> desktop/dist/
 	$(MAKE) vendor
 	cd desktop && npm install --no-audit --no-fund && npx electron-builder --dir
 
-.PHONY: help image dev run test compile repl clip tunnel tunnel-stop uberjar vendor vendor-linux desktop e2e-image e2e
+.PHONY: help image dev run test compile repl clip tunnel tunnel-stop uberjar vendor vendor-linux desktop e2e-image e2e telemetry
 
 help:
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[32m%-12s\033[0m %s\n", $$1, $$2}'
@@ -56,6 +56,9 @@ e2e: ## run the Playwright journeys in the container (metrics in e2e/metrics); E
 	    && (cd e2e && npm install --prefer-offline --no-audit --no-fund) \
 	    && npx shadow-cljs release client e2e \
 	    && cd e2e && npx playwright test -c out/config.js $(E2E_ARGS)"
+
+telemetry: ## analyse telemetry (#57): make telemetry FILE=storage/telemetry/<day>[/<room>[/<file>.jsonl]]
+	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) clojure -M -m goob-toob.telemetry $(FILE)
 
 repl: ## nREPL in the container
 	podman run --rm -it $(MOUNTS) $(ENV) $(IMAGE) clojure -M:dev:test:repl
