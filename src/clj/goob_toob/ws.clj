@@ -60,12 +60,13 @@
                                           :room-id room-id :host? admin? :nick nick})
             (sync/join! room-id cid nick)
             ;; the live room's current video, not the row's: a reconnect
-            ;; during an item change lands on the right one
+            ;; during an item change lands on the right one. An empty room
+            ;; says :video nil (and :video-id nil in :state).
             (let [room  (sync/room-for room-id)
-                  video (videos/get-by-id (:video-id room))]
+                  video (some-> (:video-id room) videos/get-by-id)]
               (send! {:type "welcome" :you cid :is-host admin?
                       :can-control (or admin? (= 1 (:allow-control room-row)))
-                      :video (sync/video-descriptor video)
+                      :video (some-> video sync/video-descriptor)
                       :video-id (:video-id room)
                       :queue (rooms/queue room-id)
                       :start-kbps (sc/start-kbps (:ladder (config/cfg)))

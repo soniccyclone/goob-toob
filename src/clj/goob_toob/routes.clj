@@ -72,8 +72,13 @@
 (defn admin-videos [_] (response (map #(update % :error (fn [e] (some->> e (take 800) str/join)))
                                        (videos/list-all))))
 
-(defn public-rooms [_]
-  (response (for [r (rooms/list-all) :when (= "ready" (:status r))]
+(defn public-rooms
+  "Rooms whose current video is ready, plus empty ones (:now nil, :items 0):
+  the lobby lists those as \"nothing queued yet\" rather than hiding a room
+  the host has open."
+  [_]
+  (response (for [r (rooms/list-all)
+                  :when (or (= "ready" (:status r)) (nil? (:video-id r)))]
               {:token (:token r) :title (:title r) :now (:video-title r) :items (:items r)})))
 
 (defn admin-rooms [_]
@@ -111,16 +116,19 @@
                  :video-id (:video-id (rooms/get-by-id room-id))})
       (status code)))
 
-(defn add-item [{:keys [params]}]
+(defn add-item
+  "Appends; in an empty room the new item becomes current, paused."
+  [{:keys [params]}]
   (let [id (:id (room-or-404 (:id params)))]
-    (rooms/add-item! id (:video-id params))
-    (sync/queue-changed! id)
+    (sync/add-item! id (:video-id params))
     (queue-response id 201)))
 
-(defn remove-item [{:keys [params]}]
+(defn remove-item
+  "Removing the current item skips the room; removing the only one empties
+  it (:video-id nil in the response)."
+  [{:keys [params]}]
   (let [id (:id (room-or-404 (:id params)))]
-    (rooms/remove-item! id (:video-id params))
-    (sync/queue-changed! id)
+    (sync/remove-item! id (:video-id params))
     (queue-response id 200)))
 
 (defn reorder-items [{:keys [params]}]

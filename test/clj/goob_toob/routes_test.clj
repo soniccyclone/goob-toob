@@ -194,17 +194,51 @@
         id     (:id (rooms/create! "v1"))
         items  (str "/api/admin/rooms/" id "/items")
         dup    (call app :post items :cookie cookie :body {:video-id "v1"})
-        cur    (call app :delete (str items "/v1") :cookie cookie)
         bad    (call app :put items :cookie cookie :body {:order ["v1" "v2"]})
         none   (call app :post items :cookie cookie :body {:video-id "nope"})]
     (is (= 409 (:status dup)))
     (is (= "already queued" (get-in dup [:body :error])))
-    (is (= 409 (:status cur)))
-    (is (str/includes? (get-in cur [:body :error]) "current"))
     (is (= 400 (:status bad)))
     (is (= 400 (:status none)))
     (is (= "no such video" (get-in none [:body :error])))
     (is (= [["v1" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))))
+
+(deftest deleting-the-current-item-skips-the-room
+  (video! "v1")
+  (video! "v2")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1"))
+        _      (rooms/add-item! id "v2")
+        rm     (call app :delete (str "/api/admin/rooms/" id "/items/v1") :cookie cookie)]
+    (is (= 200 (:status rm)))
+    (is (= ["v2"] (queue-ids rm)))
+    (is (= "v2" (get-in rm [:body :video-id])))
+    (is (= "v2" (:video-id (rooms/get-by-id id))))
+    (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))))
+
+(deftest deleting-the-only-item-empties-the-room
+  (video! "v1" :title "S01E01" :status "ready")
+  (video! "v2" :title "S01E02" :status "ready")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1" :title "Season 1"))
+        items  (str "/api/admin/rooms/" id "/items")
+        rm     (call app :delete (str items "/v1") :cookie cookie)
+        admin  (first (filter #(= id (:id %))
+                              (:body (call app :get "/api/admin/rooms" :cookie cookie))))
+        lobby  (:body (call app :get "/api/rooms"))]
+    (is (= 200 (:status rm)))
+    (is (= {:queue [] :video-id nil} (:body rm)))
+    (is (some? (rooms/get-by-id id)) "the room stands")
+    (is (= {:id id :title "Season 1" :video-id nil :video-title nil :status nil :items 0 :queue []}
+           (select-keys admin [:id :title :video-id :video-title :status :items :queue])))
+    (is (= [{:title "Season 1" :now nil :items 0}] (mapv #(dissoc % :token) lobby))
+        "the lobby still lists it")
+    (let [added (call app :post items :cookie cookie :body {:video-id "v2"})]
+      (is (= 201 (:status added)))
+      (is (= ["v2"] (queue-ids added)))
+      (is (= "v2" (get-in added [:body :video-id])) "the first item of an empty room is current"))))
 
 (deftest queue-routes-404-an-unknown-room
   (video! "v1")

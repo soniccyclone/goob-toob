@@ -211,3 +211,61 @@
     (is (= 201 (:status resp)))
     (is (= ["v1" "v2"] (map :video-id (:queue m))))
     (is (= "v1" (:video-id m)))))
+
+(deftest removing-the-only-item-empties-the-room-on-the-wire
+  (videos/insert! {:id "v1" :title "Ep 1" :original-path "/tmp/v1.mp4"})
+  (videos/insert! {:id "v2" :title "Ep 2" :original-path "/tmp/v2.mp4"})
+  (videos/set-duration! "v2" 50.0)
+  (let [room   (rooms/create! "v1")
+        host   (connect! room "host" (login!))
+        viewer (connect! room "viewer")
+        resp   (http! "DELETE" (str "/api/admin/rooms/" (:id room) "/items/v1") {})
+        item   (recv-item! (:in viewer))
+        queue  (recv-type! (:in viewer) "queue")]
+    (is (= 200 (:status resp)))
+    (is (= {:queue [] :video-id nil} (:body resp)))
+    (is (contains? item :video) "the item message names the (absent) video")
+    (is (nil? (:video item)))
+    (is (nil? (:video-id item)))
+    (is (false? (:playing item)))
+    (is (= 0.0 (:pos item)))
+    (is (= [] (:queue queue)))
+    (is (nil? (:video-id queue)))
+    ;; a fresh connect sees the blank stage
+    (let [w (:welcome (connect! room "late"))]
+      (is (contains? w :video))
+      (is (nil? (:video w)))
+      (is (nil? (:video-id w)))
+      (is (nil? (get-in w [:state :video-id])))
+      (is (false? (get-in w [:state :playing])))
+      (is (= [] (:queue w))))
+    ;; the host cannot start what is not there
+    (send! (:ws host) {:type "cmd" :op "play" :pos 0})
+    (is (not-any? #(= "state" (:type %)) (recv-all! (:in viewer) 1000)))
+    (is (false? (get-in @sync/rooms* [(:id room) :playing?])))
+    ;; adding an item back lands it current and paused
+    (let [resp (http! "POST" (str "/api/admin/rooms/" (:id room) "/items") {:video-id "v2"})
+          item (recv-item! (:in viewer))]
+      (is (= 201 (:status resp)))
+      (is (= "v2" (get-in resp [:body :video-id])))
+      (is (= {:id "v2" :title "Ep 2" :duration 50.0 :dash "/dash/v2/manifest.mpd"} (:video item)))
+      (is (= "v2" (:video-id item)))
+      (is (false? (:playing item)))
+      (is (= 0.0 (:pos item))))
+    (send! (:ws host) {:type "cmd" :op "play" :pos 0})
+    (is (= {:op "play" :video-id "v2" :playing true}
+           (select-keys (recv-type! (:in viewer) "state") [:op :video-id :playing])))))
+
+(deftest removing-the-current-item-switches-every-viewer
+  (let [room   (two-item-room!)
+        viewer (connect! room "viewer")
+        resp   (http! "DELETE" (str "/api/admin/rooms/" (:id room) "/items/v1") {})
+        item   (recv-item! (:in viewer))
+        queue  (recv-type! (:in viewer) "queue")]
+    (is (= 200 (:status resp)))
+    (is (= "v2" (get-in item [:video :id])))
+    (is (true? (:playing item)))
+    (is (= 0.0 (:pos item)))
+    (is (= ["v2"] (map :video-id (:queue queue))))
+    (is (= "v2" (:video-id queue)))
+    (is (= "v2" (:video-id (:welcome (connect! room "late")))))))
