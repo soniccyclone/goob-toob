@@ -358,31 +358,50 @@
 (def ^:private overlay-keep 6)
 (def ^:private overlay-ms 8000)
 
-(defn- fs-element []
+(defn- doc-fs-element []
   (or (.-fullscreenElement js/document) (.-webkitFullscreenElement js/document)))
+
+(defn- fs-element
+  "What is fullscreen, if anything. iOS Safari fullscreens nothing but a
+  <video>, and reports that on the element (webkitDisplayingFullscreen,
+  webkitbegin/endfullscreen events), never on the document."
+  [^js video]
+  (or (doc-fs-element) (when (.-webkitDisplayingFullscreen video) video)))
+
+(defn- video-fs!
+  "iOS: the bare element goes fullscreen, no overlay. Throws before
+  loadedmetadata and outside a user gesture; the click is the gesture."
+  [^js video]
+  (try (when (.-webkitEnterFullscreen video) (.webkitEnterFullscreen video))
+       (catch js/Error _ nil)))
 
 (defn- request-fs! [^js wrap ^js video]
   (try
     (cond
       (.-requestFullscreen wrap)
-      (some-> (.requestFullscreen wrap) (.catch (fn [_] nil)))
+      (some-> (.requestFullscreen wrap) (.catch (fn [_] (video-fs! video))))
 
       (.-webkitRequestFullscreen wrap)
       (.webkitRequestFullscreen wrap)
 
-      ;; iOS Safari fullscreens nothing but a <video>: no overlay there
-      (.-webkitEnterFullscreen video)
-      (.webkitEnterFullscreen video))
+      :else (video-fs! video))
     (catch js/Error _ nil)))
 
-(defn- exit-fs! []
+(defn- exit-fs! [^js video]
   (try
-    (cond (.-exitFullscreen js/document) (some-> (.exitFullscreen js/document) (.catch (fn [_] nil)))
-          (.-webkitExitFullscreen js/document) (.webkitExitFullscreen js/document))
+    (cond
+      (and (.-webkitDisplayingFullscreen video) (not (doc-fs-element)))
+      (.webkitExitFullscreen video)
+
+      (.-exitFullscreen js/document)
+      (some-> (.exitFullscreen js/document) (.catch (fn [_] nil)))
+
+      (.-webkitExitFullscreen js/document)
+      (.webkitExitFullscreen js/document))
     (catch js/Error _ nil)))
 
 (defn- toggle-fs! [wrap video]
-  (if (fs-element) (exit-fs!) (request-fs! wrap video)))
+  (if (fs-element video) (exit-fs! video) (request-fs! wrap video)))
 
 (defn- picture-ratio!
   "Tell the stylesheet the picture's real aspect ratio (--ar on the wrapper)
@@ -429,9 +448,11 @@
   ;; like the transport buttons: a click must not leave focus on the button,
   ;; or the next Space would re-press it instead of reaching the #54 keys
   (set! (.-onmousedown fs-btn) #(.preventDefault %))
-  (doseq [ev ["fullscreenchange" "webkitfullscreenchange"]]
-    (.addEventListener js/document ev
-      #(.setAttribute fs-btn "title" (if (fs-element) "exit fullscreen" "fullscreen"))))
+  (let [title! #(.setAttribute fs-btn "title" (if (fs-element video) "exit fullscreen" "fullscreen"))]
+    (doseq [ev ["fullscreenchange" "webkitfullscreenchange"]]
+      (.addEventListener js/document ev title!))
+    (doseq [ev ["webkitbeginfullscreen" "webkitendfullscreen"]]
+      (.addEventListener video ev title!)))
   (doseq [ev ["loadedmetadata" "resize"]]
     (.addEventListener video ev #(picture-ratio! wrap video))))
 
