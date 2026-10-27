@@ -593,3 +593,108 @@ shared clip is 60 s; journeys that need the end seek the host to
    on the same (current) video at 0, paused, as the model says. Admin
    console by hand: build a three-item queue, rename the room, try to
    delete a queued video from the library and read the 409 toast.
+
+** Verified (2026-10-27): steps 3 and 6, run after parts 1 and 2 shipped
+Both steps were skipped when parts 1 and 2 went in; run on branch
+=verification-debt= (off main at =5c8ede9=) in the dev and e2e podman
+images. Nothing in the code was changed; the two bugs found are filed as
+issues, not fixed here.
+
+*** Step 3: migration on a real pre-003 database — PASS
+The fixture was built with the repo's own code at =aaa7630^= (the commit
+before 003): =db/init!= with 001+002, five videos through
+=repos.video/insert!= + =set-status!= (four ready with durations, one
+still =uploaded=), four rooms through =repos.room/create!= (one with
+=allow_control=1=), then the room's video deleted on a
+=PRAGMA foreign_keys=OFF= connection to leave the orphan the FK-off era
+could produce. Pre-003 =foreign_key_check= reported it:
+#+begin_example
+migrations applied: [001-init.sql 002-room-control.sql]
+foreign_key_check (pre-003): [{:table rooms, :rowid 4, :parent videos, :fkid 0}]
+#+end_example
+The current tree started on that storage (=clojure -M:dev -m goob-toob.core=,
+=STORAGE_DIR= at the fixture, =ADMIN_PASSWORD= set, =PORT=8080=):
+#+begin_example
+15:15:31.367 goob-toob dev
+15:15:31.477 migrated 003-room-items.sql
+15:15:31.482 transcode workers: 1
+15:15:31.489 transcode ERROR vid-wip original file missing
+15:15:31.740 goob-toob glooping on port 8080
+#+end_example
+(the =transcode ERROR= is the fixture's half-uploaded video being requeued
+with no file behind it; expected.) The database afterwards, read with a
+plain datasource (no =init!=):
+- =schema_migrations=: 001, 002 (15:14:55) and 003 (15:15:31).
+- =rooms=: the three rooms on existing videos, =title NULL=, =allow_control=
+  kept (0/1/0); the orphan row is gone.
+- =room_items=: exactly one row per surviving room, =position 0=, =video_id=
+  equal to the room's =video_id= (a query for rooms whose single item is
+  not their current video returned =[]=).
+- =PRAGMA foreign_key_check= → =[]=; =PRAGMA foreign_keys= → 1 on an
+  ordinary connection.
+Links still open: =GET /api/rooms= lists the three rooms with =items: 1=
+and the video title as the room title; =GET /api/admin/rooms= shows each
+queue as its one item; =GET /watch/<token>= → 200 for all; a real socket on
+a migrated room was welcomed with =:video-id vid-s01e01=, a one-item
+=:queue= and state =pos 0, playing false=; the orphan's token on
+=/ws/room/= → =404 no such room=.
+
+*** Step 6: restart mid-party — PASS for the model, two findings
+Driven with Playwright (standalone Node script in the e2e image, chromium
+with =--autoplay-policy=no-user-gesture-required=): three lavfi clips
+(20/15/12 s) uploaded and transcoded, a room on clipA with clipB queued, a
+host tab (admin cookie) and a viewer tab, host presses ▶ play, 10 s of
+playback, then =SIGKILL= on the server's process group and a restart on
+the same storage.
+#+begin_example
+15:21:00.431 before kill  host:   title="clipA" currentTime=10.15 expected=10.26 paused=false playing=true
+15:21:00.431 before kill  viewer: title="clipA" currentTime=10.15 expected=10.27 paused=false playing=true
+15:21:00.557 SIGKILL server process group (pid 9)
+15:21:13.058 server run 2 up after 7355 ms
+15:21:14.631 host   welcome: {"video-id":<clipA>,"state":{"pos":0,"playing":false,"rate":1},"queue":["clipA","clipB"],"is-host":false,"can-control":false}
+15:21:14.632 viewer welcome: {"video-id":<clipA>,"state":{"pos":0,"playing":false,"rate":1},"queue":["clipA","clipB"],"is-host":false,"can-control":false}
+15:21:14.640 client cSdFwdhD : :reconnect-resync {:drift 20}      (server log, once per tab)
+15:21:14.640 client cSdFwdhD : :reconnect-resync {:drift 20}
+15:21:23.498 after reconnect host:   title="clipA" currentTime=0.00 expected=0.00 paused=true playing=false seeks=5
+15:21:23.502 after reconnect viewer: title="clipA" currentTime=0.00 expected=0.00 paused=true playing=false seeks=4
+#+end_example
+So the claim holds: the live room died with the process, the row's
+=video_id= is the current item, both tabs got a welcome on reconnect and
+landed on clipA at 0, paused, one seek each. Two things the model does not
+say:
+- During the outage (≈12 s here) both tabs keep playing on their own
+  (sampled every second: =currentTime= 11.4 → 15.4, =paused=false=); the
+  client reconnect loop just retries every 2 s. Only the welcome parks them.
+- *Finding, filed as [[https://github.com/soniccyclone/goob-toob/issues/71][#71]]:* the host's tab comes back as a viewer
+  (=is-host false, can-control false= above) because the admin session
+  lives in the in-memory session store and died with the process
+  (=GET /api/admin/rooms/<id>/live= with the old cookie → 401). The watch
+  page keeps showing the transport and "YOU DRIVE"; the host clicked ▶
+  play and the server dropped it (live view 2.5 s later, fresh login:
+  =playing false=; no =room … play … by host= line in run 2's log). The
+  room is stuck until the host logs in again and reloads. Container mode
+  only; the desktop admin port is always admin. Pre-playlists behaviour.
+- *Finding, filed as [[https://github.com/soniccyclone/goob-toob/issues/72][#72]]:* seen first in step 3's welcome
+  (=peers: [guest, probe]= after nothing but a curl), reproduced here: a
+  plain =GET /ws/room/<token>= with no upgrade answers 200 and leaves a
+  phantom =guest= in the room's peers for the server's lifetime
+  (=join!= runs, nothing ever closes =in=, =leave!= never runs). Cosmetic;
+  the policy ignores a client that never reports.
+
+*** Step 6: admin console by hand — PASS
+Same script, fresh login after the restart, =/admin= in a 1280×1000
+context:
+- Queue: opened the room's =3 items= editor via the =details= summary,
+  picked clipC in the add-select, =add= → rows
+  =1 clipA now playing / 2 clipB ready remove / 3 clipC ready remove= (the
+  current item has no remove button, as designed).
+- Rename: clicked the title, typed "Goo Night Marathon", Enter → toast
+  =room renamed=; =GET /api/admin/rooms= then reads =title "Goo Night
+  Marathon", items 3=.
+- Delete a queued video: library row clipB → =del= → confirm accepted →
+  toast =can't delete — queued in: Goo Night Marathon=; the raw
+  =DELETE /api/admin/videos/<clipB>= → =409 {"error":"queued in: Goo Night
+  Marathon"}=; clipB still in the library afterwards.
+Screenshots (three-item queue, renamed row, 409 toast; host and viewer
+before/during/after the restart) were taken to the session's scratchpad
+and are not in the repo; the PR lists their paths.
