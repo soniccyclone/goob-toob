@@ -24,6 +24,8 @@
                         :autoplay         {:entries [goob-toob.e2e.journeys.autoplay]
                                            :depends-on #{:config}}
                         :playlists        {:entries [goob-toob.e2e.journeys.playlists]
+                                           :depends-on #{:config}}
+                        :audio            {:entries [goob-toob.e2e.journeys.audio]
                                            :depends-on #{:config}}}
            :js-options {:js-provider :import}
            :compiler-options {:optimizations :simple

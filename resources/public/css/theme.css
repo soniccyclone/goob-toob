@@ -274,6 +274,19 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
 .cohost, .setting { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; }
 .cohost input, .setting input { accent-color: var(--slime); width: 1.05rem; height: 1.05rem; }
 
+/* ---- viewer volume (#56): 0–300 % of the stream's own, native a third along ---- */
+.volume { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.vol-track { position: relative; display: inline-flex; align-items: center; }
+.vol { width: 150px; margin: 0; accent-color: var(--slime); }
+.vol.boost { accent-color: var(--aqua); }
+.vol-tick {
+  position: absolute; top: 20%; bottom: 20%; width: 2px; pointer-events: none;
+  left: calc(8px + (100% - 16px) / 3); margin-left: -1px;
+  background: var(--foam); opacity: 0.55; border-radius: 1px;
+}
+.vol-pct { min-width: 3.4em; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.vol-pct.boost { color: var(--aqua-soft); opacity: 1; }
+
 /* ---- admin: room rename + queue editor ---- */
 .editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }
 .room-title { width: 100%; max-width: 16rem; }

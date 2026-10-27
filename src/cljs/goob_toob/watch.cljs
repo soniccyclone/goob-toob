@@ -155,6 +155,163 @@
               (< d -10.0)  (str "you're " (int (- d)) "s behind the room — reload to jump to it")
               :else        "")))))
 
+;; ---- viewer audio: boost above the stream's own 100 % (#56) ----
+;; Per viewer, never room state. The element's output runs through a Web
+;; Audio chain, element → gain (0–3) → compressor → out, so the volume can
+;; go past the stream's own loudness, VLC's layout: native 100 % sits a
+;; third of the way along a 0–300 % bar. The element's volume stays 1 and
+;; muted keeps working on the element (both apply before the capture), the
+;; native control bar's own slider scales the boosted signal like VLC's
+;; fine control, and none of it touches playback: the chain is downstream
+;; of the element, so the quality cap, the sync policy and preservesPitch
+;; never see it. An AudioContext starts suspended until a user gesture
+;; (Safari resumes it only inside the gesture's handler), and a
+;; MediaElementSource takes the element's output for good, so the context
+;; is made and resumed inside the first gesture on the page and the source
+;; only once the context reports running. A browser without AudioContext,
+;; or one that refuses the source, keeps the audio native and loses the
+;; control (one clientlog line says so).
+
+(def ^:private volume-key "goob-volume")
+(def ^:private volume-max 300)
+(def ^:private volume-step 5)
+
+(defn- clamp-volume [pct]
+  (max 0 (min volume-max pct)))
+
+(defn- saved-volume []
+  (let [n (js/parseInt (or (ui/store-get volume-key) "") 10)]
+    (if (js/isNaN n) 100 (clamp-volume n))))
+
+(defn- compressor-threshold
+  "dB. Transparent at native and below (nothing exceeds 0 dBFS before the
+  gain), easing to −12 dB by 200 % so a boosted loud passage squashes
+  instead of crackling."
+  [pct]
+  (* -12.0 (max 0.0 (min 1.0 (/ (- pct 100) 100.0)))))
+
+(defn- apply-volume! [^js a pct]
+  ;; the chain follows the setting once it exists
+  (when-let [^js g (.-gainnode a)]
+    (set! (.-value (.-gain g)) (/ pct 100.0))
+    (set! (.-value (.-threshold ^js (.-compressor a))) (compressor-threshold pct))))
+
+(defn- volume!
+  "The viewer's volume to pct (0–300, clamped): the chain, the slider, its
+  label and localStorage."
+  [^js st pct]
+  (let [^js a (.-audio st)
+        pct (clamp-volume (Math/round pct))
+        boost? (> pct 100)]
+    (set! (.-pct a) pct)
+    (ui/store-set! volume-key (str pct))
+    (apply-volume! a pct)
+    (when-let [^js s (.-slider a)]
+      (set! (.-value s) (str pct))
+      (.toggle (.-classList s) "boost" boost?))
+    (when-let [^js l (.-label a)]
+      (set! (.-textContent l) (str pct " %"))
+      (.toggle (.-classList l) "boost" boost?))))
+
+(defn- volume-key-step
+  "ArrowUp/ArrowDown -> ±5 %, else nil"
+  [k]
+  (case k "ArrowUp" volume-step "ArrowDown" (- volume-step) nil))
+
+(defn- audio-native!
+  "No chain: the audio stays as the element plays it and the control goes
+  away. Logged once."
+  [^js st token why]
+  (let [^js a (.-audio st)]
+    (when-not (.-dead a)
+      (set! (.-dead a) true)
+      (when-let [^js ctx (.-ctx a)]
+        (set! (.-ctx a) nil)
+        (try (.close ctx) (catch js/Error _ nil)))
+      (when-let [^js w (.-wrap a)]
+        (set! (.-display (.-style w)) "none"))
+      (log! token :audio-native {:why why}))))
+
+(defn- build-chain!
+  "element → gain → compressor (ratio 4, knee 20, threshold per the
+  setting) → out, once, on a running context."
+  [^js st token ^js video]
+  (let [^js a (.-audio st) ^js ctx (.-ctx a)]
+    (when (and ctx (not (.-gainnode a)) (not (.-dead a)))
+      (try
+        (let [src (.createMediaElementSource ctx video)
+              g (.createGain ctx)
+              c (.createDynamicsCompressor ctx)]
+          (set! (.-value (.-ratio c)) 4)
+          (set! (.-value (.-knee c)) 20)
+          (.connect src g)
+          (.connect g c)
+          (.connect c (.-destination ctx))
+          (set! (.-gainnode a) g)
+          (set! (.-compressor a) c)
+          (apply-volume! a (.-pct a))
+          (log! token :audio-chain {:pct (.-pct a) :sample-rate (.-sampleRate ctx)}))
+        (catch js/Error e
+          (audio-native! st token (str "source: " (some-> e .-message))))))))
+
+(defn- audio-start!
+  "Make the context on the first call, resume it on every one until it
+  runs, and build the chain once it does. Called at mount (inside the
+  join click for a first-time viewer; at page load for a returning one,
+  where a strict browser keeps it suspended and nothing is taken from the
+  element until a gesture resumes it, while a lenient one runs it at once
+  and the saved boost is on from the first frame) and inside every user
+  gesture after that."
+  [^js st token ^js video]
+  (let [^js a (.-audio st)]
+    (when-not (.-dead a)
+      (when-not (.-ctx a)
+        (if-let [ctor (or (.-AudioContext js/window) (unchecked-get js/window "webkitAudioContext"))]
+          (try
+            (let [^js ctx (new ctor)]
+              (set! (.-ctx a) ctx)
+              (.addEventListener ctx "statechange"
+                                 #(when (= "running" (.-state ctx)) (build-chain! st token video))))
+            (catch js/Error e
+              (audio-native! st token (str "context: " (some-> e .-message)))))
+          (audio-native! st token "no AudioContext")))
+      (when-let [^js ctx (.-ctx a)]
+        (if (= "running" (.-state ctx))
+          (build-chain! st token video)
+          (try (.catch (.resume ctx) (fn [_] nil)) (catch js/Error _ nil)))))))
+
+(defn- audio-gestures!
+  "The events that carry a user activation; each is a chance to start the
+  context. keydown covers Space on the video, pointerdown the click on it
+  and the buttons, touchend iOS (a touch's pointerdown activates nothing)."
+  [^js st token ^js video]
+  (audio-start! st token video)
+  (doseq [ev ["keydown" "pointerdown" "touchend"]]
+    (.addEventListener js/document ev #(audio-start! st token video) true)))
+
+(defn- volume-control
+  "The per-viewer volume slider, 0–300 % of the stream's own with native
+  100 % a third of the way along (a tick marks it, the colour changes past
+  it), labelled with the percentage; double-click resets to 100 %.
+  Remembered in localStorage (goob-volume), never room state. Hidden once
+  the chain is known to be impossible."
+  [^js st]
+  (let [^js a (.-audio st)
+        slider (h :input.vol {:type "range" :min 0 :max volume-max :step volume-step
+                              :title "volume, up to 300 % of the stream's own (double-click: 100 %)"})
+        label (h :span.vol-pct {})
+        wrap (h :span.volume {}
+                (h :span.vol-track {} slider (h :span.vol-tick {:aria-hidden "true"}))
+                label)]
+    (set! (.-slider a) slider)
+    (set! (.-label a) label)
+    (set! (.-wrap a) wrap)
+    (set! (.-oninput slider) #(volume! st (js/parseInt (.-value slider) 10)))
+    (set! (.-ondblclick slider) #(volume! st 100))
+    (when (.-dead a) (set! (.-display (.-style wrap)) "none"))
+    (volume! st (.-pct a))
+    wrap))
+
 (defn- ready? [^js st ^js video]
   (boolean (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st))
                 (>= (.-readyState video) 2))))
@@ -283,8 +440,9 @@
     nil))
 
 (defn- owns-key? [^js t k]
-  ;; the chat and nick inputs, the seek slider and the resolution menu keep
-  ;; their keys; a focused button keeps Space (its own activation)
+  ;; the chat and nick inputs, the seek and volume sliders and the
+  ;; resolution menu keep their keys; a focused button keeps Space (its own
+  ;; activation)
   (let [tag (some-> t .-tagName)]
     (boolean (or (#{"INPUT" "TEXTAREA" "SELECT"} tag)
                  (some-> t .-isContentEditable)
@@ -305,8 +463,22 @@
   pauses the host's own element while the room plays on, the spinner at
   0:00. A capture-phase keyup preventDefault is what Chromium honours, so a
   controller's Space is ours end to end; a viewer who cannot control keeps
-  the native toggle as the join gesture."
+  the native toggle as the join gesture.
+
+  ArrowUp/ArrowDown are the viewer's volume (#56, ±5 %), for everyone,
+  controller or not, and in the capture phase for the same reason:
+  Chromium's native controls take them as element volume at the focused
+  <video>, which would fight the gain. Repeats are fine here, holding the
+  key ramps the volume and nothing leaves the page."
   [^js st ^js video]
+  (.addEventListener js/document "keydown"
+    (fn [^js e]
+      (let [k (.-key e)]
+        (when-let [n (volume-key-step k)]
+          (when-not (or (.-ctrlKey e) (.-metaKey e) (.-altKey e) (owns-key? (.-target e) k))
+            (.preventDefault e)
+            (volume! st (+ (.-pct ^js (.-audio st)) n))))))
+    true)
   (.addEventListener js/document "keyup"
     (fn [^js e]
       (when (and (.-cancontrol st) (= " " (.-key e)) (not (owns-key? (.-target e) " ")))
@@ -895,7 +1067,8 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
-    (ui/add! viewer-row res-slot (h :span.muted "picture quality") (fs-setting st fs-chat))
+    (ui/add! viewer-row res-slot (h :span.muted "picture quality")
+             (volume-control st) (fs-setting st fs-chat))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
     {:video video
@@ -1000,6 +1173,7 @@
     (.add (.-classList (.-body js/document)) "watching")
     (connect! st token refs)
     (keys! st (:video refs))
+    (audio-gestures! st token (:video refs))
     (js/setInterval
       (fn []
         (when (and (not (.-done started)) (.-room st))
@@ -1017,6 +1191,8 @@
                   "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "expired" false
+                  "audio" (js-obj "ctx" nil "gainnode" nil "compressor" nil "pct" (saved-volume)
+                                  "slider" nil "label" nil "wrap" nil "dead" false)
                   "counters" (js-obj "seeks" 0 "stalls" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
         saved-nick (ui/store-get "goob-nick")
@@ -1033,6 +1209,8 @@
                         :rate (some-> v .-playbackRate) :roomRate (:rate room)
                         :playing (:playing room) :paused (some-> v .-paused)
                         :muted (some-> v .-muted) :started (.-started st)
+                        :volume (some-> v .-volume)
+                        :gain (some-> ^js (.-gainnode ^js (.-audio st)) .-gain .-value)
                         :autostart (.-autostart st) :starting (.-starting st)
                         :mode (name (.-mode st)) :buffering (.-buffering st)
                         :bufferAhead (when v (buffer-ahead v))
