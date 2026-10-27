@@ -23,7 +23,7 @@
                           (sql/format {:select [:name] :from [:sqlite_master]
                                        :where [:= :type "table"]}))
                       (mapcat vals) (map name) set)]
-      (is (every? tables ["videos" "rooms" "schema_migrations"])))))
+      (is (every? tables ["videos" "rooms" "room_items" "schema_migrations"])))))
 
 (deftest init-is-idempotent
   (let [path (str (tmp-dir) "/goob-toob.db")]
@@ -36,3 +36,54 @@
   (with-redefs [db/migrations ["999-nope.sql"]]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"999-nope\.sql"
                           (db/init! (str (tmp-dir) "/goob-toob.db"))))))
+
+;; ---- foreign keys ----------------------------------------------------------
+;; The pragma is per connection and next.jdbc opens one per execute!, so a
+;; standalone PRAGMA after init! only ever covered the connection it ran on.
+
+(defn- fk-pragma []
+  (-> (jdbc/execute-one! (db/db) ["PRAGMA foreign_keys"]) vals first))
+
+(deftest foreign-keys-are-enforced-on-every-connection
+  (db/init! (str (tmp-dir) "/goob-toob.db"))
+  ;; two execute!s = two fresh connections; both must read 1
+  (is (= 1 (fk-pragma)))
+  (is (= 1 (fk-pragma)))
+  (is (thrown? Exception
+               (jdbc/execute! (db/db)
+                 (sql/format {:insert-into :rooms
+                              :values [{:id "r" :token "t" :video-id "no-such-video"}]})))))
+
+(defn- pre-003-db!
+  "A database as 001+002 left it, with a video and a room on it. Returns
+  the path; the caller re-runs init! on it with the full migration list."
+  [room-video-id]
+  (let [path (str (tmp-dir) "/goob-toob.db")]
+    (with-redefs [db/migrations ["001-init.sql" "002-room-control.sql"]]
+      (db/init! path))
+    (jdbc/execute! (db/db)
+      (sql/format {:insert-into :videos
+                   :values [{:id "v" :title "Clip" :status "ready"}]}))
+    ;; the FK-off era: rows went in without the reference being checked
+    (with-open [conn (jdbc/get-connection (db/db))]
+      (jdbc/execute! conn ["PRAGMA foreign_keys=OFF"])
+      (jdbc/execute! conn
+        (sql/format {:insert-into :rooms
+                     :values [{:id "r" :token "tok" :video-id room-video-id}]})))
+    path))
+
+(deftest migration-003-turns-existing-rooms-into-queues
+  (let [path (pre-003-db! "v")]
+    (db/init! path)
+    (is (= [{:room_items/room_id "r" :room_items/video_id "v" :room_items/position 0}]
+           (jdbc/execute! (db/db) (sql/format {:select [:room-id :video-id :position]
+                                               :from [:room-items]}))))
+    (is (= [{:rooms/title nil}]
+           (jdbc/execute! (db/db) (sql/format {:select [:title] :from [:rooms]})))
+        "rooms.title exists and migrated rooms have none")))
+
+(deftest migration-003-drops-orphan-rooms
+  (let [path (pre-003-db! "gone")]
+    (db/init! path)
+    (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:id] :from [:rooms]}))))
+    (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:room-items]}))))))

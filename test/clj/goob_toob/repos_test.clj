@@ -61,11 +61,120 @@
                    :values [{:id id :title id :status "uploaded" :created-at at}]})))
   (is (= ["b" "a"] (map :id (videos/list-all)))))
 
-(deftest deleting-a-video-closes-its-rooms
+(deftest deleting-an-unqueued-video-just-deletes-it
+  (video! "v1")
+  (videos/delete! "v1")
+  (is (nil? (videos/get-by-id "v1"))))
+
+;; ---- queues -----------------------------------------------------------------
+
+(defn- ex-type [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+(defn- positions [room-id]
+  (mapv (juxt :video-id :position) (rooms/queue room-id)))
+
+(deftest create-room-queues-its-first-video
+  (video! "v1" :title "S01E01")
+  (let [id (:id (rooms/create! "v1"))
+        row (first (rooms/list-all))]
+    (is (= [["v1" 0]] (positions id)))
+    (is (= "S01E01" (:title (first (rooms/queue id)))))
+    (is (= {:id id :title "S01E01" :items 1 :video-id "v1"}
+           (select-keys row [:id :title :items :video-id])))))
+
+(deftest create-room-takes-a-title
+  (video! "v1" :title "S01E01")
+  (rooms/create! "v1" :title "Season 1")
+  (is (= "Season 1" (:title (first (rooms/list-all))))))
+
+(deftest add-item-appends-in-order
+  (doseq [v ["v1" "v2" "v3"]] (video! v))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (rooms/add-item! id "v3")
+    (is (= [["v1" 0] ["v2" 1] ["v3" 2]] (positions id)))
+    (is (= 3 (:items (first (rooms/list-all)))))))
+
+(deftest add-item-refuses-a-duplicate
   (video! "v1")
   (let [id (:id (rooms/create! "v1"))]
-    (videos/delete! "v1")
-    (is (nil? (rooms/get-by-id id)))))
+    (is (= :conflict (ex-type #(rooms/add-item! id "v1"))))
+    (is (= :bad-request (ex-type #(rooms/add-item! id "nope"))))
+    (is (= [["v1" 0]] (positions id)))))
+
+(deftest remove-item-refuses-the-current-video
+  (doseq [v ["v1" "v2"]] (video! v))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (is (= :conflict (ex-type #(rooms/remove-item! id "v1"))))
+    (is (= [["v1" 0] ["v2" 1]] (positions id)))))
+
+(deftest remove-item-renumbers
+  (doseq [v ["v1" "v2" "v3"]] (video! v))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (rooms/add-item! id "v3")
+    (rooms/remove-item! id "v2")
+    (is (= [["v1" 0] ["v3" 1]] (positions id)))))
+
+(deftest reorder-rewrites-positions
+  (doseq [v ["v1" "v2" "v3"]] (video! v))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (rooms/add-item! id "v3")
+    (rooms/reorder! id ["v3" "v1" "v2"])
+    (is (= [["v3" 0] ["v1" 1] ["v2" 2]] (positions id)))
+    (is (= :bad-request (ex-type #(rooms/reorder! id ["v3" "v1"]))))
+    (is (= :bad-request (ex-type #(rooms/reorder! id ["v3" "v1" "v1"]))))
+    (is (= :bad-request (ex-type #(rooms/reorder! id ["v3" "v1" "v2" "nope"]))))
+    (is (= [["v3" 0] ["v1" 1] ["v2" 2]] (positions id)))))
+
+(deftest set-current-requires-a-queued-video
+  (doseq [v ["v1" "v2" "v3"]] (video! v))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (is (= :bad-request (ex-type #(rooms/set-current! id "v3"))))
+    (is (= "v1" (:video-id (rooms/get-by-id id))))
+    (rooms/set-current! id "v2")
+    (is (= "v2" (:video-id (rooms/get-by-id id))))))
+
+(deftest set-title-blank-clears-it
+  (video! "v1" :title "S01E01")
+  (let [id (:id (rooms/create! "v1" :title "Season 1"))]
+    (rooms/set-title! id "Night 2")
+    (is (= "Night 2" (:title (first (rooms/list-all)))))
+    (rooms/set-title! id "   ")
+    (is (nil? (:title (rooms/get-by-id id))))
+    (is (= "S01E01" (:title (first (rooms/list-all)))))))
+
+(deftest deleting-a-queued-video-is-refused
+  (doseq [v ["v1" "v2"]] (video! v))
+  (let [id (:id (rooms/create! "v1" :title "Season 1"))]
+    (rooms/add-item! id "v2")
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Season 1" (videos/delete! "v2")))
+    (is (= :conflict (ex-type #(videos/delete! "v2"))))
+    (is (some? (videos/get-by-id "v2")))
+    (is (some? (rooms/get-by-id id)))
+    (is (= [["v1" 0] ["v2" 1]] (positions id)))))
+
+(deftest rooms-using-names-the-rooms
+  (doseq [v ["v1" "v2"]] (video! v :title (str "Clip " v)))
+  (let [a (:id (rooms/create! "v1" :title "A"))
+        b (:id (rooms/create! "v2" :title "B"))]
+    (rooms/add-item! a "v2")
+    (is (= #{"A" "B"} (set (rooms/rooms-using "v2"))))
+    (is (= ["A"] (rooms/rooms-using "v1")))
+    (is (= [] (rooms/rooms-using "nope")))
+    (rooms/delete! b)
+    (is (= ["A"] (rooms/rooms-using "v2")))))
+
+(deftest deleting-a-room-cascades-its-items
+  (video! "v1")
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/delete! id)
+    (is (empty? (rooms/queue id)))
+    (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:room-items]}))))))
 
 (defn- tmp-file [content]
   (let [f (java.io.File/createTempFile "goob-upload" ".tmp")]
