@@ -166,6 +166,94 @@
       (play! video)
       (.pause video))))
 
+;; ---- host transport (#53 jump buttons, #54 keys) ----
+;; Every control here drives the *room*: a cmd the server re-gates (host, or
+;; anyone when "co-hosts can drive" is on) and broadcasts as a state, which
+;; is what moves this element too. None of it is sync policy.
+
+(defn- room-duration [^js st ^js video]
+  ;; the element's duration once it knows it, else the probe's from the welcome
+  (let [d (.-duration video)]
+    (if (and (number? d) (js/isFinite d) (pos? d)) d (.-duration st))))
+
+(defn- jump-target
+  "The room's expected position moved by n seconds, clamped to [0, duration]
+  (no upper clamp while the duration is still unknown)."
+  [expected n duration]
+  (let [p (max 0.0 (+ expected n))]
+    (if (and (number? duration) (pos? duration)) (min p duration) p)))
+
+(defn- jump!
+  "A room seek n seconds from the room's *expected* position — the client's
+  model of the room clock, the same one the policy and the probe use — never
+  from this element's currentTime, so a host whose element sits a little
+  behind does not drag the room back. While paused the paused position moves
+  and the room stays paused. Truthy when a command went out."
+  [^js st ^js video n]
+  (when-let [room (when (.-cancontrol st) (.-room st))]
+    (wsx/send! (.-ws st) {:type "cmd" :op "seek"
+                          :pos (jump-target (expected-now st room) n (room-duration st video))})
+    true))
+
+(defn- toggle!
+  "Space/K: pause a playing room, play a paused one, both at the expected
+  position. A controller who has not started yet while the room plays is
+  left alone (nil): Space stays the join gesture there, and the keypress
+  already handed the autostart retry its activation."
+  [^js st]
+  (when-let [room (when (.-cancontrol st) (.-room st))]
+    (if (:playing room)
+      (when (.-started st)
+        (wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (expected-now st room)})
+        true)
+      (do (set! (.-started st) true)
+          (wsx/send! (.-ws st) {:type "cmd" :op "play" :pos (expected-now st room)})
+          true))))
+
+(defn- transport-key
+  "key -> [:jump seconds] | [:toggle] | nil"
+  [k]
+  (case k
+    "ArrowLeft"   [:jump -5.0]
+    "ArrowRight"  [:jump 5.0]
+    ("j" "J")     [:jump -10.0]
+    ("l" "L")     [:jump 10.0]
+    ("k" "K" " ") [:toggle]
+    nil))
+
+(defn- owns-key? [^js t k]
+  ;; the chat and nick inputs, the seek slider and the resolution menu keep
+  ;; their keys; a focused button keeps Space (its own activation)
+  (let [tag (some-> t .-tagName)]
+    (boolean (or (#{"INPUT" "TEXTAREA" "SELECT"} tag)
+                 (some-> t .-isContentEditable)
+                 (and (= "BUTTON" tag) (= " " k))))))
+
+(defn- keys!
+  "Document-level transport keys for a client that can control the room:
+  arrows -5/+5 s, J/L -10/+10 s, K/Space play-pause. preventDefault keeps
+  the element's native seek and the page scroll from firing first. A viewer
+  who cannot control gets nothing from the arrows (the native seek would only
+  desync them) and Space stays as it is, the join gesture. Repeats are
+  dropped so holding a key does not flood the socket."
+  [^js st ^js video]
+  (.addEventListener js/document "keydown"
+    (fn [^js e]
+      (let [k (.-key e)]
+        (when-not (or (.-repeat e) (.-ctrlKey e) (.-metaKey e) (.-altKey e)
+                      (owns-key? (.-target e) k))
+          (when-let [[op n] (transport-key k)]
+            (cond
+              (not (.-cancontrol st))
+              (when (and (= op :jump) (identical? (.-target e) video))
+                (.preventDefault e))
+
+              (= op :jump)
+              (when (jump! st video n) (.preventDefault e))
+
+              :else
+              (when (toggle! st) (.preventDefault e)))))))))
+
 (defn- render-peers! [peers-el peers host?]
   (ui/clear! peers-el)
   (doseq [p peers]
@@ -236,6 +324,7 @@
               (when (:is-host msg)
                 (set! (.-display (.-style admin-link)) ""))
               (set! (.-cancontrol st) (boolean (:can-control msg)))
+              (set! (.-duration st) (get-in msg [:video :duration]))
               (set! (.-room st) (:state msg))
               (set! (.-textContent title-el) (get-in msg [:video :title]))
               (when (and (.-player st) (.-started st))
@@ -302,8 +391,10 @@
         admin-link (h :a {:href "/admin" :title "admin console"
                           :style "margin-left:auto;font-size:0.8rem;opacity:0.7;display:none"}
                       "admin?")
+        back-btn (h :button.btn.ghost.jump {:title "back 10 s (shift: 5 s)"} "⏪ 10s")
         play-btn (h :button.btn "▶ play")
         pause-btn (h :button.btn.aqua "⏸ pause")
+        fwd-btn (h :button.btn.ghost.jump {:title "forward 10 s (shift: 5 s)"} "10s ⏩")
         seek (h :input.seek {:type "range" :value 0 :min 0 :step 0.5})
         res-slot (h :span {})
         viewer-row (h :div.controls {})
@@ -373,13 +464,20 @@
                (wsx/send! (.-ws st) {:type "cmd" :op "play" :pos (.-currentTime video)})))
     (set! (.-onclick pause-btn)
           #(wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (.-currentTime video)}))
+    (set! (.-onclick back-btn) #(jump! st video (if (.-shiftKey %) -5.0 -10.0)))
+    (set! (.-onclick fwd-btn) #(jump! st video (if (.-shiftKey %) 5.0 10.0)))
+    ;; a clicked transport button must not keep focus, or the next Space
+    ;; would re-press it instead of toggling the room (tab focus still works)
+    (doseq [b [back-btn play-btn pause-btn fwd-btn]]
+      (set! (.-onmousedown b) #(.preventDefault %)))
     (set! (.-onchange seek)
           #(do (set! (.-seeking st) false)
                (wsx/send! (.-ws st) {:type "cmd" :op "seek"
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (ui/add! viewer-row res-slot (h :span.muted "picture quality"))
-    (ui/add! host-row play-btn pause-btn seek badge (h :span.muted "everyone follows you") slow-note)
+    (ui/add! host-row back-btn play-btn pause-btn fwd-btn seek badge
+             (h :span.muted "everyone follows you") slow-note)
     {:video video
      :layout (h :div.watch-layout
                 (h :div.row-gap
@@ -447,6 +545,7 @@
   (let [refs (shell st)
         started (js-obj "done" false)]
     (connect! st token refs)
+    (keys! st (:video refs))
     (js/setInterval
       (fn []
         (when (and (not (.-done started)) (.-room st))

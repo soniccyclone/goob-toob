@@ -51,7 +51,8 @@ tunnel has no admin surface at all (see
    lands on the clipboard. Toss it to friends.
 7. Open the room link yourself to host: play/pause/seek drive everyone; the
    video's native play button starts playback. Tick /co-hosts can drive/ if
-   friends should steer too.
+   friends should steer too. Keys, with the page focused: Space or K
+   play/pause, ←/→ ±5 s, J/L ±10 s; the ⏪/⏩ buttons jump 10 s (Shift: 5 s).
 
 Good to know: the public link is a Cloudflare /quick/ tunnel — ephemeral, so
 every launch gets a new URL (re-copy from the sharing card after a restart).
