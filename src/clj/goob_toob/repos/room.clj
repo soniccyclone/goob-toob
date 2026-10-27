@@ -154,12 +154,13 @@
 
 (defn list-all
   "Every room, newest first: :id :token :allow-control :title (the room's,
-  else its current video's) :video-id :status (the current video's) :items."
+  else its current video's) :video-id :video-title :status (the current
+  video's) :items."
   []
   (->> (jdbc/execute! (db/db)
          (sql/format {:select [[:r/id] [:r/token] [:r/video-id] [:r/allow-control]
                                [[:coalesce :r.title :v.title] :title]
-                               [:v/status]
+                               [:v/title :video-title] [:v/status]
                                [{:select [[[:count :*]]] :from [[:room-items :ri]]
                                  :where [:= :ri.room-id :r.id]} :items]]
                       :from [[:rooms :r]]

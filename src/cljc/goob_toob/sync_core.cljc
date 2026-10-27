@@ -138,3 +138,17 @@
   "The 720 rung's bitrate, else the lowest rung's."
   [ladder]
   (:v (or (first (filter #(= 720 (:h %)) ladder)) (last ladder))))
+
+(defn neighbour
+  "ids is the queue's video ids in order. Returns the id after (:next) or
+  before (:prev) current, nil at either end or if current is not queued."
+  [ids current dir]
+  (let [ids (vec ids)
+        i   (first (keep-indexed (fn [i id] (when (= id current) i)) ids))]
+    (when i
+      (get ids (case dir :next (inc i) :prev (dec i))))))
+
+(defn ended?
+  "A playing room whose clock has reached the current video's duration."
+  [{:keys [playing? duration] :as room} now]
+  (boolean (and playing? duration (>= (expected-pos (assoc room :now now)) duration))))

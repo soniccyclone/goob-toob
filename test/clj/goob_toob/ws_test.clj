@@ -146,3 +146,68 @@
     (.join (.sendText ^WebSocket ws "\"abc\"" true))
     (send! ws {:type "ping" :t 7})
     (is (= 7 (:t (recv-type! in "pong"))))))
+
+;; ---- queues -----------------------------------------------------------------
+
+(defn- http!
+  "An admin JSON request to the running server; {:status :body}."
+  [method path body]
+  (let [req  (-> (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" @port path)))
+                 (.header "Content-Type" "application/json")
+                 (.header "Cookie" (login!))
+                 (.method method (HttpRequest$BodyPublishers/ofString (json/generate-string body)))
+                 .build)
+        resp (.send (HttpClient/newHttpClient) req (HttpResponse$BodyHandlers/ofString))]
+    {:status (.statusCode resp) :body (json/parse-string (.body resp) true)}))
+
+(defn- two-item-room! []
+  (doseq [[vid title dur] [["v1" "Ep 1" 42.0] ["v2" "Ep 2" 50.0]]]
+    (videos/insert! {:id vid :title title :original-path (str "/tmp/" vid ".mp4")})
+    (videos/set-duration! vid dur))
+  (let [room (rooms/create! "v1")]
+    (rooms/add-item! (:id room) "v2")
+    room))
+
+(defn- recv-item! [in]
+  (loop [] (when-let [m (recv-type! in "state")] (if (= "item" (:op m)) m (recur)))))
+
+(deftest welcome-carries-the-queue-and-current-video
+  (let [room (two-item-room!)
+        w    (:welcome (connect! room "ann"))]
+    (is (= [["v1" "Ep 1" 0] ["v2" "Ep 2" 1]] (map (juxt :video-id :title :position) (:queue w))))
+    (is (= "v1" (:video-id w)))
+    (is (= "v1" (get-in w [:state :video-id])))
+    (is (= {:id "v1" :title "Ep 1" :duration 42.0 :dash "/dash/v1/manifest.mpd"} (:video w)))))
+
+(deftest host-next-switches-every-viewer
+  (let [room   (two-item-room!)
+        host   (connect! room "host" (login!))
+        viewer (connect! room "viewer")]
+    (send! (:ws host) {:type "cmd" :op "next"})
+    (let [m (recv-item! (:in viewer))]
+      (is (= "v2" (get-in m [:video :id])))
+      (is (= "v2" (:video-id m)))
+      (is (true? (:playing m)))
+      (is (= 0.0 (:pos m))))
+    (let [w (:welcome (connect! room "late"))]
+      (is (= "v2" (:video-id w)))
+      (is (= "Ep 2" (get-in w [:video :title]))))))
+
+(deftest viewer-next-is-ignored-without-control
+  (let [room (two-item-room!)
+        v1   (connect! room "v1")
+        v2   (connect! room "v2")]
+    (send! (:ws v1) {:type "cmd" :op "next"})
+    (is (not-any? #(= "item" (:op %)) (recv-all! (:in v2) 1000)))
+    (is (= "v1" (get-in @sync/rooms* [(:id room) :video-id])))))
+
+(deftest queue-edit-reaches-the-room
+  (videos/insert! {:id "v1" :title "Ep 1" :original-path "/tmp/v1.mp4"})
+  (videos/insert! {:id "v2" :title "Ep 2" :original-path "/tmp/v2.mp4"})
+  (let [room   (rooms/create! "v1")
+        viewer (connect! room "viewer")
+        resp   (http! "POST" (str "/api/admin/rooms/" (:id room) "/items") {:video-id "v2"})
+        m      (recv-type! (:in viewer) "queue")]
+    (is (= 201 (:status resp)))
+    (is (= ["v1" "v2"] (map :video-id (:queue m))))
+    (is (= "v1" (:video-id m)))))

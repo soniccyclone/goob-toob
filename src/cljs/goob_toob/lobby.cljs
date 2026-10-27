@@ -11,6 +11,7 @@
       (ui/add! grid
         (h :div.card.row-gap
            (h :h3 (:title r))
+           (h :p.muted (str "now: " (:now r) " · " (:items r) " in the queue"))
            (h :a {:href (str "/watch/" (:token r))}
               (h :button.btn "▶ watch together")))))))
 

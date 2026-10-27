@@ -158,3 +158,106 @@
     (is (= 200 (:status resp)))
     (is (= ["viewer"] (map :nick (get-in resp [:body :clients]))))
     (is (= 404 (:status (call app :get "/api/admin/rooms/nope/live" :cookie cookie))))))
+
+;; ---- queues -----------------------------------------------------------------
+
+(defn- queue-ids [resp] (mapv :video-id (get-in resp [:body :queue])))
+
+(deftest queue-endpoints-add-remove-reorder
+  (video! "v1")
+  (video! "v2")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1"))
+        items  (str "/api/admin/rooms/" id "/items")
+        added  (call app :post items :cookie cookie :body {:video-id "v2"})]
+    (is (= 201 (:status added)))
+    (is (= ["v1" "v2"] (queue-ids added)))
+    (is (= "v1" (get-in added [:body :video-id])))
+    (is (= ["v1" "v2"]
+           (->> (:body (call app :get "/api/admin/rooms" :cookie cookie))
+                (filter #(= id (:id %))) first :queue (mapv :video-id))))
+    (let [re (call app :put items :cookie cookie :body {:order ["v2" "v1"]})]
+      (is (= 200 (:status re)))
+      (is (= ["v2" "v1"] (queue-ids re)))
+      (is (= [0 1] (mapv :position (get-in re [:body :queue])))))
+    (let [rm (call app :delete (str items "/v2") :cookie cookie)]
+      (is (= 200 (:status rm)))
+      (is (= ["v1"] (queue-ids rm))))
+    (is (= [["v1" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))))
+
+(deftest queue-conflicts-are-409
+  (video! "v1")
+  (video! "v2")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1"))
+        items  (str "/api/admin/rooms/" id "/items")
+        dup    (call app :post items :cookie cookie :body {:video-id "v1"})
+        cur    (call app :delete (str items "/v1") :cookie cookie)
+        bad    (call app :put items :cookie cookie :body {:order ["v1" "v2"]})
+        none   (call app :post items :cookie cookie :body {:video-id "nope"})]
+    (is (= 409 (:status dup)))
+    (is (= "already queued" (get-in dup [:body :error])))
+    (is (= 409 (:status cur)))
+    (is (str/includes? (get-in cur [:body :error]) "current"))
+    (is (= 400 (:status bad)))
+    (is (= 400 (:status none)))
+    (is (= "no such video" (get-in none [:body :error])))
+    (is (= [["v1" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))))
+
+(deftest queue-routes-404-an-unknown-room
+  (video! "v1")
+  (let [app    (container-app)
+        cookie (login! app)
+        items  "/api/admin/rooms/nope/items"
+        added  (call app :post items :cookie cookie :body {:video-id "v1"})]
+    (is (= 404 (:status added)))
+    (is (= "no such room" (get-in added [:body :error])))
+    (is (= 404 (:status (call app :put items :cookie cookie :body {:order []}))))
+    (is (= 404 (:status (call app :delete (str items "/v1") :cookie cookie))))
+    (is (= 404 (:status (call app :patch "/api/admin/rooms/nope" :cookie cookie :body {:title "x"}))))))
+
+(deftest deleting-a-queued-video-is-409
+  (video! "v1" :status "ready")
+  (video! "v2" :status "ready")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1" :title "Season 1"))
+        _      (rooms/add-item! id "v2")
+        resp   (call app :delete "/api/admin/videos/v2" :cookie cookie)]
+    (is (= 409 (:status resp)))
+    (is (= "queued in: Season 1" (get-in resp [:body :error])))
+    (is (some #{"v2"} (map :id (:body (call app :get "/api/admin/videos" :cookie cookie)))))
+    (is (= [["v1" 0] ["v2" 1]] (mapv (juxt :video-id :position) (rooms/queue id))))))
+
+(deftest public-rooms-show-the-current-video-and-count
+  (video! "v1" :title "S01E01" :status "ready")
+  (video! "v2" :title "S01E02" :status "ready")
+  (video! "v3" :title "Raw")
+  (let [app  (container-app)
+        id   (:id (rooms/create! "v1" :title "Season 1"))
+        _    (rooms/add-item! id "v2")
+        _    (rooms/create! "v3")
+        resp (call app :get "/api/rooms")]
+    (is (= 200 (:status resp)))
+    (is (= [{:title "Season 1" :now "S01E01" :items 2}]
+           (mapv #(dissoc % :token) (:body resp))))
+    (is (string? (:token (first (:body resp)))))))
+
+(deftest patch-room-title
+  (video! "v1" :title "S01E01")
+  (let [app    (container-app)
+        cookie (login! app)
+        id     (:id (rooms/create! "v1"))
+        path   (str "/api/admin/rooms/" id)
+        title  #(->> (:body (call app :get "/api/admin/rooms" :cookie cookie))
+                     (filter (fn [r] (= id (:id r)))) first :title)]
+    (is (= 200 (:status (call app :patch path :cookie cookie :body {:title "Night 2"}))))
+    (is (= "Night 2" (title)))
+    (is (= 200 (:status (call app :patch path :cookie cookie :body {:allow-control true}))))
+    (is (= "Night 2" (title)))
+    (is (= 1 (:allow-control (rooms/get-by-id id))))
+    (call app :patch path :cookie cookie :body {:title "  "})
+    (is (= "S01E01" (title)))
+    (is (= 1 (:allow-control (rooms/get-by-id id))))))
