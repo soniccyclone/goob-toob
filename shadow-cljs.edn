@@ -22,6 +22,8 @@
                         :resilience       {:entries [goob-toob.e2e.journeys.resilience]
                                            :depends-on #{:config}}
                         :autoplay         {:entries [goob-toob.e2e.journeys.autoplay]
+                                           :depends-on #{:config}}
+                        :playlists        {:entries [goob-toob.e2e.journeys.playlists]
                                            :depends-on #{:config}}}
            :js-options {:js-provider :import}
            :compiler-options {:optimizations :simple

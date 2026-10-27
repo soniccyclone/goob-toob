@@ -40,15 +40,33 @@
              tmp (fs/mkdtempSync (path/join (os/tmpdir) "goob-e2e-"))
              clip (clip! (path/join tmp "clip.mp4") (:clip-seconds W))
              upload-clip (clip! (path/join tmp "upload.mp4") (:upload-seconds W))
+             ;; the playlist journeys queue these after the shared clip (a
+             ;; queue holds no duplicates); shorter, they transcode faster
+             extra-clips (mapv #(clip! (path/join tmp (str % ".mp4")) (:extra-clip-seconds W))
+                               ["clip-b" "clip-c"])
              cookie (<p! (api/login base password))
-             {:keys [status data]} (<p! (api/upload base cookie clip))
-             _ (when-not (= 202 status)
-                 (throw (js/Error. (str "upload failed: " (pr-str data)))))
+             upload! (fn [file]
+                       (go-try
+                         (let [{:keys [status data]} (<p! (api/upload base cookie file))]
+                           (when-not (= 202 status)
+                             (throw (js/Error. (str "upload failed: " (pr-str data)))))
+                           (:id data))))
+             id (<? (upload! clip))
+             extra-ids (loop [files extra-clips ids []]
+                         (if-let [f (first files)]
+                           (recur (rest files) (conj ids (<? (upload! f))))
+                           ids))
              t0 (js/Date.now)
-             row (<? (wait-ready base cookie (:id data) (:transcode-within T)))]
+             row (<? (wait-ready base cookie id (:transcode-within T)))
+             extra (loop [ids extra-ids rows []]
+                     (if-let [i (first ids)]
+                       (let [r (<? (wait-ready base cookie i (:transcode-within T)))]
+                         (recur (rest ids) (conj rows {:id i :title (:title r) :duration (:duration r)})))
+                       rows))]
          (metrics/reset-summary! full-config)
          (fs/writeFileSync (api/fixture-path dir)
                            (js/JSON.stringify
-                            (clj->js {:cookie cookie :video-id (:id data) :duration (:duration row)
+                            (clj->js {:cookie cookie :video-id id :title (:title row) :duration (:duration row)
+                                      :extra extra
                                       :upload-clip upload-clip :transcode-ms (- (js/Date.now) t0)})))
          nil))))
