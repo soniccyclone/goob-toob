@@ -7,7 +7,8 @@
   `in` receives frames from the client, `out` is what we send to the client;
   closing `out` closes the socket."
   (:refer-clojure :exclude [num])
-  (:require [ring.websocket.async :as wa]
+  (:require [ring.websocket :as ws]
+            [ring.websocket.async :as wa]
             [clojure.core.async :as a]
             [cheshire.core :as json]
             [clojure.string :as str]
@@ -46,8 +47,18 @@
 
 (defn endpoint [req]
   (let [room-row (rooms/get-by-token (get-in req [:params :token]))]
-    (if-not room-row
+    (cond
+      (not room-row)
       {:status 404 :headers {"Content-Type" "text/plain"} :body "no such room"}
+
+      ;; a plain GET (link-preview bot, curious browser) must not reach
+      ;; join!: go-websocket's body would register a peer whose socket
+      ;; never opens and never closes (#72)
+      (not (ws/upgrade-request? req))
+      {:status 426 :headers {"Content-Type" "application/json" "Upgrade" "websocket"}
+       :body (json/generate-string {:error "websocket upgrade required"})}
+
+      :else
       (let [cid     (str (java.util.UUID/randomUUID))
             nick    (or (some-> (get-in req [:params :nick])
                                 str/trim not-empty (#(apply str (take 32 %))))
