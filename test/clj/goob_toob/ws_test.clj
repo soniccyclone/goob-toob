@@ -4,6 +4,8 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [ring.adapter.jetty :refer [run-jetty]]
+            [goob-toob.config :as config]
+            [goob-toob.db :as db]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.video :as videos]
             [goob-toob.routes :as routes]
@@ -91,6 +93,25 @@
 (defn- connect! [room nick & [cookie]]
   (let [c (ws-client @port (:token room) nick cookie)]
     (assoc c :welcome (recv-type! (:in c) "welcome"))))
+
+(deftest the-host-is-still-the-host-after-a-restart
+  ;; #71: the admin cookie from before a restart must be welcomed as the
+  ;; host by the server that comes up on the same database
+  (let [room   (room!)
+        cookie (login!)
+        _      (is (true? (:is-host (:welcome (connect! room "host" cookie)))))
+        _      (db/init! (str (config/storage-dir) "/test.db"))
+        server (run-jetty (routes/app {:admin? true :login? true}) {:port 0 :join? false})]
+    (try
+      (let [port (.getPort (.getURI server))
+            c    (ws-client port (:token room) "host" cookie)
+            w    (recv-type! (:in c) "welcome")]
+        (is (true? (:is-host w)))
+        (is (true? (:can-control w)))
+        (is (false? (:is-host (recv-type! (:in (ws-client port (:token room) "viewer" nil))
+                                          "welcome")))
+            "...and a cookie-less reconnect is still a viewer"))
+      (finally (.stop server)))))
 
 (deftest unknown-token-is-refused
   (is (thrown? CompletionException (ws-client @port "nope" "x" nil))))

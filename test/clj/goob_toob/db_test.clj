@@ -24,7 +24,7 @@
                           (sql/format {:select [:name] :from [:sqlite_master]
                                        :where [:= :type "table"]}))
                       (mapcat vals) (map name) set)]
-      (is (every? tables ["videos" "rooms" "room_items" "schema_migrations"])))))
+      (is (every? tables ["videos" "rooms" "room_items" "sessions" "schema_migrations"])))))
 
 (deftest init-is-idempotent
   (let [path (str (tmp-dir) "/goob-toob.db")]
@@ -154,3 +154,28 @@
                    (sql/format {:update :rooms :set {:video-id "nope"} :where [:= :id "r"]}))))
     (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :id "r"]}))
     (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:room-items]}))))))
+
+;; ---- 005: sessions -----------------------------------------------------------
+
+(deftest migration-005-adds-the-sessions-table
+  (let [path (str (tmp-dir) "/goob-toob.db")]
+    (with-redefs [db/migrations (vec (remove #{"005-sessions.sql"} db/migrations))]
+      (db/init! path))
+    (is (thrown? Exception
+                 (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:sessions]})))
+        "no sessions table before 005")
+    (db/init! path)
+    ;; [notnull pk]: a TEXT PRIMARY KEY does not read as NOT NULL in SQLite
+    (is (= {"id" [0 1] "data" [1 0] "updated_at" [1 0]}
+           (->> (jdbc/execute! (db/db) ["PRAGMA table_info(sessions)"]
+                               {:builder-fn rs/as-unqualified-lower-maps})
+                (map (juxt :name (juxt :notnull :pk)))
+                (into {}))))
+    (jdbc/execute! (db/db)
+      (sql/format {:insert-into :sessions
+                   :values [{:id "k" :data "{:admin true}" :updated-at 1}]}))
+    (is (thrown? Exception
+                 (jdbc/execute! (db/db)
+                   (sql/format {:insert-into :sessions
+                                :values [{:id "k" :data "{}" :updated-at 2}]})))
+        "id is the primary key")))

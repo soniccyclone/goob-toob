@@ -691,6 +691,20 @@
               nil)
       nil)))
 
+(defn- host-ui!
+  "The host row and its badge follow the last welcome: shown for a
+  controller (\"you drive\" for the host, \"co-hosting\" for a viewer the
+  room lets control), hidden otherwise. A welcome after a reconnect can
+  change the answer either way (#71): a server that came back without
+  this tab's login demotes it — the row goes (the keys are already off,
+  cancontrol gates them) and the login hint says what to do; a login made
+  meanwhile in another tab promotes it."
+  [^js st refs]
+  (let [{:keys [host-row badge login-hint]} refs]
+    (set! (.-display (.-style host-row)) (if (.-cancontrol st) "flex" "none"))
+    (set! (.-textContent badge) (if (.-ishost st) "you drive" "co-hosting"))
+    (set! (.-display (.-style login-hint)) (if (.-expired st) "" "none"))))
+
 (defn- connect! [^js st token refs]
   (let [{:keys [^js video title-el seek peers-el chat-log fs-chat new-msgs admin-link
                 lag-hint slow-note]} refs
@@ -702,7 +716,9 @@
       (fn [msg _ws]
         (case (:type msg)
           "welcome"
-          (let [v (video-of (:video msg))]
+          (let [v         (video-of (:video msg))
+                again?    (some? (.-room st)) ; a reconnect, not the first welcome
+                was-host? (boolean (.-ishost st))]
             (set! (.-ishost st) (:is-host msg))
             (when (:is-host msg)
               (set! (.-display (.-style admin-link)) ""))
@@ -710,6 +726,14 @@
             (set! (.-startkbps st) (:start-kbps msg))
             (set! (.-queue st) (vec (:queue msg)))
             (set! (.-room st) (:state msg))
+            ;; mount! reveals the host row once the first welcome is in; a
+            ;; later one re-decides it (#71). "expired": this tab was the
+            ;; host and the server no longer knows its login.
+            (when again?
+              (set! (.-expired st) (and was-host? (not (:is-host msg))))
+              (when (not= was-host? (boolean (:is-host msg)))
+                (log! token :host-change {:host (boolean (:is-host msg))}))
+              (host-ui! st refs))
             (cond
               ;; an empty room, first time or still
               (nil? v)                    (empty-room! st token refs)
@@ -765,6 +789,8 @@
         stage-wrap (h :div.stage-wrap video fs-chat fs-btn
                       (h :div.stage-empty {:aria-hidden "true"} "nothing queued"))
         lag-hint (h :span.muted.lag-hint {})
+        login-hint (h :a.muted.login-hint {:href "/admin" :style "display:none"}
+                      "your login expired — log in again")
         slow-note (h :span.muted {})
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
         admin-link (h :a {:href "/admin" :title "admin console"
@@ -880,6 +906,7 @@
                          title-el admin-link)
                       stage-wrap
                       lag-hint
+                      login-hint
                       viewer-row
                       host-row))
                 (h :div.row-gap
@@ -898,7 +925,8 @@
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
      :chat-log chat-log :fs-chat fs-chat :peers-el peers-el :host-row host-row
-     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note
+     :badge badge :new-msgs new-msgs :lag-hint lag-hint :login-hint login-hint
+     :slow-note slow-note
      :stage-wrap stage-wrap :queue-el queue-el :prev-btn prev-btn :next-btn next-btn
      ;; what an empty room switches off (prev/next follow the queue card)
      :transport [back-btn play-btn pause-btn fwd-btn seek]}))
@@ -976,10 +1004,7 @@
       (fn []
         (when (and (not (.-done started)) (.-room st))
           (set! (.-done started) true)
-          (when (.-cancontrol st)
-            (set! (.-display (.-style (:host-row refs))) "flex")
-            (when-not (.-ishost st)
-              (set! (.-textContent (:badge refs)) "co-hosting")))
+          (host-ui! st refs)
           (loops! st refs)))
       800)
     (ui/add! root (:layout refs))))
@@ -991,6 +1016,7 @@
                   "streamok" false "starting" false "autostart" nil
                   "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
+                  "expired" false
                   "counters" (js-obj "seeks" 0 "stalls" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
         saved-nick (ui/store-get "goob-nick")
