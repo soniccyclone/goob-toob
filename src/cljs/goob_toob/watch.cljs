@@ -23,6 +23,8 @@
 ;; the analysis finds the episode without anyone pressing anything. Budget: a sample is one
 ;; 16-column positional row (tele-header), ~60 B as JSON; a full 300-sample
 ;; chunk is ~18 KB; 12 requests and ~220 KB per viewer per hour at most.
+;; The admin can switch the whole thing off (settings, the welcome carries
+;; the flag): then nothing is sampled and nothing is sent.
 ;; Paused or not started: one "idle" marker, then no samples until playback
 ;; resumes, and a chunk with no new samples is not sent. A 413 or 429 from
 ;; the server drops the chunk; nothing retries. One watch page per
@@ -221,7 +223,7 @@
   pause (or an item switch's restart) one idle marker, and a resume
   marker on the way back."
   [^js st ^js video]
-  (let [active? (boolean (and (.-started st) (.-vid st) (not (.-paused video))))]
+  (let [active? (boolean (and (.-telemetry st) (.-started st) (.-vid st) (not (.-paused video))))]
     (cond
       active?
       (do (when (and (not (.-active tele)) (.-idled tele)) (event! "resume" {}))
@@ -238,7 +240,7 @@
   beacon? is the pagehide path (sendBeacon survives the unload). The
   envelope carries once what every sample would repeat (nick, vid, ua)."
   [^js st token beacon?]
-  (when (pos? (.-length (.-rows tele)))
+  (when (and (.-telemetry st) (pos? (.-length (.-rows tele))))
     (let [body (js/JSON.stringify
                  (clj->js {:v 1 :token token :nick (.-nick st) :vid (.-vid st)
                            :session (.-session tele) :seq (.-seq tele) :t0 (.-t0 tele)
@@ -1052,6 +1054,9 @@
                 again?    (some? (.-room st)) ; a reconnect, not the first welcome
                 was-host? (boolean (.-ishost st))]
             (set! (.-ishost st) (:is-host msg))
+            ;; the admin's global switch (#57): off means this page never
+            ;; samples and never sends
+            (set! (.-telemetry st) (boolean (:telemetry msg)))
             (when (:is-host msg)
               (set! (.-display (.-style admin-link)) ""))
             (set! (.-cancontrol st) (boolean (:can-control msg)))
@@ -1355,7 +1360,7 @@
                   "streamok" false "starting" false "autostart" nil
                   "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
-                  "expired" false
+                  "expired" false "telemetry" false
                   "audio" (js-obj "ctx" nil "gainnode" nil "compressor" nil "pct" (saved-volume)
                                   "slider" nil "label" nil "wrap" nil "dead" false)
                   "counters" (js-obj "seeks" 0 "stalls" 0

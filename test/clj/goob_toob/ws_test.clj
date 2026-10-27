@@ -7,6 +7,7 @@
             [goob-toob.config :as config]
             [goob-toob.db :as db]
             [goob-toob.repos.room :as rooms]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.repos.video :as videos]
             [goob-toob.routes :as routes]
             [goob-toob.services.sync :as sync]
@@ -303,3 +304,9 @@
     (is (= ["v2"] (map :video-id (:queue queue))))
     (is (= "v2" (:video-id queue)))
     (is (= "v2" (:video-id (:welcome (connect! room "late")))))))
+
+(deftest the-welcome-carries-the-telemetry-switch
+  (let [room (room!)]
+    (is (true? (:telemetry (:welcome (connect! room "ann" nil)))))
+    (settings/set! :telemetry false)
+    (is (false? (:telemetry (:welcome (connect! room "bob" nil)))))))

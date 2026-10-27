@@ -320,6 +320,26 @@
                   (or (= "SELECT" (.-tagName a))
                       (and (= "INPUT" (.-tagName a)) (= "text" (.-type a))))))))
 
+(defn- settings-card
+  "The global switches (#57: record playback telemetry). Reads the stored
+  values once, writes on change."
+  []
+  (let [box  (h :input {:type "checkbox" :checked true})
+        card (h :label.cohost box "record playback telemetry (every viewer, every room)")]
+    (-> (api/get-json "/api/admin/settings")
+        (.then (fn [{:keys [data]}] (set! (.-checked box) (boolean (:telemetry data))))))
+    (set! (.-onchange box)
+          (fn [^js e]
+            (let [on? (.-checked (.-target e))]
+              (-> (api/req "PUT" "/api/admin/settings" {:telemetry on?})
+                  (.then (fn [{:keys [status data]}]
+                           (if (= 200 status)
+                             (toast (if on? "telemetry on: viewers record from their next welcome"
+                                            "telemetry off: nothing is sent, nothing is stored"))
+                             (do (set! (.-checked box) (not on?))
+                                 (toast (or (:error data) "settings save failed"))))))))))
+    card))
+
 (defn- render-admin [body]
   (ui/clear! body)
   (let [info-slot   (h :div.muted "")
@@ -416,7 +436,8 @@
               rtbody))
         (h :div.card.row-gap
            (h :h3 "telemetry")
-           (h :p.muted "every viewer who pressed play sends their playback numbers once every five minutes (and the tail when the tab closes): one file per viewer, per room, per day, kept 30 days. \"analyse\" flags the episodes — stretches off 1.0×, drift, stall clusters, dropped frames, starved buffers, the A/V desync signatures — and a viewer's \"sound out of sync?\" press shows up as a mark.")
+           (h :p.muted "every viewer who pressed play sends their playback numbers once every five minutes (and the tail when the tab closes): one file per viewer, per room, per day, kept 30 days. \"analyse\" flags the episodes — stretches off 1.0×, drift, stall clusters, dropped frames, starved buffers, the A/V desync signatures.")
+           (settings-card)
            (h :div.goo (h :button.btn.ghost {:onclick (fn [_] (refresh-t))} "refresh"))
            tele-slot)
         (when-not (.-goob js/window)

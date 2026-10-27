@@ -16,6 +16,7 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.db :as db]
             [goob-toob.services.sync :as sync]
             [goob-toob.services.transcode :as transcode]
@@ -243,8 +244,23 @@
           (handler (assoc req :body (java.io.ByteArrayInputStream. bytes)))))
       (handler req))))
 
+(defn admin-settings [_]
+  (response (settings/all)))
+
+(defn update-settings
+  "Each known key optional; :telemetry true/false switches the playback
+  recording globally (the welcome tells every viewer, the route refuses)."
+  [{:keys [params]}]
+  (when-let [unknown (seq (remove (set (keys settings/defaults)) (keys params)))]
+    (throw (ex-info (str "unknown setting " (name (first unknown))) {:type :bad-request})))
+  (doseq [[k v] params]
+    (settings/set! k (boolean v)))
+  (response (settings/all)))
+
 (defn telemetry [{:keys [params]}]
   (let [{:keys [token session nick samples]} params]
+    (if-not (settings/telemetry?)
+      (-> (response {:error "telemetry is off"}) (status 403))
     (if-not (and (string? token) (string? session) (vector? samples) (seq samples))
       (-> (response {:error "token, session and samples required"}) (status 400))
       (if-let [room (rooms/get-by-token token)]
@@ -257,7 +273,7 @@
             (when new? (log/info "telemetry: new file" (.getPath ^java.io.File file)))
             (response {:ok true}))
           (-> (response {:error "two chunks a minute per viewer"}) (status 429)))
-        (-> (response {:error "no such room"}) (status 404))))))
+        (-> (response {:error "no such room"}) (status 404)))))))
 
 (defn admin-telemetry
   "Days newest first, their rooms (with the title while the room exists)
@@ -381,6 +397,7 @@
                              ["/upload" {:post upload
                                          :middleware [wrap-multipart-params wrap-keyword-params]}]
                              ["/info" {:get storage-info}]
+                             ["/settings" {:get admin-settings :put update-settings}]
                              ["/rooms" {:get admin-rooms :post create-room}]
                              ["/rooms/:id" {:delete delete-room :patch update-room}]
                              ["/rooms/:id/items" {:post add-item :put reorder-items}]

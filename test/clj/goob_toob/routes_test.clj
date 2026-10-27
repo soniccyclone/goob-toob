@@ -442,3 +442,24 @@
       (is (= 404 (:status (call app :get (str base "/..%2F..%2F..%2Ftest.db") :cookie cookie))))
       (is (= 404 (:status (call app :get (str "/api/admin/telemetry/" day "/..%2F..%2Fdash/analysis") :cookie cookie))))
       (is (= 404 (:status (call app :get (str "/api/admin/telemetry/2000-01-01/" (:id room) "/analysis") :cookie cookie)))))))
+
+(deftest the-admin-switches-telemetry-off-globally
+  (video! "v1")
+  (reset! routes/telemetry-hits {})
+  (let [app    (container-app)
+        cookie (login! app)
+        room   (rooms/create! "v1")
+        tok    (:token room)]
+    (is (= 401 (:status (call app :get "/api/admin/settings"))) "admin only")
+    (is (= {:telemetry true} (:body (call app :get "/api/admin/settings" :cookie cookie))))
+    (is (= {:telemetry false} (:body (call app :put "/api/admin/settings" :cookie cookie
+                                           :body {:telemetry false}))))
+    (let [resp (call app :post "/api/telemetry" :body (tele-chunk tok))]
+      (is (= 403 (:status resp)))
+      (is (= "telemetry is off" (:error (:body resp)))))
+    (is (nil? (seq (.listFiles (today-dir (:id room))))) "nothing is stored while off")
+    (is (= 400 (:status (call app :put "/api/admin/settings" :cookie cookie :body {:volume 11})))
+        "an unknown key is refused")
+    (is (= {:telemetry true} (:body (call app :put "/api/admin/settings" :cookie cookie
+                                          :body {:telemetry true}))))
+    (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk tok)))))))
