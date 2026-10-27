@@ -32,7 +32,16 @@
    :transcode-within  90000
    :still-playing     1.0
    :reconnect-seeks   1
-   :autostart-within  6000})
+   :autostart-within  6000
+   ;; playlists: an item switch is an `item` broadcast, a source swap and
+   ;; the first-load start path again, so a switch costs the landings'
+   ;; seeks and no more: a park on the item state, a park on loadeddata,
+   ;; the autostart's begin! (3 recorded in every run), plus one spare for
+   ;; a pong's re-park falling inside the window
+   :switch-within     8000
+   :advance-slack     3000
+   :switch-seeks      4
+   :from-zero         2.0})
 
 (def per-engine {})
 
@@ -42,6 +51,12 @@
 (def W
   {:clip-seconds      90
    :upload-seconds    180
+   :extra-clip-seconds 60
+   :end-lead          5.0
+   :advance-window    18000
+   :end-window        12000
+   :switch-window     8000
+   :skip-hold         3000
    :sample-every      250
    :host-window       6000
    :host-head-start   5000

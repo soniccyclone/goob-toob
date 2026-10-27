@@ -152,6 +152,17 @@ video.stage {
   animation: bob 0.5s ease, fs-fade 8s ease forwards;
 }
 @keyframes fs-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+/* an empty room (playlists): no source, no controls, the label over the
+   black picture; the ratio is whatever the last video told the wrapper */
+.stage-wrap.empty video.stage { aspect-ratio: var(--ar); }
+.stage-wrap.empty .fs-btn { display: none; }
+.stage-empty {
+  display: none; position: absolute; inset: 0; z-index: 1;
+  align-items: center; justify-content: center;
+  color: var(--aqua-soft); font-weight: 800; font-size: 1.3rem; opacity: 0.7;
+  pointer-events: none;
+}
+.stage-wrap.empty .stage-empty { display: flex; }
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {
@@ -161,6 +172,18 @@ video.stage {
 }
 .badge.host { background: var(--slime); color: #10330a; }
 .badge.lag { background: var(--danger); color: #fff; }
+
+/* ---- the queue card (playlists) ---- */
+.queue .qrow { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.4rem; border-radius: 0.6rem; }
+.queue .qrow .pos { opacity: 0.6; min-width: 1.2rem; text-align: right; font-size: 0.85rem; }
+.queue .qrow .qtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue .qrow.done { opacity: 0.55; }
+.queue .qrow.now { background: rgba(143, 224, 50, 0.12); }
+.queue .qrow.now .qtitle { color: var(--slime); font-weight: 800; }
+.queue .qrow.now .pos::before { content: "▶"; margin-right: 0.2rem; color: var(--slime); }
+.queue .qrow.jumpable { cursor: pointer; }
+.queue .qrow.jumpable:hover { background: rgba(31, 200, 219, 0.15); }
+.queue .qempty { margin: 0; }
 
 /* ---- chat ---- */
 .chat { display: flex; flex-direction: column; height: min(480px, 55vh); position: relative; overflow: hidden; }

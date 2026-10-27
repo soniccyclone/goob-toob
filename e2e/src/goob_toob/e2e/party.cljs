@@ -181,6 +181,8 @@
 
 (defn play! [^js page] (.click (button page "▶ play")))
 (defn pause! [^js page] (.click (button page "⏸ pause")))
+(defn next! [^js page] (.click (button page "next ⏭")))
+(defn prev! [^js page] (.click (button page "⏮ prev")))
 
 (defn seek! [^js page pos]
   (.evaluate page (str "(() => { const s = document.querySelector('input.seek');"
@@ -217,10 +219,11 @@
              timeout))
 
 (defn host!
-  "A room for the shared clip and a host who has started it."
-  [browser base-url engine {:keys [cookie video-id]}]
+  "A room for the shared clip (or :room, one already made, for a queue)
+  and a host who has started it."
+  [browser base-url engine {:keys [cookie video-id room]}]
   (go-try
-    (let [room (<p! (api/make-room base-url cookie video-id))
+    (let [room (or room (<p! (api/make-room base-url cookie video-id)))
           host (<? (open! browser base-url (:token room) {:nick "host" :cookie cookie}))
           joined (<? (join! (:page host) (t engine :start-within)))]
       {:room room :host host :host-joined joined})))

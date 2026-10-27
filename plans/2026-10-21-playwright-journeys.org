@@ -412,6 +412,37 @@ inside the window by timing luck and fail "0 stalls" (6 of 12 local runs,
 |---------------------------------------+---------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------|
 | =a dropped socket resyncs=            | viewer synced; =context.setOffline(true)= 6 s; host seeks +20 s meanwhile; online | peers list on the host drops then regains the viewer; viewer drift ≤ =:settled= within =:resync-within=; no more than one seek after reconnect |
 | =a late joiner parks on the live frame= | host 8 s in; viewer opens; sample 3 s before joining                            | =started= false; =paused= true; parked drift ≤ =:park-drift= on every sample (re-park tracks the room) |
+*** =playlists.cljs= (added 2026-10-27, playlists part 3)
+The room's queue on the watch page. The fixture's clip is the first item;
+global setup uploads two more, shorter clips (=clip-b=, =clip-c=, 60 s)
+that the journeys queue after it, since a queue holds no duplicates.
+=api.cljs= gains =make-room= with a =:title=, =room= (the admin row:
+the persisted current =:video-id= and the =:queue=), =add-item!=,
+=remove-item!= and =reorder!=; =party/host!= and =pair!= take a
+ready-made =:room=; =party/next!= and =prev!= press the host row's
+buttons. =goobProbe()= carries =:vid= (the current video id) and
+=:ended=. Journeys that need the end seek the host to
+=duration - :end-lead= (5 s); "the clock passes the end" is then that
+many seconds after the seek, and the server's 2 s tick moves the room
+inside =:advance-slack=. An item switch re-runs the first-load start
+path on the new stream (a park, then the autostart's landing seek), so
+=:switch-seeks= bounds the seeks across a switch at those landings.
+| journey                                              | steps                                                                                         | asserts                                                                                                                      |
+|------------------------------------------------------+-----------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------|
+| =the room advances at the end of the video=          | two-item room; host and viewer playing; host seeks to =duration - 5=; sample 18 s (viewer, host, server) | both pages' =:vid= becomes the second video within =:advance-slack= of the clock passing the end, no gesture; the viewer plays on the new video within =:switch-within= and settles (≤ =:landed=) within =:sync-within=; seeks across the switch ≤ =:switch-seeks=; the server's current video is the second |
+| =next and prev switch every viewer=                  | two-item room; a raw socket's =next= without control; host "next"; host "prev"                 | the server's video holds for =:skip-hold= after the viewer's =next=; after each host press both pages are on the target within =:switch-within=, the viewer playing from the start (first playing sample's =currentTime= < =:from-zero=), server =playing= true; the viewer settles after prev |
+| =jump from the queue=                                | three items; co-host control on; viewer clicks the third row                                  | both pages on the third video within =:switch-within=, the viewer playing it; both queue cards mark it current; server =playing= true |
+| =end of the queue pauses everyone=                   | single-item room; host seeks to =duration - 5=; sample 12 s; host "next"; host seek + play     | both pages =paused= with =:ended= within =:advance-slack= of the end, the hint reads "that's the end of the queue"; server =playing= false at =pos= = duration; "next" holds the video and the pause for =:skip-hold=; a seek and a play resume the viewer, settled within =:sync-within= |
+| =queue edits reach the room live=                    | playing; admin API adds an item, adds another, removes the non-current one, reorders           | both pages' queue card reflects each edit within =:chat-within= with no reload; the current row, the viewer's video and the server's playing state are untouched |
+| =removing the current item moves the room=           | two-item room playing; admin API removes the current item, then the only one, then adds one back; host play | both pages switch to the next video within =:switch-within= and the server's pointer follows; removing the only item leaves both on a blank stage ("nothing queued", an empty queue card, the host's play off) with the server's =video-id= nil; the item added back is current and paused on both; the host's play starts the viewer, settled within =:sync-within= (the server side is #74) |
+| =a reconnect across a switch lands on the new video= | viewer synced; =setOffline true=; host "next"; 6 s; online                                     | the viewer's =:vid= is the new video and settled (≤ =:landed=) within =:resync-within= of coming back; the title updated; drift p95 and the server's drift ≤ =:landed= |
+| =a late joiner lands on the current video=           | room on its second item, playing; new viewer opens                                            | the welcome lands them on the second video (=:vid=); if parked, within =:park-drift= of the room; join → settled within =:sync-within=; the title and the server's pointer agree |
+| =the lobby shows the party's progress=               | room titled "Season 1" on item 2 of 3                                                         | the lobby card reads "now: clip-b · 3 in the queue"                                                                             |
+The plan's "a room whose current video is not ready is absent" check is
+not in the suite: producing one means a transcode running during the
+journey, and "upload to lobby" already covers the absent card. "The
+host's native seek moves the room" is in the host_and_viewer table (#75).
+
 About a dozen journeys; three engines; target under ten minutes in the
 container, with the engines run as separate CI matrix legs so each is
 under four.

@@ -48,15 +48,36 @@
 (defn videos [base cookie]
   (.then (req base cookie "GET" "/api/admin/videos") #(:data %)))
 
-(defn make-room [base cookie video-id]
-  (-> (req base cookie "POST" "/api/admin/rooms" {:video-id video-id})
-      (.then (fn [{:keys [status data]}]
-               (when-not (= 201 status)
-                 (throw (js/Error. (str "make-room failed: " (pr-str data)))))
-               (-> (req base cookie "GET" "/api/admin/rooms")
-                   (.then (fn [{rooms :data}]
-                            (let [row (first (filter #(= (:token data) (:token %)) rooms))]
-                              {:token (:token data) :id (:id row)}))))))))
+(defn make-room
+  "A room on video-id (its first and current item); opts: :title."
+  ([base cookie video-id] (make-room base cookie video-id {}))
+  ([base cookie video-id {:keys [title]}]
+   (-> (req base cookie "POST" "/api/admin/rooms" (cond-> {:video-id video-id} title (assoc :title title)))
+       (.then (fn [{:keys [status data]}]
+                (when-not (= 201 status)
+                  (throw (js/Error. (str "make-room failed: " (pr-str data)))))
+                (-> (req base cookie "GET" "/api/admin/rooms")
+                    (.then (fn [{rooms :data}]
+                             (let [row (first (filter #(= (:token data) (:token %)) rooms))]
+                               {:token (:token data) :id (:id row)})))))))))
+
+(defn room
+  "The admin row for room-id: :title :video-id (the persisted current
+  item) :queue and the rest."
+  [base cookie room-id]
+  (.then (req base cookie "GET" "/api/admin/rooms")
+         (fn [{rooms :data}] (first (filter #(= room-id (:id %)) rooms)))))
+
+;; the queue editor's calls, as the admin console makes them; each resolves
+;; to {:status :data} with the queue in :data on success
+(defn add-item! [base cookie room-id video-id]
+  (req base cookie "POST" (str "/api/admin/rooms/" room-id "/items") {:video-id video-id}))
+
+(defn remove-item! [base cookie room-id video-id]
+  (req base cookie "DELETE" (str "/api/admin/rooms/" room-id "/items/" video-id)))
+
+(defn reorder! [base cookie room-id order]
+  (req base cookie "PUT" (str "/api/admin/rooms/" room-id "/items") {:order order}))
 
 (defn set-control! [base cookie room-id allow?]
   (req base cookie "PATCH" (str "/api/admin/rooms/" room-id) {:allow-control allow?}))
