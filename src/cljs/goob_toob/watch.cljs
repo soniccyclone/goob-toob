@@ -351,12 +351,11 @@
 ;; The fullscreen target is the stage *wrapper*, not the <video>: nothing can
 ;; draw over a fullscreen element but its own children, and the chat overlay
 ;; is a sibling of the video inside the wrapper. Our ⛶ button and a
-;; double-click on the picture go through here; controlslist=nofullscreen
-;; hides the native fullscreen button where that is honoured (Chromium).
-;; Where it is not (Firefox, Safari) the native button still fullscreens the
-;; bare element, and that path simply has no overlay; Firefox also eats the
-;; double-click inside its own controls (page listeners never see it), so
-;; there only the button reaches the wrapper.
+;; double-click on the picture go through here. The native fullscreen button
+;; stays (Nathan's call): it fullscreens the bare element, and that path has
+;; no overlay. Firefox also eats the double-click inside its own controls
+;; (page listeners never see it), so there only the button reaches the
+;; wrapper.
 
 (def ^:private overlay-keep 6)
 (def ^:private overlay-ms 8000)
@@ -428,7 +427,6 @@
   "Wire the stage: ⛶ and double-click fullscreen the wrapper, the button's
   title follows the state, the picture ratio feeds the layout cap."
   [^js wrap ^js video ^js fs-btn]
-  (.setAttribute video "controlslist" "nofullscreen")
   (set! (.-onclick fs-btn) #(toggle-fs! wrap video))
   ;; like the transport buttons: a click must not leave focus on the button,
   ;; or the next Space would re-press it instead of reaching the #54 keys
