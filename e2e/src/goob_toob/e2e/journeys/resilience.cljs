@@ -57,10 +57,15 @@
         settled (t browser-name :landed)
         resync-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series)
         summary (m/summarize series resync-at)
+        ;; the resync is a landing (a seek plus a buffering stall), so the
+        ;; stall count starts at the sample where the viewer is back inside
+        ;; the dead band, not at the moment the socket came back
+        at-resync (or (some #(when (>= (:at %) (or resync-at 0)) %) series) (first series))
+        stalls-after (- (get-in (last series) [:counters :stalls] 0) (get-in at-resync [:counters :stalls] 0))
         seeks-after (- (get-in (last series) [:counters :seeks]) (get-in before [:counters :seeks]))]
     (<p! (m/record! info summary series {:listed-before listed-before :dropped dropped?
                                          :listed-after listed-after :reconnect-ms reconnect-ms
-                                         :resync-at resync-at
+                                         :resync-at resync-at :stalls-after stalls-after
                                          :seeks-after seeks-after :drift-before (:drift before)}))
     (-> (expect listed-before "viewer listed on the host before") (.toBe true))
     (-> (expect dropped? "viewer dropped from the host's peers while offline") (.toBe true))
@@ -70,7 +75,7 @@
         (.toBeLessThanOrEqual (t browser-name :resync-within)))
     (-> (expect seeks-after "seeks after reconnect") (.toBeLessThanOrEqual (t browser-name :reconnect-seeks)))
     (-> (expect (:drift-abs-p95 summary) "drift p95 after the resync") (.toBeLessThanOrEqual (t browser-name :landed)))
-    (-> (expect (:stalls summary) "stalls after the resync") (.toBe 0))))
+    (-> (expect stalls-after "stalls after the resync") (.toBe 0))))
 
 (defjourney "a late joiner lands on the live frame" [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie] :as fx} (api/fixture info)

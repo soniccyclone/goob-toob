@@ -391,6 +391,14 @@ party" opens its window only once the landing is over (=wait-landed!=:
 started, not paused, not buffering): the landing stall used to fall
 inside the window by timing luck and fail "0 stalls" (6 of 12 local runs,
 1 in 18 on CI).
+Note (2026-10-27, later): two more landing gates. "a dropped socket
+resyncs" now counts stalls from the sample where the viewer is back inside
+the dead band (the resync is a landing: a seek plus a stall) instead of
+from the moment the socket came back, which failed both attempts on one
+PR run. =:park-track= is 6.5 s, not 5.5: a parked frame is re-parked on
+each pong (5 s) and each park lands up to the dead band off, so a sample
+just before a re-park can sit 6 s behind; 5.5 failed "a late joiner lands
+on the current video" on main and two PRs the same day.
 *** =sync_policy.cljs=
 | journey                                   | steps                                                        | asserts                                                                                              |
 |-------------------------------------------+--------------------------------------------------------------+------------------------------------------------------------------------------------------------------|

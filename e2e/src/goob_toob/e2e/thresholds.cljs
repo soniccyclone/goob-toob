@@ -6,7 +6,10 @@
    :min-advance       4.0
    :park-drift        1.0
    :park-live-within  7000
-   :park-track        5.5
+   ;; a parked frame is re-parked on each pong (:pong-every, 5 s) and each
+   ;; park lands up to the dead band (1.0 s) off, so a sample between two
+   ;; parks can sit a pong plus a landing behind, plus one sample interval
+   :park-track        6.5
    :sync-within       8000
    ;; A landing (join, late join, resync, resume) is a seek followed by a
    ;; stall while the player buffers there, and the element comes back
