@@ -300,17 +300,18 @@
     (-> (expect (:playing live) "server still playing") (.toBe true))))
 
 (defjourney "removing the current item moves the room" [{:keys [browser browser-name base-url]} info]
-  ;; Removing the current item (the room moves to its neighbour) and the
-  ;; only item (the room empties) are the queue-removal server change;
-  ;; until it lands the server answers 409 and this journey skips itself.
+  ;; Removing the current item moves the room to its neighbour (an `item`
+  ;; state, then `queue`); removing the only item empties it (`item` with
+  ;; :video nil, then `queue []`); an item added to an empty room is
+  ;; current and paused (#74).
   (let [{:keys [cookie video-id extra] :as fx} (api/fixture info)
         b (first extra)
         room (<? (queued-room! base-url cookie fx 2))
         {:keys [host viewer]} (<? (party/pair! browser base-url browser-name (assoc fx :room room)))
         hp (:page host) vp (:page viewer)
         within (t browser-name :switch-within)
-        {:keys [status data]} (<p! (api/remove-item! base-url cookie (:id room) video-id))]
-    (.skip test (= 409 status) (str "removing the current item needs the queue-removal server branch: " (:error data)))
+        {:keys [status]} (<p! (api/remove-item! base-url cookie (:id room) video-id))]
+    (-> (expect status "removing the current item") (.toBe 200))
     (let [v-moved (<? (wait-ms! vp (on-video (:id b)) within))
           h-moved (<? (wait-ms! hp (on-video (:id b)) within))
           v-playing (<? (wait-ms! vp (playing-on (:id b)) within))
