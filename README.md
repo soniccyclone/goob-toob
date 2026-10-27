@@ -52,7 +52,8 @@ Prefer a container? `make image && make run` below.
 7. **Open the room link yourself to host.** Play, pause, and seek drive
    everyone in the room; press the video's native play button to start
    playback. Tick *co-hosts can drive* in the room list if friends should be
-   able to steer too.
+   able to steer too. Keys, with the page focused: Space or K play/pause,
+   ←/→ ±5 s, J/L ±10 s; the ⏪/⏩ buttons jump 10 s (Shift: 5 s).
 
 Good to know:
 
