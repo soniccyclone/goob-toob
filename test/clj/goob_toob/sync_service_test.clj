@@ -388,6 +388,18 @@
           (is (= ["v2" "v3"] (mapv :video-id (:queue queue))))
           (is (= "v2" (:video-id queue))))))))
 
+(deftest removing-a-current-middle-item-goes-forward-not-back
+  (run
+    (fn []
+      (let [id (queue! ["v1" 10.0] ["v2" 20.0] ["v3" 30.0])]
+        (sync/item-cmd! id "jump" "v2" "host")
+        (reset! *sent* [])
+        (sync/remove-item! id "v2")
+        (is (= "v3" (:video-id (room id))) "next wins over prev")
+        (is (= "v3" (:video-id (rooms/get-by-id id))))
+        (is (= [["v1" 0] ["v3" 1]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (is (= "v3" (get-in (first @*sent*) [:video :id])))))))
+
 (deftest removing-the-current-last-item-falls-back-to-the-previous
   (run
     (fn []
@@ -530,9 +542,13 @@
     (fn []
       (let [id      (cold-queue! "v1" "v2" "v3")
             pointer #(:video-id (rooms/get-by-id id))]
-        (sync/remove-item! id "v1")
-        (is (= "v2" (pointer)) "current at the front: next")
+        (rooms/set-current! id "v2")
+        (sync/remove-item! id "v2")
+        (is (= "v3" (pointer)) "current in the middle: next, not prev")
+        (rooms/add-item! id "v2")
         (sync/remove-item! id "v3")
+        (is (= "v2" (pointer)) "no next: prev")
+        (sync/remove-item! id "v1")
         (is (= "v2" (pointer)) "not current: pointer stays")
         (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
         (rooms/add-item! id "v1")
