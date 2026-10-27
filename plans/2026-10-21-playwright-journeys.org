@@ -450,6 +450,23 @@ The plan's "a room whose current video is not ready is absent" check is
 not in the suite: producing one means a transcode running during the
 journey, and "upload to lobby" already covers the absent card. "The
 host's native seek moves the room" is in the host_and_viewer table (#75).
+*** =audio.cljs= (added 2026-10-27, #56)
+The viewer's volume boost: a Web Audio chain (element → gain 0–3 →
+compressor → out) behind a 0–300 % slider in the viewer row, remembered
+per viewer in =localStorage= (=goob-volume=). Headless cannot hear
+anything, so =goobProbe()= gains =:gain= (the GainNode's value, nil
+until the chain exists or when the browser cannot have one) and
+=:volume= (the element's own), and the journeys judge those. The chain
+is built inside a real user gesture; a lenient browser's autostart gives
+the page none, so the journeys click the chat input (=party/touch!=)
+and wait for =:gain=. ArrowUp/Down are handled in the capture phase, as
+Space's keyup is (#68): Chromium's native controls take them as element
+volume at the focused =<video>=, and ArrowDown there would drop it to
+0.9, which is what the second journey looks for.
+| journey                                                     | steps                                                                                                   | asserts                                                                                                                                                            |
+|-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =the volume slider sets the gain and a reload remembers it= | host playing; touch; slider to 200 % (value + input event); reload, join, touch; double-click the slider; sample 6 s | =:gain= 1 at native, 2 at 200 % with the label "200 %"; after the reload =:gain= 2, the slider "200", =goob-volume= "200", element =volume= 1 and not muted; 1 after the double-click; the window's drift and rate are recorded |
+| =ArrowUp and ArrowDown step the volume, not the element=    | host playing; touch; slider to 100 %; focus the video; ArrowUp; ArrowDown; focus the chat input; ArrowUp | =:gain= 1.05 within =:chat-within= with the label "105 %" and element =volume= 1; 1.0 after ArrowDown with element =volume= still 1 (native would say 0.9); the ArrowUp typed into the chat input leaves =:gain= at 1 |
 
 About a dozen journeys; three engines; target under ten minutes in the
 container, with the engines run as separate CI matrix legs so each is
