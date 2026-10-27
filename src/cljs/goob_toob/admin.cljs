@@ -104,8 +104,9 @@
 
 (defn- queue-editor
   "The queue of one room, rendered into slot and re-rendered from every
-  response's :queue. The current item is marked and has no remove button
-  (skip first); the add-select lists the ready library videos not yet
+  response's :queue. The current item is marked; removing it moves the
+  room to its neighbour (the server's call), removing the only item
+  empties the room. The add-select lists the ready library videos not yet
   queued."
   [slot room]
   (let [items-url (str "/api/admin/rooms/" (:id room) "/items")]
@@ -130,10 +131,9 @@
                          (h :div.goo
                             (h :button.btn.ghost {:disabled (zero? i) :onclick #(move! i (dec i))} "up")
                             (h :button.btn.ghost {:disabled (= i last-i) :onclick #(move! i (inc i))} "down")
-                            (when-not now?
-                              (h :button.btn.danger
-                                 {:onclick #(call! "DELETE" (str items-url "/" (:video-id item)) nil)}
-                                 "remove")))))))
+                            (h :button.btn.danger
+                               {:onclick #(call! "DELETE" (str items-url "/" (:video-id item)) nil)}
+                               "remove"))))))
                 (let [queued  (set ids)
                       options (remove #(or (queued (:id %)) (not= "ready" (:status %))) @library*)
                       sel     (apply h :select {} (for [v options] (h :option {:value (:id v)} (:title v))))]
@@ -151,7 +151,7 @@
   the current video's)."
   [r on-saved]
   (let [cell   (h :td {})
-        title* (atom (:title r))]
+        title* (atom (or (:title r) "empty room"))]
     (letfn [(show! []
               (ui/clear! cell)
               (ui/add! cell (h :span.editable {:title "click to rename" :onclick (fn [_] (edit!))} @title*)))
@@ -198,7 +198,7 @@
                          (do (swap! open-queues conj (:id r))
                              (when-not (.-firstChild slot) (queue-editor slot r)))
                          (swap! open-queues disj (:id r))))}
-          (h :summary (str n (if (= 1 n) " item" " items")))
+          (h :summary (cond (zero? n) "empty" (= 1 n) "1 item" :else (str n " items")))
           slot))))
 
 (defn- render-rooms [tbody rooms ^js acts]

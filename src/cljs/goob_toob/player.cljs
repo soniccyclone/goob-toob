@@ -19,6 +19,14 @@
     (.initialize ctx video-el url false)
     ctx))
 
+(defn attach!
+  "Switch the player to another manifest in place (nil drops the source:
+  dash.js resets its controllers and clears the element). The player's
+  settings persist; streamInitialized fires again for a new source, so
+  create's on-ready re-runs."
+  [ctx url]
+  (.attachSource ctx url))
+
 (defn video-representations [ctx]
   (->> (array-seq (.getBitrateInfoListFor ctx "video"))
        (map-indexed (fn [i info] {:idx (.-qualityIndex info)

@@ -10,8 +10,10 @@
     (doseq [r rooms]
       (ui/add! grid
         (h :div.card.row-gap
-           (h :h3 (:title r))
-           (h :p.muted (str "now: " (:now r) " · " (:items r) " in the queue"))
+           (h :h3 (or (:title r) "untitled room"))
+           (h :p.muted (if (:now r)
+                         (str "now: " (:now r) " · " (:items r) " in the queue")
+                         "nothing queued yet"))
            (h :a {:href (str "/watch/" (:token r))}
               (h :button.btn "▶ watch together")))))))
 

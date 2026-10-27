@@ -1,7 +1,8 @@
 (ns goob-toob.watch
   "The watch page: dash.js player parked at the room's position — the video
   element's own play button is the join gesture — then server-synced playback
-  with gradual catch-up, resolution lock, peers and chat."
+  with gradual catch-up, resolution lock, peers, chat and the room's queue
+  (the server switches the item; this page swaps the source in place)."
   (:require [clojure.string :as str]
             [goob-toob.ui :as ui :refer [h]]
             [goob-toob.ws :as wsx]
@@ -114,7 +115,9 @@
 
 (defn- quality-event! [^js st token ev]
   (when-let [ctx (.-player st)]
-    (when (.-auto st)
+    ;; dash.js throws on its bitrate list before the stream is initialized
+    ;; (between an attach and its stream-init, or with no source at all)
+    (when (and (.-auto st) (.-streamok st))
       (let [reps (player/quality-list ctx)]
         (when (seq reps)
           (let [capped (sc/quality-cap (.-qcap st) ev (player/current-quality ctx)
@@ -125,6 +128,8 @@
               (let [kbps (sc/cap-kbps capped reps)]
                 (player/set-max-kbps ctx kbps)
                 (log! token :quality-cap {:event ev :cap (:cap capped) :kbps kbps})))))))))
+
+(def ^:private end-hint "that's the end of the queue")
 
 (defn- apply-policy! [^js st token video lag-hint]
   (when (and (.-started st) (.-room st) (not (.-buffering st)))
@@ -145,9 +150,10 @@
           (note-rate! st token video cur rate mode d)
           (set! (.-playbackRate video) rate)))
       (set! (.-textContent lag-hint)
-            (if (< d -10.0)
-              (str "you're " (int (- d)) "s behind the room — reload to jump to it")
-              "")))))
+            (cond
+              (.-ended st) end-hint
+              (< d -10.0)  (str "you're " (int (- d)) "s behind the room — reload to jump to it")
+              :else        "")))))
 
 (defn- ready? [^js st ^js video]
   (boolean (and (.-room st) (.-player st) (.-streamok st) (seq (.-samples st))
@@ -173,37 +179,31 @@
                (outcome! st token "audible" :autostart {})))
       (.catch (fn [^js err]
                 (set! (.-starting st) false)
-                (set! (.-started st) false)
-                (outcome! st token "blocked" :autostart-blocked {:err (some-> err .-name)})
-                (park! st video)))))
+                (if (= "AbortError" (some-> err .-name))
+                  ;; the source changed under a play() still in flight
+                  ;; (switch-item!): not a block, nothing to park; the new
+                  ;; stream's on-ready settles it and started stays as it is
+                  (log! token :autostart-aborted {})
+                  (do (set! (.-started st) false)
+                      (outcome! st token "blocked" :autostart-blocked {:err (some-> err .-name)})
+                      (park! st video)))))))
 
-(defn- settle! [^js st token video]
-  (let [action (sc/start-action :state {:started? (boolean (.-started st))
-                                        :playing? (boolean (:playing (.-room st)))
-                                        :can-control? (boolean (.-cancontrol st))})]
-    (case action
-      :autostart (if (and (ready? st video) (not (.-starting st)))
-                   (autostart! st token video)
-                   (park! st video))
-      :park      (park! st video)
-      :none      nil)
-    action))
-
-(defn- apply-state-msg! [^js st token video msg]
-  (set! (.-room st) msg)
-  (case (settle! st token video)
-    :none (case (:op msg)
-            "play"  (do (mark-seek! st)
-                        (set! (.-currentTime video) (:pos msg))
-                        (play! video))
-            "pause" (do (.pause video)
-                        (mark-seek! st)
-                        (set! (.-currentTime video) (:pos msg))
-                        (set! (.-playbackRate video) 1.0))
-            "seek"  (do (mark-seek! st)
-                        (set! (.-currentTime video) (:pos msg)))
-            nil)
-    nil))
+(defn- settle!
+  "Run the start path on the current stream; :none when the room has no
+  video (an empty queue: nothing to park, nothing to start)."
+  [^js st token video]
+  (if-not (.-vid st)
+    :none
+    (let [action (sc/start-action :state {:started? (boolean (.-started st))
+                                          :playing? (boolean (:playing (.-room st)))
+                                          :can-control? (boolean (.-cancontrol st))})]
+      (case action
+        :autostart (if (and (ready? st video) (not (.-starting st)))
+                     (autostart! st token video)
+                     (park! st video))
+        :park      (park! st video)
+        :none      nil)
+      action)))
 
 (defn- resync! [^js st token video]
   (let [room (.-room st)
@@ -251,7 +251,7 @@
   behind does not drag the room back. While paused the paused position moves
   and the room stays paused. Truthy when a command went out."
   [^js st ^js video n]
-  (when-let [room (when (.-cancontrol st) (.-room st))]
+  (when-let [room (when (and (.-cancontrol st) (.-vid st)) (.-room st))]
     (wsx/send! (.-ws st) {:type "cmd" :op "seek"
                           :pos (jump-target (expected-now st room) n (room-duration st video))})
     true))
@@ -262,7 +262,7 @@
   left alone (nil): Space stays the join gesture there, and the keypress
   already handed the autostart retry its activation."
   [^js st]
-  (when-let [room (when (.-cancontrol st) (.-room st))]
+  (when-let [room (when (and (.-cancontrol st) (.-vid st)) (.-room st))]
     (if (:playing room)
       (when (.-started st)
         (wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (expected-now st room)})
@@ -495,8 +495,204 @@
                 (lock-height! st (js/parseInt v))))))
     sel))
 
+;; ---- the queue (playlists, part 3) ----
+;; The server owns the queue and the current item: an `item` state on every
+;; change (auto-advance, next/prev/jump, an admin edit that moves the
+;; pointer), a `queue` message on every edit, and the current video id on
+;; every state and beat. This page swaps the dash source in place and
+;; re-runs the first-load start path on the new stream, so a viewer who
+;; already pressed play follows on and one who never did parks on the new
+;; video's live frame. No seek here closes drift: the only seeks are the
+;; landings the start path already makes.
+
+(defn- video-of
+  "The wire's video descriptor, or nil for an empty room (the server sends
+  :video nil; a descriptor without an :id reads the same)."
+  [v]
+  (when (:id v) v))
+
+(defn- descriptor-for
+  "A descriptor for a queued video from its queue entry (title, duration)
+  and the dash path convention: a switch whose `item` broadcast was missed
+  (the beat's video id disagrees with ours) has nothing else to go on."
+  [^js st id]
+  (let [e (first (filter #(= id (:video-id %)) (.-queue st)))]
+    {:id id :title (or (:title e) "") :duration (:duration e)
+     :dash (str "/dash/" id "/manifest.mpd")}))
+
+(defn- stage-empty! [refs empty?]
+  (let [{:keys [^js video ^js stage-wrap]} refs]
+    (if empty?
+      (do (.add (.-classList stage-wrap) "empty")
+          (.removeAttribute video "controls"))
+      (do (.remove (.-classList stage-wrap) "empty")
+          (.setAttribute video "controls" "")))))
+
+(defn- host-row-enabled! [refs on?]
+  (doseq [^js el (:transport refs)]
+    (set! (.-disabled el) (not on?))))
+
+(defn- render-queue!
+  "The \"up next\" card: one row per item in order, the current one .now,
+  the ones before it .done, items not ready muted with their status. A row
+  is a jump (cmd jump) when this client can control; the current row is
+  not, a mis-click must not restart the video for everyone. prev follows
+  the queue (off at the start, off without a video); next stays on at the
+  end, where the server ends the queue."
+  [^js st refs]
+  (let [{:keys [queue-el ^js prev-btn ^js next-btn]} refs
+        queue (vec (.-queue st))
+        cur   (.-vid st)
+        ids   (map :video-id queue)
+        at    (first (keep-indexed (fn [i id] (when (= id cur) i)) ids))
+        can?  (boolean (.-cancontrol st))]
+    (ui/clear! queue-el)
+    (if (empty? queue)
+      (ui/add! queue-el (h :p.muted.qempty "the queue is empty"))
+      (doseq [[i item] (map-indexed vector queue)]
+        (let [now?   (= cur (:video-id item))
+              ready? (= "ready" (:status item))
+              row    (h :div.qrow {:class (not-empty (str/join " " (remove nil? [(when now? "now")
+                                                                                  (when (and at (< i at)) "done")
+                                                                                  (when (and can? (not now?)) "jumpable")])))
+                                   :title (when (and can? (not now?)) "jump here (everyone follows)")}
+                        (h :span.pos (str (inc i)))
+                        (h :span.qtitle (:title item))
+                        (h :span.muted (cond now?         "now playing"
+                                             (not ready?) (:status item)
+                                             :else        (or (ui/fmt-time (:duration item)) ""))))]
+          (when (and can? (not now?))
+            (set! (.-onclick row)
+                  #(wsx/send! (.-ws st) {:type "cmd" :op "jump" :video (:video-id item)})))
+          (ui/add! queue-el row))))
+    (set! (.-disabled prev-btn) (not (and cur (sc/neighbour ids cur :prev))))
+    (set! (.-disabled next-btn) (nil? cur))))
+
+(defn- create-player!
+  "The dash player on the stage, made once: on the welcome's video, or on
+  the first `item` that carries one in a room that opened empty."
+  [^js st token refs dash]
+  (let [{:keys [^js video res-slot]} refs]
+    (set! (.-preservesPitch video) true)
+    (set! (.-webkitPreservesPitch video) true)
+    (.addEventListener video "loadeddata" #(settle! st token video))
+    (.addEventListener video "error"
+      #(log! token :video-error {:code (some-> (.-error video) .-code)
+                                 :msg (some-> (.-error video) .-message)}))
+    (set! (.-player st)
+      (player/create video dash (.-startkbps st)
+        (fn [_ctx]
+          ;; fires again on every attach!: the res menu, the stream flag
+          ;; and the start path are per stream
+          (log! token :stream-init {:dash (.-dash st) :ua (.-userAgent js/navigator)})
+          (ui/clear! res-slot)
+          (ui/add! res-slot (res-menu st))
+          (set! (.-streamok st) true)
+          (settle! st token video))))
+    ;; faults must be wired NOW, not on streamInitialized —
+    ;; a broken manifest never initializes, that's the point
+    (player/on-faults (.-player st)
+      (fn [d] (log! token (:ev d) (dissoc d :ev))))))
+
+(defn- reset-start!
+  "The state the start path reads, back to first-load: the new stream is
+  settled, logged and probed fresh (begin! re-seeks to the room position,
+  the outcome is logged again, the harness reads autostart to tell an
+  autostart from a gesture). `starting` is left alone: a play() still in
+  flight on the old source rejects with AbortError when the source
+  changes, and autostart!'s catch ignores that one."
+  [^js st]
+  (set! (.-ended st) false)
+  (set! (.-started st) false)
+  (set! (.-autostart st) nil)
+  (set! (.-mode st) :none)
+  (set! (.-qcap st) nil)
+  (set! (.-buffering st) false)
+  (set! (.-streamok st) false))
+
+(defn- switch-item!
+  "Point the page at video: title, duration, the quality cap off, the
+  source swapped (or the player made, for a room that opened empty), the
+  queue card re-marked. The dash on-ready then settles the new stream."
+  [^js st token refs {:keys [id title duration dash]}]
+  (let [{:keys [^js video title-el lag-hint]} refs]
+    (set! (.-vid st) id)
+    (set! (.-dash st) dash)
+    (set! (.-duration st) duration)
+    (reset-start! st)
+    (set! (.-playbackRate video) 1.0)
+    (set! (.-textContent title-el) title)
+    (set! (.-textContent lag-hint) "")
+    (stage-empty! refs false)
+    (host-row-enabled! refs true)
+    (log! token :item {:id id})
+    (if-let [ctx (.-player st)]
+      (do (player/set-max-kbps ctx -1)
+          (player/attach! ctx dash))
+      (create-player! st token refs dash))
+    (set! (.-buffering st) false)
+    (render-queue! st refs)))
+
+(defn- empty-room!
+  "No current video: the stage shows \"nothing queued\" over an empty
+  picture, the host row is off, the queue card says so. A later `item`
+  attaches as a normal switch."
+  [^js st token refs]
+  (let [{:keys [title-el lag-hint]} refs]
+    (set! (.-vid st) nil)
+    (set! (.-dash st) nil)
+    (set! (.-duration st) nil)
+    (reset-start! st)
+    (set! (.-textContent title-el) "nothing queued")
+    (set! (.-textContent lag-hint) "")
+    (stage-empty! refs true)
+    (host-row-enabled! refs false)
+    (log! token :item {:id nil})
+    (when-let [ctx (.-player st)]
+      (player/attach! ctx nil))
+    (set! (.-buffering st) false)
+    (render-queue! st refs)))
+
+(defn- follow-video!
+  "A state, beat or queue message names the room's video; when it is not
+  ours an `item` broadcast was missed (a reconnect blip), so switch from
+  the queue entry, or go blank when the room emptied."
+  [^js st token refs msg]
+  (when (contains? msg :video-id)
+    (let [id (:video-id msg)]
+      (when (not= id (.-vid st))
+        (if id
+          (switch-item! st token refs (descriptor-for st id))
+          (empty-room! st token refs))))))
+
+(defn- apply-state-msg! [^js st token refs msg]
+  (let [{:keys [^js video lag-hint]} refs]
+    (if (= "item" (:op msg))
+      (if-let [v (video-of (:video msg))]
+        (switch-item! st token refs v)
+        (empty-room! st token refs))
+      (follow-video! st token refs msg))
+    (set! (.-room st) msg)
+    ;; only the end of the queue (a pause past the last video) carries
+    ;; :ended true; any later op clears it
+    (set! (.-ended st) (boolean (:ended msg)))
+    (when (.-ended st) (set! (.-textContent lag-hint) end-hint))
+    (case (settle! st token video)
+      :none (case (:op msg)
+              "play"  (do (mark-seek! st)
+                          (set! (.-currentTime video) (:pos msg))
+                          (play! video))
+              "pause" (do (.pause video)
+                          (mark-seek! st)
+                          (set! (.-currentTime video) (:pos msg))
+                          (set! (.-playbackRate video) 1.0))
+              "seek"  (do (mark-seek! st)
+                          (set! (.-currentTime video) (:pos msg)))
+              nil)
+      nil)))
+
 (defn- connect! [^js st token refs]
-  (let [{:keys [^js video title-el seek res-slot peers-el chat-log fs-chat new-msgs admin-link
+  (let [{:keys [^js video title-el seek peers-el chat-log fs-chat new-msgs admin-link
                 lag-hint slow-note]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
@@ -506,37 +702,30 @@
       (fn [msg _ws]
         (case (:type msg)
           "welcome"
-          (do (set! (.-ishost st) (:is-host msg))
-              (when (:is-host msg)
-                (set! (.-display (.-style admin-link)) ""))
-              (set! (.-cancontrol st) (boolean (:can-control msg)))
-              (set! (.-duration st) (get-in msg [:video :duration]))
-              (set! (.-room st) (:state msg))
-              (set! (.-textContent title-el) (get-in msg [:video :title]))
-              (when (and (.-player st) (.-started st))
-                (resync! st token video))
-              (when-not (.-player st)
-                (set! (.-preservesPitch video) true)
-                (set! (.-webkitPreservesPitch video) true)
-                (.addEventListener video "loadeddata" #(settle! st token video))
-                (.addEventListener video "error"
-                  #(log! token :video-error {:code (some-> (.-error video) .-code)
-                                             :msg (some-> (.-error video) .-message)}))
-                (set! (.-player st)
-                  (player/create video (get-in msg [:video :dash]) (:start-kbps msg)
-                    (fn [ctx]
-                      (log! token :stream-init {:dash (get-in msg [:video :dash])
-                                                :ua (.-userAgent js/navigator)})
-                      (ui/clear! res-slot)
-                      (ui/add! res-slot (res-menu st))
-                      (set! (.-streamok st) true)
-                      (settle! st token video))))
-                ;; faults must be wired NOW, not on streamInitialized —
-                ;; a broken manifest never initializes, that's the point
-                (player/on-faults (.-player st)
-                  (fn [d] (log! token (:ev d) (dissoc d :ev))))))
-          "state" (apply-state-msg! st token video msg)
-          "beat"  (do (set! (.-room st) msg)
+          (let [v (video-of (:video msg))]
+            (set! (.-ishost st) (:is-host msg))
+            (when (:is-host msg)
+              (set! (.-display (.-style admin-link)) ""))
+            (set! (.-cancontrol st) (boolean (:can-control msg)))
+            (set! (.-startkbps st) (:start-kbps msg))
+            (set! (.-queue st) (vec (:queue msg)))
+            (set! (.-room st) (:state msg))
+            (cond
+              ;; an empty room, first time or still
+              (nil? v)                    (empty-room! st token refs)
+              ;; the first video (the player is made here), or a reconnect
+              ;; across an item change
+              (not= (:id v) (.-vid st))   (switch-item! st token refs v)
+              ;; a plain reconnect
+              (.-started st)              (do (render-queue! st refs)
+                                              (resync! st token video))
+              :else                       (render-queue! st refs)))
+          "state" (apply-state-msg! st token refs msg)
+          "queue" (do (set! (.-queue st) (vec (:queue msg)))
+                      (follow-video! st token refs msg)
+                      (render-queue! st refs))
+          "beat"  (do (follow-video! st token refs msg)
+                      (set! (.-room st) msg)
                       (apply-policy! st token video lag-hint)
                       (render-peers! peers-el (:peers msg) (.-ishost st))
                       (set! (.-textContent slow-note)
@@ -573,13 +762,16 @@
               (.setAttribute video "playsinline" ""))
         fs-chat (h :div.fs-chat {:aria-hidden "true"})
         fs-btn (h :button.fs-btn {:title "fullscreen"} "⛶")
-        stage-wrap (h :div.stage-wrap video fs-chat fs-btn)
-        lag-hint (h :span.muted {})
+        stage-wrap (h :div.stage-wrap video fs-chat fs-btn
+                      (h :div.stage-empty {:aria-hidden "true"} "nothing queued"))
+        lag-hint (h :span.muted.lag-hint {})
         slow-note (h :span.muted {})
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
         admin-link (h :a {:href "/admin" :title "admin console"
                           :style "margin-left:auto;font-size:0.8rem;opacity:0.7;display:none"}
                       "admin?")
+        prev-btn (h :button.btn.ghost.jump {:title "previous video (everyone follows)"} "⏮ prev")
+        next-btn (h :button.btn.ghost.jump {:title "next video (everyone follows)"} "next ⏭")
         back-btn (h :button.btn.ghost.jump {:title "back 10 s (shift: 5 s)"} "⏪ 10s")
         play-btn (h :button.btn "▶ play")
         pause-btn (h :button.btn.aqua "⏸ pause")
@@ -593,6 +785,7 @@
         new-msgs (h :button.new-msgs {:style "display:none"} "↓ new messages")
         chat-input (h :input {:type "text" :placeholder "say something gooey…"})
         peers-el (h :div {})
+        queue-el (h :div.queue {})
         send-chat (fn []
                     (let [t (str/trim (.-value chat-input))]
                       (when-not (empty? t)
@@ -663,9 +856,12 @@
           #(wsx/send! (.-ws st) {:type "cmd" :op "pause" :pos (.-currentTime video)}))
     (set! (.-onclick back-btn) #(jump! st video (if (.-shiftKey %) -5.0 -10.0)))
     (set! (.-onclick fwd-btn) #(jump! st video (if (.-shiftKey %) 5.0 10.0)))
+    ;; the queue's transport: the server moves the room (item broadcast)
+    (set! (.-onclick prev-btn) #(wsx/send! (.-ws st) {:type "cmd" :op "prev"}))
+    (set! (.-onclick next-btn) #(wsx/send! (.-ws st) {:type "cmd" :op "next"}))
     ;; a clicked transport button must not keep focus, or the next Space
     ;; would re-press it instead of toggling the room (tab focus still works)
-    (doseq [b [back-btn play-btn pause-btn fwd-btn]]
+    (doseq [b [prev-btn back-btn play-btn pause-btn fwd-btn next-btn]]
       (set! (.-onmousedown b) #(.preventDefault %)))
     (set! (.-onchange seek)
           #(do (set! (.-seeking st) false)
@@ -674,7 +870,7 @@
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality") (fs-setting st fs-chat))
-    (ui/add! host-row back-btn play-btn pause-btn fwd-btn seek badge
+    (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
     {:video video
      :layout (h :div.watch-layout
@@ -690,6 +886,9 @@
                    (h :div.card
                       (h :h3 "watching with")
                       peers-el)
+                   (h :div.card.queue-card
+                      (h :h3 "up next")
+                      queue-el)
                     (h :div.card.chat
                        (h :h3 "chat")
                        chat-log
@@ -699,7 +898,10 @@
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
      :chat-log chat-log :fs-chat fs-chat :peers-el peers-el :host-row host-row
-     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
+     :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note
+     :stage-wrap stage-wrap :queue-el queue-el :prev-btn prev-btn :next-btn next-btn
+     ;; what an empty room switches off (prev/next follow the queue card)
+     :transport [back-btn play-btn pause-btn fwd-btn seek]}))
 
 (defn- fullscreen? []
   (boolean (or (.-fullscreenElement js/document) (.-webkitFullscreenElement js/document))))
@@ -787,6 +989,7 @@
                   "cancontrol" false "started" false "token" token "mode" :none
                   "auto" true "qcap" nil "ourseek" 0
                   "streamok" false "starting" false "autostart" nil
+                  "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "counters" (js-obj "seeks" 0 "stalls" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
@@ -812,6 +1015,7 @@
                                            (Math/round (- (ui/perf-now) t)))
                         :off-rate-s (off-rate-s st)
                         :fullscreen (boolean (.-fullscreen st))
+                        :vid (.-vid st) :ended (boolean (.-ended st))
                         :counters (js->clj (.-counters st))})))))
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
