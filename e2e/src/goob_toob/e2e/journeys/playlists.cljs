@@ -425,10 +425,13 @@
         ;; a parked frame reaches the room (within :park-drift) and then
         ;; sits frozen until the next re-park, so a later sample is only
         ;; bounded by :park-track
+        ;; only a viewer who stays parked is held to it: a lenient browser
+        ;; (or sticky activation) autostarts a moment after the welcome
         parked-live? (when-not (:started first-probe)
                        (try (<p! (party/wait-live-park! vp (t browser-name :park-drift) (t browser-name :park-live-within))) true
                             (catch :default _ false)))
-        parked (when-not (:started first-probe) (<? (party/probe vp)))
+        after-park (when-not (:started first-probe) (<? (party/probe vp)))
+        parked (when (and after-park (not (:started after-park))) after-park)
         joined (<? (party/join! vp (t browser-name :start-within)))
         t1 (js/Date.now)
         synced? (try (<p! (party/wait-synced! vp (t browser-name :landed) (t browser-name :sync-within))) true
