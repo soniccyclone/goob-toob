@@ -8,7 +8,14 @@
             [goob-toob.services.transcode :as transcode]
             [goob-toob.test-util :refer [with-tmp]]))
 
-(use-fixtures :each with-tmp)
+(defn- with-no-ffmpeg-running
+  "stop! leaves stopping? set for the rest of the JVM; tests start clean."
+  [f]
+  (reset! @#'transcode/stopping? false)
+  (reset! @#'transcode/running #{})
+  (f))
+
+(use-fixtures :each with-tmp with-no-ffmpeg-running)
 
 (deftest dash-output-path-uses-forward-slashes-so-ffmpeg-finds-the-segment-dir
   (let [cmd (#'transcode/ffmpeg-cmd
@@ -142,3 +149,51 @@
     (with-redefs [videos/set-progress! (fn [_ p] (swap! seen conj p))]
       (#'transcode/process-job "v1"))
     (is (= [0.5 0.99] @seen))))
+
+(defn- long-process!
+  "A process stop! has to end: `sleep 30`, or one that shrugs off SIGTERM so
+  only destroyForcibly can end it. Registered as if run-ffmpeg had started it."
+  [ignore-term?]
+  (let [p (.start (ProcessBuilder. ["sh" "-c" (if ignore-term?
+                                                "trap '' TERM; exec sleep 30"
+                                                "exec sleep 30")]))]
+    (swap! @#'transcode/running conj p)
+    p))
+
+(deftest stop!-ends-the-running-ffmpeg-and-forgets-it
+  (let [p (long-process! false)]
+    (is (.isAlive p))
+    (transcode/stop!)
+    (is (not (.isAlive p)))
+    (is (empty? @@#'transcode/running))))
+
+(deftest stop!-forces-an-ffmpeg-that-ignores-the-first-signal
+  (let [p (long-process! true)]
+    (transcode/stop! 200)
+    (is (not (.isAlive p)))))
+
+(deftest run-ffmpeg-forgets-the-process-once-it-exits
+  (fake-ffmpeg! 0)
+  (video-with-original! "v1")
+  (#'transcode/process-job "v1")
+  (is (empty? @@#'transcode/running))
+  (is (= "ready" (:status (videos/get-by-id "v1")))))
+
+(deftest a-job-killed-by-stop!-stays-transcoding-so-the-next-start-requeues-it
+  (fake-ffmpeg! 1)
+  (video-with-original! "v1")
+  (reset! @#'transcode/stopping? true)
+  (#'transcode/process-job "v1")
+  (is (= "transcoding" (:status (videos/get-by-id "v1"))))
+  (is (= ["v1"] (videos/requeue-stuck))))
+
+(deftest a-job-whose-pipes-stop!-closed-stays-transcoding-too
+  ;; on Linux Process.destroy closes ffmpeg's stdout under the reader, so the
+  ;; worker sees an IOException rather than an exit code
+  (fake-ffmpeg! 0)
+  (video-with-original! "v1")
+  (reset! @#'transcode/stopping? true)
+  (with-redefs [transcode/run-ffmpeg (fn [& _] (throw (java.io.IOException. "Stream closed")))]
+    (#'transcode/process-job "v1"))
+  (is (= "transcoding" (:status (videos/get-by-id "v1"))))
+  (is (nil? (:error (videos/get-by-id "v1")))))

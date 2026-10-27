@@ -26,6 +26,9 @@
     (log/info "goob-toob" (version))
     (db/init! (:db-path cfg))
     (transcode/start!)
+    ;; SIGTERM (the desktop shell's kill on window close) lands here: end any
+    ;; ffmpeg mid-encode instead of orphaning it (#49)
+    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable transcode/stop! "transcode-stop"))
     (sync/start-beat-loop!)
     (if desktop?
       ;; public port: no admin routes at all (this is what cloudflared tunnels);

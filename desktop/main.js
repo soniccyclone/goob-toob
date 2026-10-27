@@ -2,7 +2,7 @@
 // cloudflared quick tunnel, then shows the admin console from the loopback
 // admin port. The public port is what the tunnel exposes; it has no admin
 // surface, so there is nothing to password-protect.
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');const { spawn } = require('child_process');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');const { spawn, spawnSync } = require('child_process');
 const http = require('http');
 const net = require('net');
 const path = require('path');
@@ -86,8 +86,30 @@ async function startServer() {
   await waitForHealth();
 }
 
+// Stop the server so that nothing it started outlives it (#49). On Linux
+// kill() is SIGTERM: the JVM runs its shutdown hooks and transcode/stop! ends
+// any ffmpeg mid-encode. On Windows kill() is TerminateProcess, no hook runs,
+// and ffmpeg.exe is not in the job object that takes java.exe down with us
+// (libuv adds children with SILENT_BREAKAWAY_OK, so grandchildren escape it):
+// taskkill /T walks the tree while java.exe is still alive to be its root.
+function stopServer() {
+  if (!server) return;
+  const s = server;
+  server = null;
+  s.removeAllListeners('exit');
+  try {
+    if (WIN) {
+      const r = spawnSync('taskkill', ['/PID', String(s.pid), '/T', '/F'],
+                          { stdio: 'ignore', timeout: 10000, windowsHide: true });
+      if (r.error || r.status !== 0) s.kill();
+    } else {
+      s.kill();
+    }
+  } catch {}
+}
+
 async function restartServer() {
-  if (server) { server.removeAllListeners('exit'); server.kill(); server = null; }
+  stopServer();
   await startServer();
 }
 
@@ -203,5 +225,6 @@ app.on('window-all-closed', () => app.quit());
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  for (const c of [tunnel, server]) { try { if (c) c.kill(); } catch {} }
+  try { if (tunnel) tunnel.kill(); } catch {}
+  stopServer();
 });
