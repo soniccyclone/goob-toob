@@ -10,9 +10,16 @@
             [goob-toob.log :as log]
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.storage :as storage])
-  (:import [java.lang ProcessBuilder]))
+  (:import [java.lang ProcessBuilder]
+           [java.util.concurrent TimeUnit]))
 
 (defonce control (atom nil)) ; {:jobs chan}
+
+;; ffmpeg processes mid-encode, so a JVM shutdown can take them with it:
+;; without this a transcode outlives the app (#49). stopping? tells the
+;; worker that a dead ffmpeg was killed on purpose, not a failure.
+(defonce ^:private running (atom #{}))
+(defonce ^:private stopping? (atom false))
 
 (def windows?
   (.contains (str/lower-case (System/getProperty "os.name")) "windows"))
@@ -104,32 +111,58 @@
     ["powershell" "-NoProfile" "-NonInteractive" "-Command"
      (str "(Get-Process -Id " pid ").PriorityClass='BelowNormal'")]))
 
-(defn- run-ffmpeg [cmd video-id dur]
-  "Runs the encode; updates DB progress on each out_time_ms line (~1/s)."
+(defn- run-ffmpeg
+  "Runs the encode; updates DB progress on each out_time_ms line (~1/s).
+  The process sits in `running` for its whole life so stop! can end it."
+  [cmd video-id dur]
   (let [p (-> (ProcessBuilder. (vec cmd)) .start)
         err-lines (java.util.concurrent.ConcurrentLinkedQueue.)]
-    (when-let [c (priority-cmd (.pid p) windows?)]
-      (let [exit (-> (ProcessBuilder. ^java.util.List c) .inheritIO .start .waitFor)]
-        (when-not (zero? exit)
-          (log/info "transcode: could not lower ffmpeg priority (exit" exit ")"))))
-    (let [err-done (a/thread
-                     (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
-                       (loop []
-                         (when-let [line (.readLine r)]
-                           (.add err-lines line)
-                           (when (> (.size err-lines) 200) (.poll err-lines))
-                           (recur)))))]
-      (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream p)))]
-        (loop []
-          (when-let [line (.readLine r)]
-            (when-let [[_ us] (re-find #"out_time_ms=(\d+)" line)]
-              (let [secs (/ (Double/parseDouble us) 1e6)]
-                (videos/set-progress! video-id (min 0.99 (max 0.0 (/ secs dur))))))
-            (recur))))
-      (let [exit (.waitFor p)]
-        (a/<!! err-done)
-        {:exit exit
-         :stderr (str/join "\n" err-lines)}))))
+    (swap! running conj p)
+    (try
+      (when-let [c (priority-cmd (.pid p) windows?)]
+        (let [exit (-> (ProcessBuilder. ^java.util.List c) .inheritIO .start .waitFor)]
+          (when-not (zero? exit)
+            (log/info "transcode: could not lower ffmpeg priority (exit" exit ")"))))
+      (let [err-done (a/thread
+                       (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getErrorStream p)))]
+                         (loop []
+                           (when-let [line (.readLine r)]
+                             (.add err-lines line)
+                             (when (> (.size err-lines) 200) (.poll err-lines))
+                             (recur)))))]
+        (with-open [r (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream p)))]
+          (loop []
+            (when-let [line (.readLine r)]
+              (when-let [[_ us] (re-find #"out_time_ms=(\d+)" line)]
+                (let [secs (/ (Double/parseDouble us) 1e6)]
+                  (videos/set-progress! video-id (min 0.99 (max 0.0 (/ secs dur))))))
+              (recur))))
+        (let [exit (.waitFor p)]
+          (a/<!! err-done)
+          {:exit exit
+           :stderr (str/join "\n" err-lines)}))
+      (finally
+        (swap! running disj p)))))
+
+(defn stop!
+  "Ends every running ffmpeg: destroy (SIGTERM; TerminateProcess on Windows),
+  then destroyForcibly on anything still alive after grace-ms. Runs as a JVM
+  shutdown hook so an encode never outlives the app (#49). The job's row
+  stays \"transcoding\", which requeue-stuck resumes on the next start."
+  ([] (stop! 3000))
+  ([grace-ms]
+   (reset! stopping? true)
+   (let [ps @running]
+     (doseq [^Process p ps] (.destroy p))
+     (doseq [^Process p ps]
+       (when-not (.waitFor p grace-ms TimeUnit/MILLISECONDS)
+         (.destroyForcibly p)
+         (.waitFor p 1000 TimeUnit/MILLISECONDS)))
+     (swap! running #(apply disj % ps))
+     (when (seq ps) (log/info "transcode: stopped" (count ps) "ffmpeg process(es)")))))
+
+(defn- note-interrupted [video-id]
+  (log/info "transcode interrupted by shutdown:" video-id "(resumes on next start)"))
 
 (defn- process-job [video-id]
   (let [cfg (config/cfg)
@@ -148,16 +181,25 @@
               _ (videos/set-status! video-id "transcoding" :progress 0.0)
               {:keys [exit stderr]} (run-ffmpeg (ffmpeg-cmd in out media ladder)
                                                 video-id (:duration media))]
-          (if (zero? exit)
+          (cond
+            (zero? exit)
             (do (videos/set-status! video-id "ready" :progress 1.0 :error nil)
                 (when-not (:keep-original cfg) (storage/delete-original! video-id))
                 (log/info "transcoded" (:title video) "-> ready"))
+            ;; killed by stop!: leave it "transcoding" so the next start
+            ;; requeues it rather than showing a failure the user never caused
+            @stopping? (note-interrupted video-id)
+            :else
             (do (videos/set-status! video-id "failed" :error stderr)
                 (log/info "transcode FAILED" (:title video) "::"
                          (str/join (take-last 300 stderr))))))
         (catch Exception e
-          (videos/set-status! video-id "failed" :error (str e))
-          (log/info "transcode ERROR" video-id (.getMessage e)))))))
+          ;; destroy closes ffmpeg's pipes under the reader ("Stream closed"),
+          ;; so a stop! lands here on Linux rather than at the exit code
+          (if @stopping?
+            (note-interrupted video-id)
+            (do (videos/set-status! video-id "failed" :error (str e))
+                (log/info "transcode ERROR" video-id (.getMessage e)))))))))
 
 (defn submit! [video-id]
   (when-let [jobs (:jobs @control)]
