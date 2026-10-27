@@ -364,3 +364,197 @@
         (is (= 0.0 (:pos (room id))))
         (sync/host-cmd! id "seek" 7.0 "host")
         (is (= 7.0 (:pos (room id))))))))
+
+;; ---- queue edits that move the pointer ---------------------------------------
+
+(defn- ops [] (mapv (fn [m] (or (:op m) (:type m))) @*sent*))
+
+(deftest removing-the-current-item-skips-a-live-room-to-the-next
+  (run
+    (fn []
+      (let [id (queue! ["v1" 10.0] ["v2" 20.0] ["v3" 30.0])]
+        (sync/host-cmd! id "play" 0.0 "host")
+        (at! 5000)
+        (reset! *sent* [])
+        (sync/remove-item! id "v1")
+        (is (= {:video-id "v2" :duration 20.0 :pos 0.0 :t0 5000 :playing? true :rate 1.0}
+               (dissoc (room id) :clients)))
+        (is (= "v2" (:video-id (rooms/get-by-id id))))
+        (is (= [["v2" 0] ["v3" 1]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (is (= ["item" "queue"] (ops)))
+        (let [[item queue] @*sent*]
+          (is (= "v2" (get-in item [:video :id])))
+          (is (true? (:playing item)))
+          (is (= ["v2" "v3"] (mapv :video-id (:queue queue))))
+          (is (= "v2" (:video-id queue))))))))
+
+(deftest removing-the-current-last-item-falls-back-to-the-previous
+  (run
+    (fn []
+      (let [id (queue! ["v1" 10.0] ["v2" 20.0])]
+        (sync/item-cmd! id "next" nil "host")
+        (reset! *sent* [])
+        (sync/remove-item! id "v2")
+        (is (= "v1" (:video-id (room id))))
+        (is (= 10.0 (:duration (room id))))
+        (is (= "v1" (:video-id (rooms/get-by-id id))))
+        (is (= [["v1" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (is (= ["item" "queue"] (ops)))
+        (is (= "v1" (get-in (first @*sent*) [:video :id])))))))
+
+(deftest removing-another-item-leaves-playback-alone
+  (run
+    (fn []
+      (let [id (queue! ["v1" 10.0] ["v2" 20.0])]
+        (sync/host-cmd! id "play" 3.0 "host")
+        (reset! *sent* [])
+        (let [before (room id)]
+          (sync/remove-item! id "v2")
+          (is (= before (room id)))
+          (is (= "v1" (:video-id (rooms/get-by-id id))))
+          (is (= ["queue"] (ops)))
+          (is (= ["v1"] (mapv :video-id (:queue (first @*sent*))))))))))
+
+(defn- empty-live-room! []
+  (let [id (queue! ["v1" 10.0])]
+    (sync/host-cmd! id "play" 0.0 "host")
+    (at! 4000)
+    (reset! *sent* [])
+    (sync/remove-item! id "v1")
+    id))
+
+(deftest removing-the-only-item-empties-a-live-room
+  (run
+    (fn []
+      (let [id (empty-live-room!)]
+        (is (= {:video-id nil :duration nil :pos 0.0 :t0 4000 :playing? false :rate 1.0}
+               (dissoc (room id) :clients)))
+        (is (nil? (:video-id (rooms/get-by-id id))))
+        (is (= [] (rooms/queue id)))
+        (is (= ["item" "queue"] (ops)))
+        (let [[item queue] @*sent*]
+          (is (= "state" (:type item)))
+          (is (contains? item :video))
+          (is (nil? (:video item)))
+          (is (nil? (:video-id item)))
+          (is (false? (:playing item)))
+          (is (= 0.0 (:pos item)))
+          (is (false? (:ended item)))
+          (is (= [] (:queue queue)))
+          (is (nil? (:video-id queue))))
+        (is (some? (sync/room-for id)) "the room stays live")))))
+
+(deftest an-empty-room-refuses-play-seek-and-next
+  (run
+    (fn []
+      (let [id (empty-live-room!)]
+        (reset! *sent* [])
+        (let [before (room id)
+              out    (with-out-str
+                       (sync/host-cmd! id "play" 0.0 "host")
+                       (sync/host-cmd! id "seek" 5.0 "host")
+                       (sync/item-cmd! id "next" nil "host"))]
+          (is (= before (room id)))
+          (is (empty? @*sent*))
+          (is (str/includes? out "play by host refused: nothing queued"))
+          (is (str/includes? out "seek by host refused: nothing queued")))
+        ;; pause is harmless and still answered
+        (sync/host-cmd! id "pause" nil "host")
+        (is (= ["pause"] (ops)))
+        (is (= 0.0 (:pos (room id))))))))
+
+(deftest the-beat-still-goes-out-to-an-empty-room
+  (run
+    (fn []
+      (let [id (empty-live-room!)]
+        (reset! *sent* [])
+        (at! 30000)
+        (sync/tick-room! id)
+        (is (= ["beat"] (ops)))
+        (let [m (first @*sent*)]
+          (is (nil? (:video-id m)))
+          (is (false? (:playing m)))
+          (is (= 2 (count (:peers m)))))
+        (is (nil? (:video-id (room id))))
+        (is (nil? (:video-id (rooms/get-by-id id))))))))
+
+(deftest adding-to-an-empty-live-room-makes-it-current-paused
+  (run
+    (fn []
+      (let [id (empty-live-room!)]
+        (videos/insert! {:id "v2" :title "Clip v2" :original-path "/tmp/v2.mp4"})
+        (videos/set-duration! "v2" 20.0)
+        (reset! *sent* [])
+        (at! 9000)
+        (sync/add-item! id "v2")
+        (is (= {:video-id "v2" :duration 20.0 :pos 0.0 :t0 9000 :playing? false :rate 1.0}
+               (dissoc (room id) :clients)))
+        (is (= "v2" (:video-id (rooms/get-by-id id))))
+        (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (is (= ["item" "queue"] (ops)))
+        (let [[item queue] @*sent*]
+          (is (= {:id "v2" :title "Clip v2" :duration 20.0 :dash "/dash/v2/manifest.mpd"}
+                 (:video item)))
+          (is (false? (:playing item)))
+          (is (= 0.0 (:pos item)))
+          (is (= "v2" (:video-id queue))))
+        ;; the host starts it as on a fresh room
+        (sync/host-cmd! id "play" 0.0 "host")
+        (is (true? (:playing? (room id))))))))
+
+(deftest adding-to-a-room-with-a-video-only-appends
+  (run
+    (fn []
+      (let [id (queue! ["v1" 10.0])]
+        (videos/insert! {:id "v2" :title "Clip v2" :original-path "/tmp/v2.mp4"})
+        (sync/host-cmd! id "play" 2.0 "host")
+        (reset! *sent* [])
+        (let [before (room id)]
+          (sync/add-item! id "v2")
+          (is (= before (room id)))
+          (is (= "v1" (:video-id (rooms/get-by-id id))))
+          (is (= ["queue"] (ops)))
+          (is (= ["v1" "v2"] (mapv :video-id (:queue (first @*sent*))))))))))
+
+(defn- cold-queue!
+  "A room nobody has joined, queued with the given video ids."
+  [& vids]
+  (doseq [vid vids]
+    (videos/insert! {:id vid :title (str "Clip " vid) :original-path (str "/tmp/" vid ".mp4")}))
+  (let [id (:id (rooms/create! (first vids)))]
+    (doseq [vid (rest vids)] (rooms/add-item! id vid))
+    id))
+
+(deftest removing-items-of-a-cold-room-rewrites-the-pointer
+  (run
+    (fn []
+      (let [id      (cold-queue! "v1" "v2" "v3")
+            pointer #(:video-id (rooms/get-by-id id))]
+        (sync/remove-item! id "v1")
+        (is (= "v2" (pointer)) "current at the front: next")
+        (sync/remove-item! id "v3")
+        (is (= "v2" (pointer)) "not current: pointer stays")
+        (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (rooms/add-item! id "v1")
+        (sync/remove-item! id "v2")
+        (is (= "v1" (pointer)) "no next: prev")
+        (sync/remove-item! id "v1")
+        (is (nil? (pointer)) "the only item: empty")
+        (is (= [] (rooms/queue id)))
+        (is (empty? @*sent*) "nobody to tell")
+        (is (= {} @sync/rooms*) "the room was never loaded")
+        (is (= {:video-id nil :duration nil :pos 0.0 :playing? false :rate 1.0 :clients {}}
+               (dissoc (sync/room-for id) :t0))
+            "loading the empty room works")))))
+
+(deftest adding-to-a-cold-empty-room-sets-the-pointer
+  (run
+    (fn []
+      (let [id (cold-queue! "v1")]
+        (sync/remove-item! id "v1")
+        (videos/insert! {:id "v2" :title "Clip v2" :original-path "/tmp/v2.mp4"})
+        (sync/add-item! id "v2")
+        (is (= "v2" (:video-id (rooms/get-by-id id))))
+        (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
+        (is (empty? @*sent*))
+        (is (= {} @sync/rooms*))))))

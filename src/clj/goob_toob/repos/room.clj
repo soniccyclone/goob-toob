@@ -1,7 +1,9 @@
 (ns goob-toob.repos.room
   "Rooms and their queues. A room is an ordered queue of videos
-  (room_items) with a current pointer (rooms.video_id); the queue is never
-  empty because the pointer is NOT NULL.
+  (room_items) with a current pointer (rooms.video_id). A room is made on
+  a video, but removing its last item leaves it standing with an empty
+  queue and a NULL pointer (migration 004); the stage is blank until an
+  item is added again.
 
   Looks videos up with its own query rather than repos.video so that
   repos.video can require this ns for rooms-using (video deletion refuses
@@ -104,18 +106,11 @@
 
 (defn remove-item!
   "Drops video-id from the room's queue and closes the gap in the
-  positions. Removing a video that is not queued is a no-op."
+  positions. Removing a video that is not queued is a no-op. The current
+  video may be removed too: moving the pointer first is the caller's job
+  (services.sync/remove-item! skips the room or empties it)."
   [room-id video-id]
   (jdbc/with-transaction [tx (db/db)]
-    ;; Open decision (plan: "the current item cannot be removed; skip first").
-    ;; Nathan has questioned refusing the host here; this branch is the whole
-    ;; refusal, so dropping it is a matter of deleting the `when`.
-    (when (= video-id (:video-id (jdbc/execute-one! tx
-                                   (sql/format {:select [:video-id] :from [:rooms]
-                                                :where [:= :id room-id]})
-                                   kebab)))
-      (throw (ex-info "that's the current video; skip first"
-                      {:type :conflict :room-id room-id :video-id video-id})))
     (jdbc/execute! tx
       (sql/format {:delete-from :room-items
                    :where [:and [:= :room-id room-id] [:= :video-id video-id]]}))
@@ -135,10 +130,11 @@
 
 (defn set-current!
   "Points the room at video-id, which must be in its queue (else
-  :bad-request). Playback position lives in memory, not here."
+  :bad-request); nil empties the stage. Playback position lives in
+  memory, not here."
   [room-id video-id]
   (jdbc/with-transaction [tx (db/db)]
-    (when-not (some #{video-id} (queue-ids tx room-id))
+    (when-not (or (nil? video-id) (some #{video-id} (queue-ids tx room-id)))
       (throw (ex-info "not in the queue" {:type :bad-request :room-id room-id :video-id video-id})))
     (jdbc/execute! tx
       (sql/format {:update :rooms :set {:video-id video-id} :where [:= :id room-id]}))))
@@ -155,7 +151,7 @@
 (defn list-all
   "Every room, newest first: :id :token :allow-control :title (the room's,
   else its current video's) :video-id :video-title :status (the current
-  video's) :items."
+  video's) :items. An empty room has nil for the video fields and 0 items."
   []
   (->> (jdbc/execute! (db/db)
          (sql/format {:select [[:r/id] [:r/token] [:r/video-id] [:r/allow-control]
@@ -164,7 +160,7 @@
                                [{:select [[[:count :*]]] :from [[:room-items :ri]]
                                  :where [:= :ri.room-id :r.id]} :items]]
                       :from [[:rooms :r]]
-                      :join [[:videos :v] [:= :v.id :r.video-id]]
+                      :left-join [[:videos :v] [:= :v.id :r.video-id]]
                       :order-by [[:r/created-at :desc]]})
          kebab)))
 
@@ -174,8 +170,8 @@
   (->> (jdbc/execute! (db/db)
          (sql/format {:select [[[:coalesce :r.title :v.title] :title]]
                       :from [[:room-items :ri]]
-                      :join [[:rooms :r] [:= :r.id :ri.room-id]
-                             [:videos :v] [:= :v.id :r.video-id]]
+                      :join [[:rooms :r] [:= :r.id :ri.room-id]]
+                      :left-join [[:videos :v] [:= :v.id :r.video-id]]
                       :where [:= :ri.video-id video-id]
                       :order-by [[:r/created-at :desc]]})
          kebab)

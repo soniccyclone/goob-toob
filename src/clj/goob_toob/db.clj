@@ -19,7 +19,7 @@
   via the classpath on purpose: the packaged desktop app runs from a CWD that
   has no resources/ dir, and a filesystem path there silently migrates zero
   tables (the v0.1.0 Windows crash)."
-  ["001-init.sql" "002-room-control.sql" "003-room-items.sql"])
+  ["001-init.sql" "002-room-control.sql" "003-room-items.sql" "004-room-empty.sql"])
 
 (defn- migrate!
   "Runs the pending migrations on ONE connection with foreign keys off, as

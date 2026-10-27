@@ -6,6 +6,7 @@
             [clojure.java.io :as io]
             [honey.sql :as sql]
             [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs]
             [goob-toob.db :as db]
             [goob-toob.test-util :refer [tmp-dir]]))
 
@@ -86,4 +87,70 @@
   (let [path (pre-003-db! "gone")]
     (db/init! path)
     (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:id] :from [:rooms]}))))
+    (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:room-items]}))))))
+
+;; ---- 004: the pointer goes nullable ------------------------------------------
+;; SQLite cannot drop NOT NULL from a column, so 004 rebuilds rooms. The
+;; rebuild must keep every row and column, keep room_items pointing at the
+;; rebuilt table, and leave foreign_key_check empty.
+
+(defn- pre-004-db!
+  "A database as 001..003 left it: a video, a room on it (titled, with
+  co-host control on) and its single queue item. Returns the path."
+  []
+  (let [path (str (tmp-dir) "/goob-toob.db")]
+    (with-redefs [db/migrations ["001-init.sql" "002-room-control.sql" "003-room-items.sql"]]
+      (db/init! path))
+    (jdbc/execute! (db/db)
+      (sql/format {:insert-into :videos
+                   :values [{:id "v" :title "Clip" :status "ready"}]}))
+    (jdbc/execute! (db/db)
+      (sql/format {:insert-into :rooms
+                   :values [{:id "r" :token "tok" :video-id "v" :allow-control 1 :title "Night"}]}))
+    (jdbc/execute! (db/db)
+      (sql/format {:insert-into :room-items
+                   :values [{:room-id "r" :video-id "v" :position 0}]}))
+    path))
+
+(defn- room-columns
+  "rooms' column name -> notnull flag (1 = NOT NULL)."
+  []
+  (->> (jdbc/execute! (db/db) ["PRAGMA table_info(rooms)"]
+                      {:builder-fn rs/as-unqualified-lower-maps})
+       (map (juxt :name :notnull))
+       (into {})))
+
+(deftest migration-004-makes-the-room-pointer-nullable
+  (let [path (pre-004-db!)]
+    (is (= 1 (get (room-columns) "video_id")) "before 004 the pointer is NOT NULL")
+    (is (thrown? Exception
+                 (jdbc/execute! (db/db)
+                   (sql/format {:update :rooms :set {:video-id nil} :where [:= :id "r"]}))))
+    (db/init! path)
+    (is (= 0 (get (room-columns) "video_id")))
+    (is (= {"id" 0 "token" 1 "video_id" 0 "created_at" 1 "allow_control" 1 "title" 0}
+           (room-columns))
+        "every column survives the rebuild with its constraint")
+    (jdbc/execute! (db/db)
+      (sql/format {:update :rooms :set {:video-id nil} :where [:= :id "r"]}))
+    (is (= [{:rooms/video_id nil}]
+           (jdbc/execute! (db/db) (sql/format {:select [:video-id] :from [:rooms]}))))))
+
+(deftest migration-004-keeps-rows-items-and-foreign-keys
+  (let [path (pre-004-db!)]
+    (db/init! path)
+    (is (= [{:rooms/id "r" :rooms/token "tok" :rooms/video_id "v"
+             :rooms/allow_control 1 :rooms/title "Night"}]
+           (jdbc/execute! (db/db)
+             (sql/format {:select [:id :token :video-id :allow-control :title] :from [:rooms]}))))
+    (is (= [{:room_items/room_id "r" :room_items/video_id "v" :room_items/position 0}]
+           (jdbc/execute! (db/db) (sql/format {:select [:room-id :video-id :position]
+                                               :from [:room-items]}))))
+    (is (empty? (jdbc/execute! (db/db) ["PRAGMA foreign_key_check"])))
+    ;; the rebuilt table is still what room_items references: a room's
+    ;; items cascade when it goes, and a bogus pointer is still refused
+    (is (thrown? Exception
+                 (jdbc/execute! (db/db)
+                   (sql/format {:update :rooms :set {:video-id "nope"} :where [:= :id "r"]}))))
+    (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :id "r"]}))
     (is (empty? (jdbc/execute! (db/db) (sql/format {:select [:*] :from [:room-items]}))))))

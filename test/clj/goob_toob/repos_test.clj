@@ -103,12 +103,57 @@
     (is (= :bad-request (ex-type #(rooms/add-item! id "nope"))))
     (is (= [["v1" 0]] (positions id)))))
 
-(deftest remove-item-refuses-the-current-video
+(deftest remove-item-drops-the-current-video-too
+  ;; the repo only edits the queue; moving the pointer off a removed
+  ;; current item is services.sync/remove-item!'s job
   (doseq [v ["v1" "v2"]] (video! v))
   (let [id (:id (rooms/create! "v1"))]
     (rooms/add-item! id "v2")
-    (is (= :conflict (ex-type #(rooms/remove-item! id "v1"))))
-    (is (= [["v1" 0] ["v2" 1]] (positions id)))))
+    (is (nil? (ex-type #(rooms/remove-item! id "v1"))))
+    (is (= [["v2" 0]] (positions id)))
+    (is (= "v1" (:video-id (rooms/get-by-id id))))))
+
+(deftest set-current-nil-empties-the-stage
+  (video! "v1" :title "S01E01")
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/set-current! id nil)
+    (is (nil? (:video-id (rooms/get-by-id id))))
+    (is (= [["v1" 0]] (positions id)) "the queue is untouched")
+    (rooms/set-current! id "v1")
+    (is (= "v1" (:video-id (rooms/get-by-id id))))))
+
+(deftest an-empty-room-is-still-listed
+  (video! "v1" :title "S01E01")
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/remove-item! id "v1")
+    (rooms/set-current! id nil)
+    (is (= [] (rooms/queue id)))
+    (let [row (first (rooms/list-all))]
+      (is (= {:id id :title "S01E01" :video-id nil :video-title nil :status nil :items 0}
+             (select-keys row [:id :title :video-id :video-title :status :items]))
+          "the title create! stored stays; the video fields are nil"))
+    (rooms/set-title! id "  ")
+    (is (= [{:title nil :video-id nil}]
+           (map #(select-keys % [:title :video-id]) (rooms/list-all)))
+        "a cleared title has no video title to fall back on")
+    (rooms/set-title! id "Night 2")
+    (is (= "Night 2" (:title (first (rooms/list-all)))))
+    (is (= [] (rooms/rooms-using "v1")) "nothing queues v1 any more")))
+
+(deftest rooms-using-survives-a-room-without-a-pointer
+  (doseq [v ["v1" "v2"]] (video! v :title (str "Clip " v)))
+  (let [id (:id (rooms/create! "v1"))]
+    (rooms/add-item! id "v2")
+    (rooms/set-current! id nil)
+    (is (= ["Clip v1"] (rooms/rooms-using "v2")) "the title stored at create! time")
+    (rooms/set-title! id "  ")
+    (is (= [nil] (rooms/rooms-using "v2")) "cleared, with no video to fall back on")
+    (rooms/set-title! id "A")
+    (is (= ["A"] (rooms/rooms-using "v2")))))
+
+(deftest create-still-requires-a-video
+  (is (thrown? Exception (rooms/create! nil)))
+  (is (empty? (rooms/list-all))))
 
 (deftest remove-item-renumbers
   (doseq [v ["v1" "v2" "v3"]] (video! v))
