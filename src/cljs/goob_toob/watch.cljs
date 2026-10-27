@@ -350,12 +350,10 @@
 ;; ---- fullscreen (#58) ----
 ;; The fullscreen target is the stage *wrapper*, not the <video>: nothing can
 ;; draw over a fullscreen element but its own children, and the chat overlay
-;; is a sibling of the video inside the wrapper. Our ⛶ button and a
-;; double-click on the picture go through here. The native fullscreen button
-;; stays (Nathan's call): it fullscreens the bare element, and that path has
-;; no overlay. Firefox also eats the double-click inside its own controls
-;; (page listeners never see it), so there only the button reaches the
-;; wrapper.
+;; is a sibling of the video inside the wrapper. Only our ⛶ button goes
+;; through here. The native fullscreen button and the native double-click
+;; stay as the browser ships them (Nathan's call, the Twitch shape): they
+;; fullscreen the bare element, and that path has no overlay.
 
 (def ^:private overlay-keep 6)
 (def ^:private overlay-ms 8000)
@@ -424,14 +422,13 @@
        box "chat over fullscreen video")))
 
 (defn- stage!
-  "Wire the stage: ⛶ and double-click fullscreen the wrapper, the button's
-  title follows the state, the picture ratio feeds the layout cap."
+  "Wire the stage: ⛶ fullscreens the wrapper, the button's title follows
+  the state, the picture ratio feeds the layout cap."
   [^js wrap ^js video ^js fs-btn]
   (set! (.-onclick fs-btn) #(toggle-fs! wrap video))
   ;; like the transport buttons: a click must not leave focus on the button,
   ;; or the next Space would re-press it instead of reaching the #54 keys
   (set! (.-onmousedown fs-btn) #(.preventDefault %))
-  (.addEventListener video "dblclick" #(do (.preventDefault %) (toggle-fs! wrap video)))
   (doseq [ev ["fullscreenchange" "webkitfullscreenchange"]]
     (.addEventListener js/document ev
       #(.setAttribute fs-btn "title" (if (fs-element) "exit fullscreen" "fullscreen"))))
