@@ -67,6 +67,51 @@
             (and (<= (.start b i) t) (<= t (.end b i))) (- (.end b i) t)
             :else (recur (inc i))))))
 
+;; ---- #57 instrumentation: rate episodes, fullscreen, A/V readouts ----
+;; Nothing here touches playback. It exists so a "the audio is out of sync"
+;; report can be matched against the rate episodes and fullscreen changes
+;; in server.log, and so goobProbe() carries the same numbers.
+
+(defn- round1 [x] (/ (Math/round (* 10 x)) 10))
+(defn- round3 [x] (/ (Math/round (* 1000 x)) 1000))
+(defn- unity? [rate] (< (sc/abs (- rate 1.0)) 0.001))
+
+(defn- av-probe [^js st ^js video]
+  ;; cheap alignment readouts with no new dependency: dropped/total frames
+  ;; from the element, and dash.js's buffer level for each track (the two
+  ;; SourceBuffers fill independently; a gap between them is a lead)
+  (let [^js q (try (when (.-getVideoPlaybackQuality video) (.getVideoPlaybackQuality video))
+                   (catch js/Error _ nil))
+        ^js m (try (some-> ^js (.-player st) (.getDashMetrics)) (catch js/Error _ nil))
+        level (fn [kind] (try (some-> m (.getCurrentBufferLevel kind) round1)
+                              (catch js/Error _ nil)))]
+    {:dropped-frames (some-> q .-droppedVideoFrames)
+     :total-frames (some-> q .-totalVideoFrames)
+     :audio-buffer (level "audio")
+     :video-buffer (level "video")}))
+
+(defn- off-rate-s [^js st]
+  ;; cumulative seconds the element has run off 1.0 since the page loaded,
+  ;; the open episode (if any) included
+  (let [ms (+ (.-offrate st) (if-let [since (.-offsince st)] (- (ui/perf-now) since) 0))]
+    (round1 (/ ms 1000))))
+
+(defn- close-off-rate! [^js st now]
+  (when-let [since (.-offsince st)]
+    (set! (.-offrate st) (+ (.-offrate st) (- now since)))
+    (set! (.-offsince st) nil)))
+
+(defn- note-rate! [^js st token ^js video from to mode d]
+  ;; the policy is about to move the element's rate from -> to
+  (let [now (ui/perf-now)]
+    (close-off-rate! st now)
+    (when-not (unity? to) (set! (.-offsince st) now))
+    (set! (.-ratechanged st) now)
+    (log! token :rate (merge {:from (round3 from) :to (round3 to) :mode mode
+                              :drift (round1 d) :off-s (off-rate-s st)
+                              :fullscreen (.-fullscreen st)}
+                             (av-probe st video)))))
+
 (defn- quality-event! [^js st token ev]
   (when-let [ctx (.-player st)]
     (when (.-auto st)
@@ -91,8 +136,14 @@
       (when (and (= mode :catch-up) (not= (.-mode st) :catch-up))
         (quality-event! st token :catch-up))
       (set! (.-mode st) mode)
-      (when (> (sc/abs (- (.-playbackRate video) rate)) 0.001)
-        (set! (.-playbackRate video) rate))
+      (let [cur (.-playbackRate video)]
+        (when (and (.-offsince st) (unity? cur))
+          ;; reset to 1.0 behind the policy's back (pause, resync): the
+          ;; episode is over, book it (at most one tick late)
+          (close-off-rate! st (ui/perf-now)))
+        (when (> (sc/abs (- cur rate)) 0.001)
+          (note-rate! st token video cur rate mode d)
+          (set! (.-playbackRate video) rate)))
       (set! (.-textContent lag-hint)
             (if (< d -10.0)
               (str "you're " (int (- d)) "s behind the room — reload to jump to it")
@@ -503,9 +554,33 @@
      :chat-log chat-log :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
+(defn- fullscreen? []
+  (boolean (or (.-fullscreenElement js/document) (.-webkitFullscreenElement js/document))))
+
+(defn- watch-fullscreen! [^js st token ^js video]
+  ;; #57: desync reports mention fullscreen, so every transition is logged
+  ;; with the drift, rate and A/V readouts at that moment. Safari may fire
+  ;; both the prefixed and the standard event; only a real change logs.
+  (let [on-change (fn [_]
+                    (let [on (fullscreen?)]
+                      (when (not= on (boolean (.-fullscreen st)))
+                        (set! (.-fullscreen st) on)
+                        (log! token :fullscreen
+                              (merge {:on on
+                                      :drift (when-let [room (.-room st)]
+                                               (round1 (sc/drift (.-currentTime video)
+                                                                 (expected-now st room))))
+                                      :rate (round3 (.-playbackRate video))
+                                      :mode (.-mode st) :off-s (off-rate-s st)}
+                                     (av-probe st video))))))]
+    (set! (.-fullscreen st) (fullscreen?))
+    (doseq [ev ["fullscreenchange" "webkitfullscreenchange"]]
+      (.addEventListener js/document ev on-change))))
+
 (defn- loops! [^js st refs]
   (let [{:keys [video seek lag-hint]} refs
         token (unchecked-get st "token")]
+    (watch-fullscreen! st token video)
     (js/setInterval #(wsx/send! (.-ws st) {:type "ping" :t (ui/perf-now)}) 5000)
     (js/setInterval #(wsx/send! (.-ws st) {:type "status"
                                             :pos (.-currentTime video)
@@ -563,6 +638,7 @@
                   "cancontrol" false "started" false "token" token "mode" :none
                   "auto" true "qcap" nil "ourseek" 0
                   "streamok" false "starting" false "autostart" nil
+                  "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "counters" (js-obj "seeks" 0 "stalls" 0
                                      "rejected" 0 "capsteps" 0 "autostarts" 0))
         saved-nick (ui/store-get "goob-nick")
@@ -570,7 +646,9 @@
     (set! (.-goobProbe js/window)
           (fn []
             (let [room (.-room st) ^js v (ui/$ "video")]
-              (clj->js {:t (ui/perf-now)
+              (clj->js (merge
+                        (when v (av-probe st v)) ; :dropped-frames :total-frames :audio-buffer :video-buffer
+                       {:t (ui/perf-now)
                         :currentTime (some-> v .-currentTime)
                         :expected (when room (expected-now st room))
                         :drift (when (and room v) (sc/drift (.-currentTime v) (expected-now st room)))
@@ -581,7 +659,11 @@
                         :mode (name (.-mode st)) :buffering (.-buffering st)
                         :bufferAhead (when v (buffer-ahead v))
                         :qcap (:cap (.-qcap st)) :offset (.-offset st)
-                        :counters (js->clj (.-counters st))}))))
+                        :rate-changed-ms (when-let [t (.-ratechanged st)]
+                                           (Math/round (- (ui/perf-now) t)))
+                        :off-rate-s (off-rate-s st)
+                        :fullscreen (boolean (.-fullscreen st))
+                        :counters (js->clj (.-counters st))})))))
     (if (str/blank? saved-nick)
       (let [input (h :input {:type "text" :placeholder "your name"})
             join-btn (h :button.btn "join the goo")
