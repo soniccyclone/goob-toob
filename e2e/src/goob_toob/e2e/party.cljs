@@ -203,6 +203,14 @@
                        " return p.paused && !p.started && p.drift !== null && Math.abs(p.drift) <= " limit "; })()")
              timeout))
 
+(defn wait-landed!
+  "Waits until the element has landed after a start: started, not paused and
+  past the landing stall (see thresholds :landed for what a landing is)."
+  [^js page timeout]
+  (wait-for! page (str "(() => { const p = goobProbe();"
+                       " return p.started && !p.paused && !p.buffering; })()")
+             timeout))
+
 (defn wait-synced! [^js page settled timeout]
   (wait-for! page (str "(() => { const p = goobProbe();"
                        " return p.started && p.drift !== null && Math.abs(p.drift) <= " settled "; })()")
