@@ -135,11 +135,9 @@
   (video! "v1")
   (spit (io/file (storage/dash-dir "v1") "manifest.mpd") "x")
   (let [app    (container-app)
-        cookie (login! app)
-        room   (:id (rooms/create! "v1"))]
+        cookie (login! app)]
     (is (= 200 (:status (call app :delete "/api/admin/videos/v1" :cookie cookie))))
     (is (nil? (videos/get-by-id "v1")))
-    (is (nil? (rooms/get-by-id room)))
     (is (not (.exists (io/file (config/storage-dir) "dash" "v1"))))))
 
 (deftest clientlog-is-rate-limited-per-token

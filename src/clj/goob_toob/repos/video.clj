@@ -3,7 +3,9 @@
             [next.jdbc.result-set :as rs]
             [honey.sql :as sql]
             [clojure.data.json :as json]
-            [goob-toob.db :as db]))
+            [clojure.string :as str]
+            [goob-toob.db :as db]
+            [goob-toob.repos.room :as rooms]))
 
 (defn- row->video [row]
   (update row :ladder #(some-> % json/read-str)))
@@ -58,8 +60,15 @@
   (jdbc/execute! (db/db)
     (sql/format {:update :videos :set {:duration duration} :where [:= :id id]})))
 
-(defn delete! [id]
-  (jdbc/execute! (db/db) (sql/format {:delete-from :rooms :where [:= :video-id id]}))
+(defn delete!
+  "Deletes the video row. Refused (:type :conflict, naming the rooms) while
+  any room has it queued: the admin removes it from the queue or closes the
+  room first, rather than the library page silently editing a running
+  party's list."
+  [id]
+  (when-let [using (seq (rooms/rooms-using id))]
+    (throw (ex-info (str "queued in: " (str/join ", " using))
+                    {:type :conflict :video-id id :rooms (vec using)})))
   (jdbc/execute! (db/db) (sql/format {:delete-from :videos :where [:= :id id]})))
 
 (defn requeue-stuck []
