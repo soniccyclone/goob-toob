@@ -217,10 +217,20 @@
       (play! video)
       (.pause video))))
 
-;; ---- host transport (#53 jump buttons, #54 keys) ----
+;; ---- host transport (#53 jump buttons, #54 keys, #55 native seeks) ----
 ;; Every control here drives the *room*: a cmd the server re-gates (host, or
 ;; anyone when "co-hosts can drive" is on) and broadcasts as a state, which
-;; is what moves this element too. None of it is sync policy.
+;; is what moves this element too. None of it is sync policy. A controller's
+;; native <video> seek (scrub bar, media keys) is a room seek as well, from
+;; onseeked below, once it lands further than native-seek-floor from the
+;; room's expected position.
+
+(def ^:private native-seek-floor
+  "Seconds a controller's unexplained seek must land from the room's
+  expected position before it is taken as a scrub and sent as a room seek.
+  dash.js's own small gap jumps and a landing stall sit well inside it; a
+  scrub is always bigger."
+  2.0)
 
 (defn- room-duration [^js st ^js video]
   ;; the element's duration once it knows it, else the probe's from the welcome
@@ -578,12 +588,20 @@
       (fn []
         (set! (.-seeking st) false)
         (when (and (> (- (ui/perf-now) (.-ourseek st)) 1000) (.-started st))
-          (log! (unchecked-get st "token") :seek-unexplained
-                {:to (Math/round (.-currentTime video))
-                 :drift (when-let [room (.-room st)]
-                          (let [d (sc/drift (.-currentTime video) (expected-now st room))]
-                            (/ (Math/round (* 10 d)) 10)))
-                 :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))
+          (let [room (.-room st)
+                d (when room (sc/drift (.-currentTime video) (expected-now st room)))]
+            (if (and d (.-cancontrol st) (> (sc/abs d) native-seek-floor))
+              ;; #55: a controller's native seek (scrub bar drag, media keys)
+              ;; drives the room, as a cmd the server re-gates and broadcasts;
+              ;; the state that comes back re-seeks this element too, marked
+              ;; as ours. Arrow keys never get here (keys! owns them, #54).
+              (do (wsx/send! (.-ws st) {:type "cmd" :op "seek" :pos (.-currentTime video)})
+                  (log! (unchecked-get st "token") :native-seek
+                        {:to (Math/round (.-currentTime video)) :drift (round1 d)}))
+              (log! (unchecked-get st "token") :seek-unexplained
+                    {:to (Math/round (.-currentTime video))
+                     :drift (when d (round1 d))
+                     :buf (buffered video) :ready (.-readyState video) :paused (.-paused video)}))))))
     (set! (.-onplay video)
       (fn []
         (when-not (.-starting st)

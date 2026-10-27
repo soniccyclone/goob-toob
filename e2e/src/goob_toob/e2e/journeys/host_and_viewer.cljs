@@ -8,7 +8,8 @@
             [goob-toob.e2e.journey :refer [defjourney]]
             [goob-toob.e2e.metrics :as m]
             [goob-toob.e2e.party :as party]
-            [goob-toob.e2e.thresholds :refer [t W]]))
+            [goob-toob.e2e.thresholds :refer [t W]]
+            [goob-toob.sync-core :as sc]))
 
 (defjourney "host starts the party" [{:keys [browser browser-name base-url]} info]
   (let [{:keys [cookie] :as fx} (api/fixture info)
@@ -123,3 +124,72 @@
     (-> (expect sync-at "ms from resume to settled") (.not.toBeNull))
     (-> (expect (:drift-abs-p95 summary) "viewer drift p95 after resume")
         (.toBeLessThanOrEqual (t browser-name :landed)))))
+
+(defn- room-expected
+  "The room's position by the server's own clock, from a live view."
+  [live]
+  (sc/expected-pos {:pos (:pos live) :t0 (:t0 live) :now (:now live)
+                    :playing? (:playing live) :rate (:rate live)}))
+
+(def ^:private native-seek-log? (party/log-line? ":native-seek"))
+
+(defjourney "the host's native seek moves the room" [{:keys [browser browser-name base-url]} info]
+  ;; #55: a controller's native <video> seek (scrub bar drag, media keys) is
+  ;; a room command. inject! writes the element's currentTime the way a
+  ;; scrub does; the element reports that value until the seek lands, so a
+  ;; probe right after it is where the host scrubbed to. The server must
+  ;; take that position within :chat-within and the viewer must land there
+  ;; (inside the dead band: a playing landing comes back behind by its
+  ;; stall, see thresholds :landed). Then the control: the same write on a
+  ;; viewer who cannot control moves nothing, the room's expected position
+  ;; only advances with the clock.
+  (let [{:keys [cookie] :as fx} (api/fixture info)
+        {:keys [room host viewer]} (<? (party/pair! browser base-url browser-name fx))
+        hp (:page host) vp (:page viewer)
+        tol (t browser-name :pause-agreement)
+        landed (t browser-name :landed)
+        live #(api/live base-url cookie (:id room))
+        viewer-seeks0 (get-in (<? (party/probe vp)) [:counters :seeks] 0)
+        _ (<p! (party/inject! hp (:seek-jump W)))
+        t-inject (js/Date.now)
+        target (:currentTime (<? (party/probe hp)))
+        at-target? #(<= (m/abs* (- (:pos %) target)) tol)
+        moved (<? (m/sample-until live at-target? (t browser-name :chat-within)))
+        moved-ms (when (at-target? (last moved)) (- (js/Date.now) t-inject))
+        server (last moved)
+        series (<? (m/sample vp (:resume-window W) {:host hp :live live}))
+        host-gap #(m/abs* (- (:currentTime %) (:currentTime (:host %))))
+        landed-at (m/first-at #(and (>= (:currentTime %) (- target landed))
+                                    (<= (host-gap %) landed))
+                              series)
+        summary (m/summarize series landed-at)
+        host-native-seek? (boolean (some native-seek-log? @(:seen host)))
+        ;; control: a viewer who cannot control
+        c0 (<p! (live)) n0 (js/Date.now)
+        _ (<p! (party/inject! vp (:seek-jump W)))
+        _ (<! (a/timeout (t browser-name :chat-within)))
+        c1 (<p! (live)) n1 (js/Date.now)
+        control-jump (- (room-expected c1) (room-expected c0) (/ (- n1 n0) 1000))
+        viewer-native-seek? (boolean (some native-seek-log? @(:seen viewer)))
+        extra {:target target :server-pos (:pos server) :moved-ms moved-ms
+               :server-pos-gap (m/abs* (- (:pos server) target))
+               :landed-at landed-at
+               :viewer-host-gap-landed (some-> (first (filter #(= landed-at (:at %)) series)) host-gap)
+               :viewer-host-gap-final (host-gap (last series))
+               :viewer-seeks (- (get-in (last series) [:counters :seeks] 0) viewer-seeks0)
+               :host-native-seek host-native-seek?
+               :control-jump control-jump :viewer-native-seek viewer-native-seek?}]
+    (<p! (m/record! info summary series extra))
+    (-> (expect moved-ms "ms until the server took the host's native seek") (.not.toBeNull))
+    (-> (expect (:server-pos-gap extra) "server pos distance from the scrub target")
+        (.toBeLessThanOrEqual tol))
+    (-> (expect host-native-seek? "host logged :native-seek") (.toBe true))
+    (-> (expect landed-at "ms from the scrub to the viewer landing beside the host")
+        (.not.toBeNull))
+    (-> (expect landed-at "ms from the scrub to the viewer landing beside the host")
+        (.toBeLessThanOrEqual (t browser-name :sync-within)))
+    (-> (expect (:drift-abs-p95 summary) "viewer drift p95 after landing")
+        (.toBeLessThanOrEqual landed))
+    (-> (expect (m/abs* control-jump) "room position jump from a plain viewer's native seek")
+        (.toBeLessThanOrEqual tol))
+    (-> (expect viewer-native-seek? "viewer logged :native-seek") (.toBe false))))
