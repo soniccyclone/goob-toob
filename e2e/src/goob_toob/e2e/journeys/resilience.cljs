@@ -27,7 +27,7 @@
         hp (:page host) vp (:page viewer)
         ^js vctx (:context viewer)
         _ (<? (party/join! vp (t browser-name :start-within)))
-        _ (<p! (party/wait-synced! vp (t browser-name :settled) (t browser-name :sync-within)))
+        _ (<p! (party/wait-synced! vp (t browser-name :landed) (t browser-name :sync-within)))
         listed-before (<p! (peer-listed? hp "viewer"))
         state (:hook viewer)
         _ (<p! (.setOffline vctx true))
@@ -54,7 +54,7 @@
         reconnect-ms (- (js/Date.now) t-on)
         series (<? (m/sample vp (max 0 (- (t browser-name :resync-within) reconnect-ms))
                              {:live #(api/live base-url cookie (:id room))}))
-        settled (t browser-name :settled)
+        settled (t browser-name :landed)
         resync-at (m/first-at #(and (number? (:drift %)) (<= (m/abs* (:drift %)) settled)) series)
         summary (m/summarize series resync-at)
         seeks-after (- (get-in (last series) [:counters :seeks]) (get-in before [:counters :seeks]))]
@@ -69,7 +69,7 @@
     (-> (expect (+ reconnect-ms resync-at) "ms from online to settled")
         (.toBeLessThanOrEqual (t browser-name :resync-within)))
     (-> (expect seeks-after "seeks after reconnect") (.toBeLessThanOrEqual (t browser-name :reconnect-seeks)))
-    (-> (expect (:drift-abs-p95 summary) "drift p95 after the resync") (.toBeLessThanOrEqual (t browser-name :steady-p95)))
+    (-> (expect (:drift-abs-p95 summary) "drift p95 after the resync") (.toBeLessThanOrEqual (t browser-name :landed)))
     (-> (expect (:stalls summary) "stalls after the resync") (.toBe 0))))
 
 (defjourney "a late joiner lands on the live frame" [{:keys [browser browser-name base-url]} info]
@@ -80,7 +80,7 @@
         page (:page viewer)
         joined (<? (party/join! page (t browser-name :start-within)))
         t1 (js/Date.now)
-        synced? (try (<p! (party/wait-synced! page (t browser-name :settled) (t browser-name :sync-within))) true
+        synced? (try (<p! (party/wait-synced! page (t browser-name :landed) (t browser-name :sync-within))) true
                      (catch :default _ false))
         sync-ms (- (js/Date.now) t1)
         series (<? (m/sample page (:parked-window W)))
@@ -97,7 +97,7 @@
     (-> (expect synced? "settled after the start") (.toBe true))
     (-> (expect sync-ms "ms from started to settled") (.toBeLessThanOrEqual (t browser-name :sync-within)))
     (-> (expect (get-in end [:counters :rejected]) "rejected plays") (.toBe 0))
-    (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual (t browser-name :settled)))))
+    (-> (expect (m/abs* server-drift) "server drift at the end") (.toBeLessThanOrEqual (t browser-name :landed)))))
 
 (defjourney "a viewer parks on a paused room" [{:keys [browser browser-name base-url]} info]
   (let [fx (api/fixture info)
