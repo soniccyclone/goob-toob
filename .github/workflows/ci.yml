@@ -101,10 +101,10 @@ jobs:
           export GOOB_E2E_STORAGE="$RUNNER_TEMP/goob"
           mkdir -p "$GOOB_E2E_STORAGE"
           case "${{ matrix.group }}" in
-            a) SPECS="sync-policy host-and-viewer control lobby-admin-chat" ;;
+            a) SPECS="sync-policy host-and-viewer control lobby-admin-chat audio" ;;
             b) SPECS="playlists autoplay resilience telemetry" ;;
           esac
-          ALL="sync-policy host-and-viewer control lobby-admin-chat playlists autoplay resilience telemetry"
+          ALL="sync-policy host-and-viewer control lobby-admin-chat audio playlists autoplay resilience telemetry"
           for f in out/*.js; do
             n=$(basename "$f" .js)
             case "$n" in config|setup) continue ;; esac
