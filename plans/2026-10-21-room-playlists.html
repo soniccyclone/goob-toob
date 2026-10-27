@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-27 Tue 10:24 -->
+<!-- 2026-10-27 Tue 12:06 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Room playlists: queue up the library, binge together</title>
@@ -30,58 +30,58 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgedd21ee">Goal</a></li>
-<li><a href="#orgf2b5750">Decisions</a></li>
-<li><a href="#org1de41c9">Findings</a></li>
-<li><a href="#org4178688">Data model</a>
+<li><a href="#org4376f08">Goal</a></li>
+<li><a href="#org3bc352f">Decisions</a></li>
+<li><a href="#org192c910">Findings</a></li>
+<li><a href="#org3478139">Data model</a>
 <ul>
-<li><a href="#org2d7baa0">Migration <code>resources/migrations/003-room-items.sql</code></a></li>
-<li><a href="#org2070a1c"><code>db.clj</code>: foreign keys on every connection, off during migrations</a></li>
-<li><a href="#orgca4059b">Shape of a queue on the wire</a></li>
+<li><a href="#org19b1e40">Migration <code>resources/migrations/003-room-items.sql</code></a></li>
+<li><a href="#org272555f"><code>db.clj</code>: foreign keys on every connection, off during migrations</a></li>
+<li><a href="#org238ef3c">Shape of a queue on the wire</a></li>
 </ul>
 </li>
-<li><a href="#org10c8658">Server</a>
+<li><a href="#org4f4d25d">Server</a>
 <ul>
-<li><a href="#org5599c66"><code>repos/room.clj</code></a></li>
-<li><a href="#org667d2bd"><code>sync_core.cljc</code> (pure)</a></li>
-<li><a href="#org4ec1b65"><code>services/sync.clj</code></a></li>
-<li><a href="#org6650255"><code>ws.clj</code></a></li>
-<li><a href="#org52acdd1"><code>routes.clj</code></a></li>
+<li><a href="#org275a204"><code>repos/room.clj</code></a></li>
+<li><a href="#org0051c66"><code>sync_core.cljc</code> (pure)</a></li>
+<li><a href="#org91e30b5"><code>services/sync.clj</code></a></li>
+<li><a href="#orga78e31c"><code>ws.clj</code></a></li>
+<li><a href="#org21fb324"><code>routes.clj</code></a></li>
 </ul>
 </li>
-<li><a href="#org4eac311">Client</a>
+<li><a href="#orgb503db0">Client</a>
 <ul>
-<li><a href="#orgfa0eac8"><code>player.cljs</code></a></li>
-<li><a href="#orga01b8fb"><code>watch.cljs</code></a></li>
-<li><a href="#org5deb520"><code>lobby.cljs</code></a></li>
-<li><a href="#org3b497b2"><code>admin.cljs</code></a></li>
-<li><a href="#org589b8e2">Revision (2026-10-27): part 3, the watch page, with Nathan's calls</a></li>
+<li><a href="#org8ee3f49"><code>player.cljs</code></a></li>
+<li><a href="#orgaefeaa8"><code>watch.cljs</code></a></li>
+<li><a href="#orgd3e50b1"><code>lobby.cljs</code></a></li>
+<li><a href="#org3b20d51"><code>admin.cljs</code></a></li>
+<li><a href="#org4a0f415">Revision (2026-10-27): part 3, the watch page, with Nathan's calls</a></li>
 </ul>
 </li>
-<li><a href="#org3ed616a">Flow</a></li>
-<li><a href="#org54852e2">Tests</a>
+<li><a href="#orgd8d26a4">Flow</a></li>
+<li><a href="#orgd35a308">Tests</a>
 <ul>
-<li><a href="#org28f672a"><code>db_test.clj</code></a></li>
-<li><a href="#org82ade39"><code>repos_test.clj</code></a></li>
-<li><a href="#orgb1d4062"><code>sync_core_test.clj</code></a></li>
-<li><a href="#orgb83c519"><code>sync_service_test.clj</code> (using <code>run</code>)</a></li>
-<li><a href="#org834bee7"><code>routes_test.clj</code></a></li>
-<li><a href="#org6711c73"><code>ws_test.clj</code></a></li>
-<li><a href="#org90caf15">Journeys (the Playwright plan's harness)</a></li>
+<li><a href="#org330c4dd"><code>db_test.clj</code></a></li>
+<li><a href="#orge77ad21"><code>repos_test.clj</code></a></li>
+<li><a href="#org7c3316f"><code>sync_core_test.clj</code></a></li>
+<li><a href="#orgcaf5ce9"><code>sync_service_test.clj</code> (using <code>run</code>)</a></li>
+<li><a href="#org7cd696f"><code>routes_test.clj</code></a></li>
+<li><a href="#orgc825244"><code>ws_test.clj</code></a></li>
+<li><a href="#orgef2969d">Journeys (the Playwright plan's harness)</a></li>
 </ul>
 </li>
-<li><a href="#orgd467d5e">Risks and open questions</a></li>
-<li><a href="#org48ec08e">Verification</a>
+<li><a href="#org4eb138d">Risks and open questions</a></li>
+<li><a href="#org343ee3f">Verification</a>
 <ul>
-<li><a href="#org7a6f250">Verified (2026-10-27): steps 3 and 6, run after parts 1 and 2 shipped</a></li>
+<li><a href="#org1182990">Verified (2026-10-27): steps 3 and 6, run after parts 1 and 2 shipped</a></li>
 </ul>
 </li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgedd21ee" class="outline-2">
-<h2 id="orgedd21ee">Goal</h2>
-<div class="outline-text-2" id="text-orgedd21ee">
+<div id="outline-container-org4376f08" class="outline-2">
+<h2 id="org4376f08">Goal</h2>
+<div class="outline-text-2" id="text-org4376f08">
 <p>
 A room stops being "one video" and becomes an ordered queue of the host's
 uploaded videos with a current item. The host builds and edits the queue
@@ -102,9 +102,9 @@ auto-advance and end-of-queue get their browser tests.
 </p>
 </div>
 </div>
-<div id="outline-container-orgf2b5750" class="outline-2">
-<h2 id="orgf2b5750">Decisions</h2>
-<div class="outline-text-2" id="text-orgf2b5750">
+<div id="outline-container-org3bc352f" class="outline-2">
+<h2 id="org3bc352f">Decisions</h2>
+<div class="outline-text-2" id="text-org3bc352f">
 <p>
 Each with the evidence; Nathan flips what he disagrees with before
 approval.
@@ -158,9 +158,9 @@ otherwise reads "S01E01" while the party is on E05.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org1de41c9" class="outline-2">
-<h2 id="org1de41c9">Findings</h2>
-<div class="outline-text-2" id="text-org1de41c9">
+<div id="outline-container-org192c910" class="outline-2">
+<h2 id="org192c910">Findings</h2>
+<div class="outline-text-2" id="text-org192c910">
 <ul class="org-ul">
 <li><b>Room model.</b> <code>resources/migrations/001-init.sql</code>: <code>rooms(id, token,
   video_id NOT NULL REFERENCES videos, created_at)</code>; <code>002</code> adds
@@ -202,13 +202,13 @@ rooms then the video, then files.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org4178688" class="outline-2">
-<h2 id="org4178688">Data model</h2>
-<div class="outline-text-2" id="text-org4178688">
+<div id="outline-container-org3478139" class="outline-2">
+<h2 id="org3478139">Data model</h2>
+<div class="outline-text-2" id="text-org3478139">
 </div>
-<div id="outline-container-org2d7baa0" class="outline-3">
-<h3 id="org2d7baa0">Migration <code>resources/migrations/003-room-items.sql</code></h3>
-<div class="outline-text-3" id="text-org2d7baa0">
+<div id="outline-container-org19b1e40" class="outline-3">
+<h3 id="org19b1e40">Migration <code>resources/migrations/003-room-items.sql</code></h3>
+<div class="outline-text-3" id="text-org19b1e40">
 <div class="org-src-container">
 <pre class="src src-sql"><span class="org-keyword">ALTER</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">rooms</span> <span class="org-keyword">ADD</span> <span class="org-keyword">COLUMN</span> title TEXT;
 <span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> IF <span class="org-keyword">NOT</span> <span class="org-keyword">EXISTS</span> <span class="org-function-name">room_items</span> <span class="org-rainbow-delimiters-depth-1">(</span>
@@ -229,9 +229,9 @@ The <code>DELETE</code> clears any orphan rows that the FK-off era let through, 
 </p>
 </div>
 </div>
-<div id="outline-container-org2070a1c" class="outline-3">
-<h3 id="org2070a1c"><code>db.clj</code>: foreign keys on every connection, off during migrations</h3>
-<div class="outline-text-3" id="text-org2070a1c">
+<div id="outline-container-org272555f" class="outline-3">
+<h3 id="org272555f"><code>db.clj</code>: foreign keys on every connection, off during migrations</h3>
+<div class="outline-text-3" id="text-org272555f">
 <ul class="org-ul">
 <li><code>init!</code>: datasource spec becomes <code>{:dbtype "sqlite" :dbname db-path :foreign_keys true}</code>.
 next.jdbc forwards unknown keys as driver properties; sqlite-jdbc reads
@@ -255,9 +255,9 @@ limp through.
 </ul>
 </div>
 </div>
-<div id="outline-container-orgca4059b" class="outline-3">
-<h3 id="orgca4059b">Shape of a queue on the wire</h3>
-<div class="outline-text-3" id="text-orgca4059b">
+<div id="outline-container-org238ef3c" class="outline-3">
+<h3 id="org238ef3c">Shape of a queue on the wire</h3>
+<div class="outline-text-3" id="text-org238ef3c">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-comment-delimiter">;; </span><span class="org-comment">one item
 </span><span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:video-id</span> <span class="org-string">"..."</span> <span class="org-clojure-keyword">:title</span> <span class="org-string">"S01E02"</span> <span class="org-clojure-keyword">:duration</span> 1321.4 <span class="org-clojure-keyword">:status</span> <span class="org-string">"ready"</span> <span class="org-clojure-keyword">:position</span> 1<span class="org-rainbow-delimiters-depth-1">}</span>
@@ -277,13 +277,13 @@ limp through.
 </div>
 </div>
 </div>
-<div id="outline-container-org10c8658" class="outline-2">
-<h2 id="org10c8658">Server</h2>
-<div class="outline-text-2" id="text-org10c8658">
+<div id="outline-container-org4f4d25d" class="outline-2">
+<h2 id="org4f4d25d">Server</h2>
+<div class="outline-text-2" id="text-org4f4d25d">
 </div>
-<div id="outline-container-org5599c66" class="outline-3">
-<h3 id="org5599c66"><code>repos/room.clj</code></h3>
-<div class="outline-text-3" id="text-org5599c66">
+<div id="outline-container-org275a204" class="outline-3">
+<h3 id="org275a204"><code>repos/room.clj</code></h3>
+<div class="outline-text-3" id="text-org275a204">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -357,9 +357,9 @@ rooms</code> (it would now silently close rooms; the refusal replaces it).
 </p>
 </div>
 </div>
-<div id="outline-container-org667d2bd" class="outline-3">
-<h3 id="org667d2bd"><code>sync_core.cljc</code> (pure)</h3>
-<div class="outline-text-3" id="text-org667d2bd">
+<div id="outline-container-org0051c66" class="outline-3">
+<h3 id="org0051c66"><code>sync_core.cljc</code> (pure)</h3>
+<div class="outline-text-3" id="text-org0051c66">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">defn</span> <span class="org-function-name">neighbour</span>
   <span class="org-doc">"ids is the queue's video ids in order. Returns the id after (:next) or
@@ -377,9 +377,9 @@ rooms</code> (it would now silently close rooms; the refusal replaces it).
 </div>
 </div>
 </div>
-<div id="outline-container-org4ec1b65" class="outline-3">
-<h3 id="org4ec1b65"><code>services/sync.clj</code></h3>
-<div class="outline-text-3" id="text-org4ec1b65">
+<div id="outline-container-org91e30b5" class="outline-3">
+<h3 id="org91e30b5"><code>services/sync.clj</code></h3>
+<div class="outline-text-3" id="text-org91e30b5">
 <ul class="org-ul">
 <li>Live room gains <code>:duration</code> (from the video row) and keeps <code>:video-id</code>.
 <code>room-for</code> reads both via <code>videos/get-by-id</code>.</li>
@@ -437,9 +437,9 @@ restart; <code>seek 0</code> does that).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org6650255" class="outline-3">
-<h3 id="org6650255"><code>ws.clj</code></h3>
-<div class="outline-text-3" id="text-org6650255">
+<div id="outline-container-orga78e31c" class="outline-3">
+<h3 id="orga78e31c"><code>ws.clj</code></h3>
+<div class="outline-text-3" id="text-orga78e31c">
 <ul class="org-ul">
 <li><code>handle-msg</code> <code>cmd</code>: ops <code>next</code> / <code>prev</code> / <code>jump</code> go to
 <code>(sync/item-cmd! room-id op (:video m) nick)</code>; others to <code>host-cmd!</code> as
@@ -450,9 +450,9 @@ an item change is right), plus <code>:queue</code> and <code>:video-id</code>.</
 </ul>
 </div>
 </div>
-<div id="outline-container-org52acdd1" class="outline-3">
-<h3 id="org52acdd1"><code>routes.clj</code></h3>
-<div class="outline-text-3" id="text-org52acdd1">
+<div id="outline-container-org21fb324" class="outline-3">
+<h3 id="org21fb324"><code>routes.clj</code></h3>
+<div class="outline-text-3" id="text-org21fb324">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -517,21 +517,21 @@ handlers stay two lines.
 </div>
 </div>
 </div>
-<div id="outline-container-org4eac311" class="outline-2">
-<h2 id="org4eac311">Client</h2>
-<div class="outline-text-2" id="text-org4eac311">
+<div id="outline-container-orgb503db0" class="outline-2">
+<h2 id="orgb503db0">Client</h2>
+<div class="outline-text-2" id="text-orgb503db0">
 </div>
-<div id="outline-container-orgfa0eac8" class="outline-3">
-<h3 id="orgfa0eac8"><code>player.cljs</code></h3>
-<div class="outline-text-3" id="text-orgfa0eac8">
+<div id="outline-container-org8ee3f49" class="outline-3">
+<h3 id="org8ee3f49"><code>player.cljs</code></h3>
+<div class="outline-text-3" id="text-org8ee3f49">
 <p>
 <code>(defn attach! [ctx url] (.attachSource ctx url))</code>.
 </p>
 </div>
 </div>
-<div id="outline-container-orga01b8fb" class="outline-3">
-<h3 id="orga01b8fb"><code>watch.cljs</code></h3>
-<div class="outline-text-3" id="text-orga01b8fb">
+<div id="outline-container-orgaefeaa8" class="outline-3">
+<h3 id="orgaefeaa8"><code>watch.cljs</code></h3>
+<div class="outline-text-3" id="text-orgaefeaa8">
 <ul class="org-ul">
 <li><code>st</code> gains <code>"queue" [] "vid" nil "ended" false</code>.</li>
 <li><code>welcome</code>: set <code>queue</code>, <code>vid</code>, title. If the player exists and
@@ -581,17 +581,17 @@ rows are clickable → <code>cmd jump :video id</code>; host row gains "prev" an
 </ul>
 </div>
 </div>
-<div id="outline-container-org5deb520" class="outline-3">
-<h3 id="org5deb520"><code>lobby.cljs</code></h3>
-<div class="outline-text-3" id="text-org5deb520">
+<div id="outline-container-orgd3e50b1" class="outline-3">
+<h3 id="orgd3e50b1"><code>lobby.cljs</code></h3>
+<div class="outline-text-3" id="text-orgd3e50b1">
 <p>
 Card: <code>:title</code>, then a muted line <code>now: &lt;:now&gt; · &lt;:items&gt; in the queue</code>.
 </p>
 </div>
 </div>
-<div id="outline-container-org3b497b2" class="outline-3">
-<h3 id="org3b497b2"><code>admin.cljs</code></h3>
-<div class="outline-text-3" id="text-org3b497b2">
+<div id="outline-container-org3b20d51" class="outline-3">
+<h3 id="org3b20d51"><code>admin.cljs</code></h3>
+<div class="outline-text-3" id="text-org3b20d51">
 <ul class="org-ul">
 <li>Rooms table: title cell becomes an inline editable text (<code>onchange</code> →
 <code>PATCH {:title}</code>), a new "queue" cell showing <code>n items</code>, and the row gets
@@ -609,9 +609,9 @@ from the row.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org589b8e2" class="outline-3">
-<h3 id="org589b8e2">Revision (2026-10-27): part 3, the watch page, with Nathan's calls</h3>
-<div class="outline-text-3" id="text-org589b8e2">
+<div id="outline-container-org4a0f415" class="outline-3">
+<h3 id="org4a0f415">Revision (2026-10-27): part 3, the watch page, with Nathan's calls</h3>
+<div class="outline-text-3" id="text-org4a0f415">
 <p>
 Parts 1 and 2 shipped as #62 and #67 (data model, server, routes, admin
 editor). What follows replaces the <code>watch.cljs</code> bullets above where they
@@ -694,9 +694,9 @@ hand) were not run by the agents; part 3's verification includes them.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-org3ed616a" class="outline-2">
-<h2 id="org3ed616a">Flow</h2>
-<div class="outline-text-2" id="text-org3ed616a">
+<div id="outline-container-orgd8d26a4" class="outline-2">
+<h2 id="orgd8d26a4">Flow</h2>
+<div class="outline-text-2" id="text-orgd8d26a4">
 <p>
 Step through with the arrows. Cards show what each store holds after the
 highlighted hop.
@@ -903,16 +903,16 @@ orgPlanSequence('binge', {
 </script>
 </div>
 </div>
-<div id="outline-container-org54852e2" class="outline-2">
-<h2 id="org54852e2">Tests</h2>
-<div class="outline-text-2" id="text-org54852e2">
+<div id="outline-container-orgd35a308" class="outline-2">
+<h2 id="orgd35a308">Tests</h2>
+<div class="outline-text-2" id="text-orgd35a308">
 <p>
 All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </p>
 </div>
-<div id="outline-container-org28f672a" class="outline-3">
-<h3 id="org28f672a"><code>db_test.clj</code></h3>
-<div class="outline-text-3" id="text-org28f672a">
+<div id="outline-container-org330c4dd" class="outline-3">
+<h3 id="org330c4dd"><code>db_test.clj</code></h3>
+<div class="outline-text-3" id="text-org330c4dd">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -946,9 +946,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-org82ade39" class="outline-3">
-<h3 id="org82ade39"><code>repos_test.clj</code></h3>
-<div class="outline-text-3" id="text-org82ade39">
+<div id="outline-container-orge77ad21" class="outline-3">
+<h3 id="orge77ad21"><code>repos_test.clj</code></h3>
+<div class="outline-text-3" id="text-orge77ad21">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -1017,9 +1017,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-orgb1d4062" class="outline-3">
-<h3 id="orgb1d4062"><code>sync_core_test.clj</code></h3>
-<div class="outline-text-3" id="text-orgb1d4062">
+<div id="outline-container-org7c3316f" class="outline-3">
+<h3 id="org7c3316f"><code>sync_core_test.clj</code></h3>
+<div class="outline-text-3" id="text-org7c3316f">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -1048,9 +1048,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-orgb83c519" class="outline-3">
-<h3 id="orgb83c519"><code>sync_service_test.clj</code> (using <code>run</code>)</h3>
-<div class="outline-text-3" id="text-orgb83c519">
+<div id="outline-container-orgcaf5ce9" class="outline-3">
+<h3 id="orgcaf5ce9"><code>sync_service_test.clj</code> (using <code>run</code>)</h3>
+<div class="outline-text-3" id="text-orgcaf5ce9">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -1104,9 +1104,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-org834bee7" class="outline-3">
-<h3 id="org834bee7"><code>routes_test.clj</code></h3>
-<div class="outline-text-3" id="text-org834bee7">
+<div id="outline-container-org7cd696f" class="outline-3">
+<h3 id="org7cd696f"><code>routes_test.clj</code></h3>
+<div class="outline-text-3" id="text-org7cd696f">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -1150,9 +1150,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-org6711c73" class="outline-3">
-<h3 id="org6711c73"><code>ws_test.clj</code></h3>
-<div class="outline-text-3" id="text-org6711c73">
+<div id="outline-container-orgc825244" class="outline-3">
+<h3 id="orgc825244"><code>ws_test.clj</code></h3>
+<div class="outline-text-3" id="text-orgc825244">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -1191,9 +1191,9 @@ All in the existing files unless noted; <code>with-tmp</code> from the lockdown.
 </table>
 </div>
 </div>
-<div id="outline-container-org90caf15" class="outline-3">
-<h3 id="org90caf15">Journeys (the Playwright plan's harness)</h3>
-<div class="outline-text-3" id="text-org90caf15">
+<div id="outline-container-orgef2969d" class="outline-3">
+<h3 id="orgef2969d">Journeys (the Playwright plan's harness)</h3>
+<div class="outline-text-3" id="text-orgef2969d">
 <p>
 New spec <code>journeys/playlists.cljs</code>; <code>api.cljs</code> gains <code>add-item!</code>,
 <code>remove-item!</code>, <code>reorder!</code>; <code>goobProbe()</code> gains <code>:vid</code> (the current video
@@ -1278,9 +1278,9 @@ shared clip is 60 s; journeys that need the end seek the host to
 </div>
 </div>
 </div>
-<div id="outline-container-orgd467d5e" class="outline-2">
-<h2 id="orgd467d5e">Risks and open questions</h2>
-<div class="outline-text-2" id="text-orgd467d5e">
+<div id="outline-container-org4eb138d" class="outline-2">
+<h2 id="org4eb138d">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org4eb138d">
 <ul class="org-ul">
 <li><b>FK on for real is the riskiest line in the plan.</b> It could reject writes
 that silently succeeded before. Mitigations: migration 003 deletes
@@ -1321,9 +1321,9 @@ close; it is one branch to flip.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org48ec08e" class="outline-2">
-<h2 id="org48ec08e">Verification</h2>
-<div class="outline-text-2" id="text-org48ec08e">
+<div id="outline-container-org343ee3f" class="outline-2">
+<h2 id="org343ee3f">Verification</h2>
+<div class="outline-text-2" id="text-org343ee3f">
 <ol class="org-ol">
 <li><code>make test</code>: all lockdown and autoplay tests still pass; the new tests
 above pass; assertion audit on each new test (break the branch, confirm
@@ -1345,9 +1345,9 @@ console by hand: build a three-item queue, rename the room, try to
 delete a queued video from the library and read the 409 toast.</li>
 </ol>
 </div>
-<div id="outline-container-org7a6f250" class="outline-3">
-<h3 id="org7a6f250">Verified (2026-10-27): steps 3 and 6, run after parts 1 and 2 shipped</h3>
-<div class="outline-text-3" id="text-org7a6f250">
+<div id="outline-container-org1182990" class="outline-3">
+<h3 id="org1182990">Verified (2026-10-27): steps 3 and 6, run after parts 1 and 2 shipped</h3>
+<div class="outline-text-3" id="text-org1182990">
 <p>
 Both steps were skipped when parts 1 and 2 went in; run on branch
 <code>verification-debt</code> (off main at <code>5c8ede9</code>) in the dev and e2e podman
@@ -1355,9 +1355,9 @@ images. Nothing in the code was changed; the two bugs found are filed as
 issues, not fixed here.
 </p>
 </div>
-<div id="outline-container-org06b28cb" class="outline-4">
-<h4 id="org06b28cb">Step 3: migration on a real pre-003 database — PASS</h4>
-<div class="outline-text-4" id="text-org06b28cb">
+<div id="outline-container-orga0407ff" class="outline-4">
+<h4 id="orga0407ff">Step 3: migration on a real pre-003 database — PASS</h4>
+<div class="outline-text-4" id="text-orga0407ff">
 <p>
 The fixture was built with the repo's own code at <code>aaa7630^</code> (the commit
 before 003): <code>db/init!</code> with 001+002, five videos through
@@ -1367,7 +1367,7 @@ still <code>uploaded</code>), four rooms through <code>repos.room/create!</code>
 <code>PRAGMA foreign_keys=OFF</code> connection to leave the orphan the FK-off era
 could produce. Pre-003 <code>foreign_key_check</code> reported it:
 </p>
-<pre class="example" id="org340abfc">
+<pre class="example" id="orgea41b7b">
 migrations applied: [001-init.sql 002-room-control.sql]
 foreign_key_check (pre-003): [{:table rooms, :rowid 4, :parent videos, :fkid 0}]
 </pre>
@@ -1375,7 +1375,7 @@ foreign_key_check (pre-003): [{:table rooms, :rowid 4, :parent videos, :fkid 0}]
 The current tree started on that storage (<code>clojure -M:dev -m goob-toob.core</code>,
 <code>STORAGE_DIR</code> at the fixture, <code>ADMIN_PASSWORD</code> set, <code>PORT=8080</code>):
 </p>
-<pre class="example" id="orga5dcf62">
+<pre class="example" id="org3c074d9">
 15:15:31.367 goob-toob dev
 15:15:31.477 migrated 003-room-items.sql
 15:15:31.482 transcode workers: 1
@@ -1407,9 +1407,9 @@ a migrated room was welcomed with <code>:video-id vid-s01e01</code>, a one-item
 </p>
 </div>
 </div>
-<div id="outline-container-org1e65ca6" class="outline-4">
-<h4 id="org1e65ca6">Step 6: restart mid-party — PASS for the model, two findings</h4>
-<div class="outline-text-4" id="text-org1e65ca6">
+<div id="outline-container-org7d24165" class="outline-4">
+<h4 id="org7d24165">Step 6: restart mid-party — PASS for the model, two findings</h4>
+<div class="outline-text-4" id="text-org7d24165">
 <p>
 Driven with Playwright (standalone Node script in the e2e image, chromium
 with <code>--autoplay-policy=no-user-gesture-required</code>): three lavfi clips
@@ -1418,7 +1418,7 @@ host tab (admin cookie) and a viewer tab, host presses ▶ play, 10 s of
 playback, then <code>SIGKILL</code> on the server's process group and a restart on
 the same storage.
 </p>
-<pre class="example" id="orgce46ae1">
+<pre class="example" id="org89820eb">
 15:21:00.431 before kill  host:   title="clipA" currentTime=10.15 expected=10.26 paused=false playing=true
 15:21:00.431 before kill  viewer: title="clipA" currentTime=10.15 expected=10.27 paused=false playing=true
 15:21:00.557 SIGKILL server process group (pid 9)
@@ -1458,9 +1458,9 @@ the policy ignores a client that never reports.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org5b77522" class="outline-4">
-<h4 id="org5b77522">Step 6: admin console by hand — PASS</h4>
-<div class="outline-text-4" id="text-org5b77522">
+<div id="outline-container-orgd227a20" class="outline-4">
+<h4 id="orgd227a20">Step 6: admin console by hand — PASS</h4>
+<div class="outline-text-4" id="text-orgd227a20">
 <p>
 Same script, fresh login after the restart, <code>/admin</code> in a 1280×1000
 context:
@@ -1491,7 +1491,7 @@ and are not in the repo; the PR lists their paths.
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-21</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-27 Tue 10:24</p>
+<p class="date">Created: 2026-10-27 Tue 12:06</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
