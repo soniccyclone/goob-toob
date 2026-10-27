@@ -333,17 +333,112 @@
 (defn- near-bottom? [el]
   (< (- (.-scrollHeight el) (.-scrollTop el) (.-clientHeight el)) 40))
 
+(defn- bubble [msg]
+  (h :div.bubble
+     (h :span.who {:style (str "color:" (ui/nick-color (:from msg)))} (:from msg))
+     (h :div (:text msg))))
+
 (defn- append-chat! [log-el pill-el msg]
   ;; stick to the bottom only if the reader was already there; otherwise
   ;; surface the "new messages" pill and leave their scroll alone
   (let [stick (near-bottom? log-el)]
-    (ui/add! log-el
-      (h :div.bubble
-         (h :span.who {:style (str "color:" (ui/nick-color (:from msg)))} (:from msg))
-         (h :div (:text msg))))
+    (ui/add! log-el (bubble msg))
     (if stick
       (set! (.-scrollTop log-el) (.-scrollHeight log-el))
       (set! (.-display (.-style pill-el)) "block"))))
+
+;; ---- fullscreen (#58) ----
+;; The fullscreen target is the stage *wrapper*, not the <video>: nothing can
+;; draw over a fullscreen element but its own children, and the chat overlay
+;; is a sibling of the video inside the wrapper. Our ⛶ button and a
+;; double-click on the picture go through here; controlslist=nofullscreen
+;; hides the native fullscreen button where that is honoured (Chromium).
+;; Where it is not (Firefox, Safari) the native button still fullscreens the
+;; bare element, and that path simply has no overlay; Firefox also eats the
+;; double-click inside its own controls (page listeners never see it), so
+;; there only the button reaches the wrapper.
+
+(def ^:private overlay-keep 6)
+(def ^:private overlay-ms 8000)
+
+(defn- fs-element []
+  (or (.-fullscreenElement js/document) (.-webkitFullscreenElement js/document)))
+
+(defn- request-fs! [^js wrap ^js video]
+  (try
+    (cond
+      (.-requestFullscreen wrap)
+      (some-> (.requestFullscreen wrap) (.catch (fn [_] nil)))
+
+      (.-webkitRequestFullscreen wrap)
+      (.webkitRequestFullscreen wrap)
+
+      ;; iOS Safari fullscreens nothing but a <video>: no overlay there
+      (.-webkitEnterFullscreen video)
+      (.webkitEnterFullscreen video))
+    (catch js/Error _ nil)))
+
+(defn- exit-fs! []
+  (try
+    (cond (.-exitFullscreen js/document) (some-> (.exitFullscreen js/document) (.catch (fn [_] nil)))
+          (.-webkitExitFullscreen js/document) (.webkitExitFullscreen js/document))
+    (catch js/Error _ nil)))
+
+(defn- toggle-fs! [wrap video]
+  (if (fs-element) (exit-fs!) (request-fs! wrap video)))
+
+(defn- picture-ratio!
+  "Tell the stylesheet the picture's real aspect ratio (--ar on the wrapper)
+  so the viewport-height cap keeps the border hugging the video."
+  [^js wrap ^js video]
+  (let [w (.-videoWidth video) h (.-videoHeight video)]
+    (when (and (pos? w) (pos? h))
+      (.setProperty (.-style wrap) "--ar" (str w " / " h)))))
+
+(defn- overlay-chat!
+  "The Twitch-style copy of a chat bubble over the fullscreen picture: it
+  fades out on its own (CSS) and is dropped after overlay-ms; only the last
+  overlay-keep stay. Off when the viewer's setting is off. The overlay is
+  display:none outside fullscreen, so appending here is cheap and a viewer
+  who goes fullscreen sees the last few seconds of chat straight away."
+  [^js st overlay msg]
+  (when (.-fschat st)
+    (let [b (bubble msg)]
+      (ui/add! overlay b)
+      (while (> (.-childElementCount overlay) overlay-keep)
+        (.remove (.-firstElementChild overlay)))
+      (js/setTimeout #(.remove b) overlay-ms))))
+
+(defn- fs-setting
+  "The per-viewer \"chat over fullscreen video\" checkbox, remembered in
+  localStorage (goob-fschat), default on."
+  [^js st overlay]
+  (let [on? (not= "off" (ui/store-get "goob-fschat"))
+        box (h :input {:type "checkbox" :checked on?})]
+    (set! (.-fschat st) on?)
+    (set! (.-onchange box)
+          #(let [on? (.-checked box)]
+             (set! (.-fschat st) on?)
+             (ui/store-set! "goob-fschat" (if on? "on" "off"))
+             (when-not on? (ui/clear! overlay))))
+    (h :label.setting {:title "show chat messages over the picture while fullscreen"}
+       box "chat over fullscreen video")))
+
+(defn- stage!
+  "Wire the stage: ⛶ and double-click fullscreen the wrapper, the button's
+  title follows the state, the picture ratio feeds the layout cap."
+  [^js wrap ^js video ^js fs-btn]
+  (.setAttribute video "controlslist" "nofullscreen")
+  (set! (.-onclick fs-btn) #(toggle-fs! wrap video))
+  ;; like the transport buttons: a click must not leave focus on the button,
+  ;; or the next Space would re-press it instead of reaching the #54 keys
+  (set! (.-onmousedown fs-btn) #(.preventDefault %))
+  (.addEventListener video "dblclick" #(do (.preventDefault %) (toggle-fs! wrap video)))
+  (doseq [ev ["fullscreenchange" "webkitfullscreenchange"]]
+    (.addEventListener js/document ev
+      #(.setAttribute fs-btn "title" (if (fs-element) "exit fullscreen" "fullscreen"))))
+  (doseq [ev ["loadedmetadata" "resize"]]
+    (.addEventListener video ev #(picture-ratio! wrap video))))
 
 (defn- lock-height! [^js st idx]
   (set! (.-auto st) false)
@@ -375,7 +470,7 @@
     sel))
 
 (defn- connect! [^js st token refs]
-  (let [{:keys [^js video title-el seek res-slot peers-el chat-log new-msgs admin-link
+  (let [{:keys [^js video title-el seek res-slot peers-el chat-log fs-chat new-msgs admin-link
                 lag-hint slow-note]} refs
         proto (if (= "https:" (.-protocol js/location)) "wss:" "ws:")
         url (str proto "//" (.-host js/location) "/ws/room/" token
@@ -435,7 +530,8 @@
                                                  :rtt (Math/round (:rtt sample))}))
                       (set! (.-offset st) after))
                     (settle! st token video))
-          "chat"  (append-chat! chat-log new-msgs msg)
+          "chat"  (do (append-chat! chat-log new-msgs msg)
+                      (overlay-chat! st fs-chat msg))
           "peers" (render-peers! peers-el (:peers msg) (.-ishost st))
           "error" (set! (.-textContent title-el) (:message msg))
           nil))
@@ -449,7 +545,9 @@
         _ (do (set! (.-className video) "stage")
               (.setAttribute video "controls" "")
               (.setAttribute video "playsinline" ""))
-        stage-wrap (h :div.stage-wrap video)
+        fs-chat (h :div.fs-chat {:aria-hidden "true"})
+        fs-btn (h :button.fs-btn {:title "fullscreen"} "⛶")
+        stage-wrap (h :div.stage-wrap video fs-chat fs-btn)
         lag-hint (h :span.muted {})
         slow-note (h :span.muted {})
         title-el (h :h3 {:style "margin:0;color:var(--slime)"} "joining the goo…")
@@ -540,7 +638,8 @@
                (wsx/send! (.-ws st) {:type "cmd" :op "seek"
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
-    (ui/add! viewer-row res-slot (h :span.muted "picture quality"))
+    (stage! stage-wrap video fs-btn)
+    (ui/add! viewer-row res-slot (h :span.muted "picture quality") (fs-setting st fs-chat))
     (ui/add! host-row back-btn play-btn pause-btn fwd-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
     {:video video
@@ -565,7 +664,7 @@
                           chat-input
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
      :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
-     :chat-log chat-log :peers-el peers-el :host-row host-row
+     :chat-log chat-log :fs-chat fs-chat :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :slow-note slow-note}))
 
 (defn- fullscreen? []
@@ -633,6 +732,8 @@
 (defn- mount! [^js st token root]
   (let [refs (shell st)
         started (js-obj "done" false)]
+    ;; the stylesheet lets the watch page run wide (YouTube-style stage)
+    (.add (.-classList (.-body js/document)) "watching")
     (connect! st token refs)
     (keys! st (:video refs))
     (js/setInterval

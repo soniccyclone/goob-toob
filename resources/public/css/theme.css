@@ -103,7 +103,9 @@ input[type=text], input[type=password], select {
 input:focus, select:focus { box-shadow: 0 0 0 3px rgba(143, 224, 50, 0.4); }
 
 /* ---- watch page ---- */
-.watch-layout { display: grid; grid-template-columns: 1fr 300px; gap: 1rem; }
+/* the watch page runs edge to edge, YouTube-style: the stage gets the width */
+body.watching main { max-width: none; }
+.watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; }
 @media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
 
 video.stage {
@@ -114,10 +116,42 @@ video.stage {
 }
 /* ---- stage: the video's own controls are the play affordance ---- */
 .stage-wrap {
+  --ar: 16 / 9;           /* the picture's real ratio once its metadata is in (watch.cljs) */
   position: relative;
   border: 3px solid var(--slime);
   display: block;
+  /* fill the column, but no taller than the viewport less the title and
+     the control rows, so they stay reachable; the cap goes through the
+     width so the border keeps hugging the picture */
+  width: min(100%, calc((100vh - 15rem) * var(--ar)));
+  margin-left: auto; margin-right: auto;
 }
+/* the wrapper is the fullscreen target (#58): black letterbox, no border */
+.stage-wrap:fullscreen { width: 100%; height: 100%; border: none; background: #000; }
+.stage-wrap:fullscreen video.stage { width: 100%; height: 100%; object-fit: contain; box-shadow: none; }
+.fs-btn {
+  position: absolute; top: 0.5rem; right: 0.5rem; z-index: 2;
+  border: 2px solid var(--slime); border-radius: 999px; cursor: pointer;
+  background: rgba(7, 35, 31, 0.75); color: var(--slime-brite);
+  font: inherit; font-weight: 800; line-height: 1; padding: 0.35rem 0.55rem;
+  opacity: 0.45; transition: opacity 0.15s ease;
+}
+.stage-wrap:hover .fs-btn, .fs-btn:focus-visible { opacity: 1; }
+/* chat over the fullscreen picture: bottom-left, above the native controls,
+   see-through to clicks and keys, each bubble fades on its own */
+.fs-chat {
+  display: none; position: absolute; left: 1.2rem; bottom: 5rem; z-index: 1;
+  width: min(40%, 420px);
+  flex-direction: column; gap: 0.45rem;
+  pointer-events: none;
+}
+.stage-wrap:fullscreen .fs-chat { display: flex; }
+.fs-chat .bubble {
+  background: rgba(7, 35, 31, 0.72);
+  text-shadow: 0 1px 2px #000;
+  animation: bob 0.5s ease, fs-fade 8s ease forwards;
+}
+@keyframes fs-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 .controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .seek { flex: 1; accent-color: var(--slime); min-width: 120px; }
 .badge {
@@ -214,8 +248,8 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
   animation: toast-in 0.25s ease; max-width: 70vw;
 }
 @keyframes toast-in { from { transform: translateY(16px); opacity: 0; } }
-.cohost { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; }
-.cohost input { accent-color: var(--slime); width: 1.05rem; height: 1.05rem; }
+.cohost, .setting { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; }
+.cohost input, .setting input { accent-color: var(--slime); width: 1.05rem; height: 1.05rem; }
 
 /* ---- admin: room rename + queue editor ---- */
 .editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }
