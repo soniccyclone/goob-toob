@@ -6,6 +6,7 @@
             [goob-toob.db :as db]
             [goob-toob.log :as log]
             [goob-toob.routes :as routes]
+            [goob-toob.session-store :as session-store]
             [goob-toob.services.transcode :as transcode]
             [goob-toob.services.sync :as sync])
   (:gen-class))
@@ -25,6 +26,7 @@
         desktop? (= :desktop (:mode cfg))]
     (log/info "goob-toob" (version))
     (db/init! (:db-path cfg))
+    (session-store/prune! (db/db))
     (transcode/start!)
     ;; SIGTERM (the desktop shell's kill on window close) lands here: end any
     ;; ffmpeg mid-encode instead of orphaning it (#49)

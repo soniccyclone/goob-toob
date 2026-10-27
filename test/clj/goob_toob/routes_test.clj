@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [goob-toob.config :as config]
+            [goob-toob.db :as db]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
             [goob-toob.repos.video :as videos]
@@ -98,6 +99,29 @@
     (reset! routes/login-attempts {"127.0.0.1" (vec (repeat 5 stale))})
     (is (= 200 (:status (call app :post "/api/login" :body {:password "pw"}))))
     (is (= [true] (map #(< stale %) (get @routes/login-attempts "127.0.0.1"))))))
+
+(defn- restart!
+  "What a server restart does to the app: a fresh datasource on the same
+  database file and a fresh handler (with its own session store)."
+  []
+  (db/init! (str (config/storage-dir) "/test.db"))
+  (container-app))
+
+(deftest an-admin-login-survives-a-restart
+  (let [cookie (login! (container-app))
+        app    (restart!)]
+    (is (string? cookie))
+    (is (= 200 (:status (call app :get "/api/admin/me" :cookie cookie))))
+    (is (true? (:admin (:body (call app :get "/api/me" :cookie cookie)))))
+    (is (= 401 (:status (call app :get "/api/admin/me"))) "...only with the cookie")))
+
+(deftest a-logout-survives-a-restart-too
+  (let [app    (container-app)
+        cookie (login! app)]
+    (is (= 200 (:status (call app :post "/api/logout" :cookie cookie))))
+    (let [app (restart!)]
+      (is (= 401 (:status (call app :get "/api/admin/me" :cookie cookie))))
+      (is (false? (:admin (:body (call app :get "/api/me" :cookie cookie))))))))
 
 (deftest parse-range-forms
   (let [pr #(#'routes/parse-range % 1000)]

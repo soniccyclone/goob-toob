@@ -3,7 +3,6 @@
   (:require [reitit.ring :as ring]
             [ring.middleware.json :refer [wrap-json-params wrap-json-response]]
             [ring.middleware.session :refer [wrap-session]]
-            [ring.middleware.session.memory :refer [memory-store]]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
             [ring.middleware.multipart-params :refer [wrap-multipart-params]]
@@ -16,8 +15,10 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.repos.room :as rooms]
             [goob-toob.repos.storage :as storage]
+            [goob-toob.db :as db]
             [goob-toob.services.sync :as sync]
             [goob-toob.services.transcode :as transcode]
+            [goob-toob.session-store :as session-store]
             [goob-toob.ws :as ws])
   (:import [java.io RandomAccessFile]
            [java.security MessageDigest]))
@@ -275,12 +276,13 @@
                (update req :params merge pp)
                req))))
 
-;; One shared session store: reitit compiles the middleware chain per
+;; One session store per app: reitit compiles the middleware chain per
 ;; endpoint, so wrap-session's default store would give every endpoint its
-;; own isolated store (login writes to one, /api/me reads another).
-(def session-store (memory-store))
-(def common [wrap-path-params wrap-params wrap-keyword-params
-             #(wrap-session % {:store session-store})])
+;; own isolated store (login writes to one, /api/me reads another). The
+;; store itself is the sessions table (#71), so a restart keeps every login.
+(defn- common [store]
+  [wrap-path-params wrap-params wrap-keyword-params
+   #(wrap-session % {:store store})])
 (def json-body #(wrap-json-params % {:key-fn keyword}))
 
 (defn app [{:keys [admin? login?]}]
@@ -309,7 +311,7 @@
                              ["/rooms/:id/live" {:get room-live}]]]))
         router
         (ring/router
-         (cond-> ["" {:middleware common}
+         (cond-> ["" {:middleware (common (session-store/sql-store db/db))}
                   api
                   ["/dash/:video-id/*path" {:get dash-file}]
                   ["/ws/room/:token" {:get ws/endpoint}]
