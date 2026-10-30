@@ -1,0 +1,236 @@
+#+TITLE: Audio and subtitle tracks: everyone in sync, each in their own language
+#+OPTIONS: toc:2 num:nil ^:nil
+#+DATE: 2026-10-30
+#+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
+# Status: draft 2026-10-30; waiting for Nathan's approval.
+
+* Goal
+Anime rips carry two audio tracks and a subtitle track; today the transcode
+keeps the first audio stream only (=-map 0:a:0=) and drops every subtitle.
+After this change the DASH output carries every audio language as its own
+adaptation set and every text subtitle as a WebVTT sidecar, and each viewer
+picks their audio and subtitle language in the viewer row, remembered per
+viewer, never room state. The room clock does not know: a viewer on the
+Japanese track with English subs and one on the dub are in the same sync
+as today. Nathan's framing: "watch anime in sync together but in whatever
+language they want."
+
+* Findings
+- ~src/clj/goob_toob/services/transcode.clj:85~ maps =0:a:0= and nothing
+  else; =probe-media= keeps only =:audio?= (a boolean) from ffprobe, which
+  already returns every stream with =tags.language=, =tags.title=,
+  =channels= and =disposition.default=. The adaptation sets are
+  =id=0,streams=v id=1,streams=a=, the shorthand that puts every audio
+  output into one set (ffmpeg's dash muxer would then present two
+  languages as one switchable "quality", which is wrong).
+- The gpu-encoding branch (in flight) splits the command into
+  =rung-bitrates= and =dash-args=; the audio side stays on the CPU there,
+  so this plan edits =dash-args= and the audio maps only, whatever engine
+  encodes the video.
+- ~resources/migrations/001-init.sql~: =videos= has no column for track
+  metadata. =repos/video.clj= has =insert!=, =set-status!=,
+  =set-duration!=; the row flows to the client through
+  =sync/video-descriptor= (~src/clj/goob_toob/services/sync.clj:41~:
+  =:id :title :duration :dash=) in the welcome and the =item= state.
+- ~src/clj/goob_toob/routes.clj:315~ =content-type-for= knows =.mpd=,
+  =.m4s=, =.init=, =.m4a=; a =.vtt= would be served as octet-stream.
+  =dash-file= serves anything under the video's dash dir with Range
+  support, so sidecars need only a content type.
+- ~src/cljs/goob_toob/player.cljs~ wraps dash.js 4.7.4 for quality only.
+  dash.js has what the client side needs: =setInitialMediaSettingsFor
+  ("audio", {lang})= before =attachSource=, =getTracksFor("audio")=,
+  =getCurrentTrackFor=, =setCurrentTrack(track)= at runtime; text tracks
+  could go through dash.js too, but native =<track>= elements on the video
+  are simpler, work with MSE, render inside the fullscreen wrapper of #58,
+  and switch with =track.mode=.
+- ~src/cljs/goob_toob/watch.cljs~ viewer row: picture quality, the volume
+  boost (#56), the fullscreen-chat checkbox. =st= has =vid=, =queue=, the
+  probe =goobProbe()=. =switch-item!= re-attaches the source on an item
+  change, which is where the audio preference must be re-applied.
+- =KEEP_ORIGINAL= defaults to true (~src/clj/goob_toob/config.clj:50~), so
+  most library items still have their original and can be re-encoded in
+  place; an item without one needs a re-upload.
+- Nathan's test file =test_data/[a-s]_nabari_no_ou_-_01…mkv=: 960x544
+  H.264, audio 0 =eng= AAC 5.1 (default), audio 1 =jpn= AAC stereo,
+  subtitle 2 =eng= ASS, plus a TTF attachment. 24 minutes.
+- The e2e fixture (~e2e/src/goob_toob/e2e/setup.cljs:17~) is a lavfi clip
+  with one 440 Hz tone; a second tone and a tiny SRT make a dual-audio
+  fixture with no new binaries.
+
+* Decisions
+- *Per viewer, never room state.* Audio and subtitle choice live in
+  =localStorage= (=goob-audio=, =goob-subs=, language codes). Nothing on
+  the wire, nothing in the sync policy, nothing a host can force.
+- *Every audio language is its own adaptation set*, stereo AAC 128k each
+  (the existing downmix: Chrome rejects ffmpeg's multi-channel AAC).
+  Language from =tags.language= (ISO 639-2 as the rips carry it), falling
+  back to =und= plus the index; =tags.title= shown when present ("Commentary").
+  DASH only downloads the selected set, so extra languages cost disk, not
+  bandwidth.
+- *Text subtitles become WebVTT sidecars* (=subs-<lang>[-<n>].vtt= in the
+  dash dir): ASS, SSA, SubRip, WebVTT, mov_text. ASS positioning, karaoke
+  and fonts are lost; dialogue survives. A real ASS renderer (JASSUB) is a
+  possible later step, not this one. *Bitmap subtitles* (PGS, DVD, DVB)
+  are listed as unavailable and skipped.
+- *Defaults*: audio = the viewer's stored choice, else the first track
+  whose language matches =navigator.language=, else the source's default
+  track. Subtitles = stored choice, else off. The selects hide themselves
+  when there is one audio track and no subtitles, so a plain video's row
+  looks as it does now.
+- *Re-encode*: an admin "re-encode" per library item requeues it when the
+  original is still there; otherwise the button reads "re-upload".
+- *Rooms with mixed items*: the preference is a language, resolved per item
+  on switch; an item without that language falls back to its default, and
+  the select shows what is playing.
+
+* Plan
+1. *Probe keeps the tracks.* ~transcode.clj~ =probe-media= returns
+   =:audio [{:i :lang :title :channels :default?}]= (ffprobe order) and
+   =:subs [{:i :lang :title :codec :text?}]=, =:text?= from a codec
+   allowlist. =:audio?= stays for the callers that have it. Pure fn,
+   tested on the Nabari ffprobe JSON (saved as a test fixture) and on a
+   stream-less probe.
+2. *Migration 007* adds =videos.tracks TEXT= (JSON of the probe's audio and
+   subs, with each sub's output file name). ~repos/video.clj~ gains
+   =set-tracks!= and reads the column into =:tracks=.
+3. *ffmpeg command.* In =dash-args= / the maps: =-map 0:a:<i>= per audio
+   stream, =-c:a:<k> aac -b:a:<k> 128k -ac:a:<k> 2=,
+   =-metadata:s:a:<k> language=<lang>= (and =title=), adaptation sets by
+   output index: =id=0,streams=0,…,<n-1> id=1,streams=<n> id=2,streams=<n+1>…=
+   so each language is its own set and the muxer writes its =lang=
+   attribute. Subtitles as a second output in the same command:
+   =-map 0:s:<i> -c:s webvtt <dash-dir>/subs-<lang>.vtt= per text track
+   (ASS → WebVTT is a built-in conversion). Bitmap tracks are not mapped.
+   Tests pin the maps, the metadata, the adaptation-set string and the
+   sidecar outputs for the Nabari shape, one-audio, no-audio.
+4. *Serve =.vtt=* as =text/vtt; charset=utf-8= in =content-type-for=.
+5. *Descriptor.* =video-descriptor= adds =:audio= and =:subs= (each sub
+   with its =:url=); the welcome and the =item= state carry them.
+6. *Player wrapper.* ~player.cljs~: =set-initial-audio! ctx lang= (before
+   attach), =audio-tracks ctx= (=getTracksFor= → =[{:lang :label :index}]=),
+   =set-audio! ctx lang= (=setCurrentTrack=), =on ctx "streamInitialized"=
+   already there to refresh the select; =current-audio ctx=.
+7. *Watch page.* Viewer row gains two selects after picture quality:
+   "audio" (one option per track, label =title= or the language name) and
+   "subtitles" ("off" plus one per text track). =st= gains =audio= and
+   =subs= (language codes, from storage). On welcome/item:
+   =set-initial-audio!= with the resolved default, then build the selects
+   from the descriptor; after =streamInitialized= reconcile the select with
+   =current-audio=. Audio change → =set-audio!= and store; subtitle change
+   → the matching =<track>= element gets =mode "showing"=, the others
+   =hidden=, and store. =<track kind="subtitles" srclang=…
+   label=… src=…>= elements are created per item and removed on switch.
+   Probe gains =:audio-lang= and =:subs=. The lag hint and the policy are
+   untouched; a track switch flushes dash.js's audio buffer, which may show
+   as one =waiting= and must not move =currentTime= (asserted below).
+8. *Admin.* Library row gains "re-encode" (POST =/api/admin/videos/:id/
+   reencode=: status back to "uploaded", =transcode/submit!=) when
+   =original_path= exists, else a muted "re-upload for tracks"; the row
+   shows the track count ("2 audio · 1 subs").
+9. *E2E.* ~setup.cljs~ builds a second fixture clip with two audio streams
+   (440 Hz tagged =eng=, 880 Hz tagged =jpn=) and a three-cue SRT muxed into
+   an MKV via ffmpeg =-metadata:s:a:N language=…=. New spec
+   ~journeys/tracks.cljs~, module in ~shadow-cljs.edn~, group =b= in
+   ~ci.yml~:
+   | journey | steps | asserts |
+   |---|---|---|
+   | =viewers pick their own audio and stay in sync= | pair on the dual-audio clip; viewer selects =jpn=; sample 10 s | viewer probe =:audio-lang= becomes =jpn= within =:switch-within=; host stays =eng=; viewer =seeks= delta 0; drift p95 ≤ =:steady-p95=; stalls ≤ 1 (the flush) |
+   | =subtitles are a viewer's choice= | viewer picks the English subs; host leaves them off | viewer's showing track has cues (=video.textTracks= via the probe), host's has none; reload keeps both choices |
+   | =a plain clip shows no track controls= | the single-audio fixture | the audio and subtitle selects are hidden |
+   Rows added to ~plans/2026-10-21-playwright-journeys.org~.
+10. *Docs.* This plan stamped on ship; the admin help text mentions the
+    ASS limits.
+
+* Flow
+#+INCLUDE: "~/.config/opencode/skills/org-plan/diagrams/sequence.html" export html
+#+BEGIN_EXPORT html
+<div id="tracks">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('tracks', {
+  lanes: [
+    {id: 'admin', label: 'Admin', sub: 'upload'},
+    {id: 'srv', label: 'Server', sub: 'routes · transcode'},
+    {id: 'ff', label: 'ffmpeg'},
+    {id: 'db', label: 'SQLite + dash dir'},
+    {id: 'viewer', label: 'Viewer page', sub: 'watch.cljs'},
+    {id: 'dash', label: 'dash.js', sub: 'in the page'}
+  ],
+  phases: {
+    probe:  {label: '1 · Probe', tag: 'spec'},
+    encode: {label: '2 · Encode', tag: 'spec'},
+    play:   {label: '3 · Welcome and defaults', tag: 'spec'},
+    switch: {label: '4 · A viewer switches', tag: 'spec · per viewer'}
+  },
+  stores: [
+    {id: 'row', label: 'videos row'},
+    {id: 'dir', label: 'dash dir'},
+    {id: 'v', label: 'viewer'}
+  ],
+  init: {row: 'status uploaded, tracks NULL', dir: 'empty', v: 'not open'},
+  steps: [
+    {ph: 'probe', from: 'srv', to: 'ff', tag: 'built', label: 'ffprobe -show_streams',
+     note: 'transcode.clj ffprobe, unchanged; the JSON already has every stream.'},
+    {ph: 'probe', from: 'srv', to: 'srv', tag: 'spec', label: 'probe-media → :audio [eng 5.1 default, jpn 2.0] :subs [eng ass text]',
+     note: 'Step 1. Bitmap subs get :text? false and are never mapped.'},
+    {ph: 'probe', from: 'srv', to: 'db', tag: 'spec', label: 'set-tracks! (JSON)', state: {row: 'tracks: 2 audio, 1 sub (file subs-eng.vtt)'}},
+    {ph: 'encode', from: 'srv', to: 'ff', tag: 'spec', label: '-map 0:a:0 -map 0:a:1 … -metadata:s:a:1 language=jpn|-adaptation_sets id=0,streams=0,1,2 id=1,streams=3 id=2,streams=4|-map 0:s:0 -c:s webvtt subs-eng.vtt',
+     note: 'Step 3. Video rungs are outputs 0..n-1 whatever engine encodes them (gpu-encoding branch); each audio its own set so the muxer writes lang=.'},
+    {ph: 'encode', from: 'ff', to: 'db', tag: 'spec', label: 'manifest.mpd + segments + subs-eng.vtt',
+     state: {dir: 'manifest with 3 AdaptationSets (video, audio eng, audio jpn); subs-eng.vtt', row: 'status ready'}},
+    {ph: 'play', from: 'viewer', to: 'srv', tag: 'built', label: 'ws welcome', note: 'ws.clj, unchanged shape plus :audio/:subs in the descriptor (step 5).'},
+    {ph: 'play', from: 'viewer', to: 'viewer', tag: 'spec', label: 'resolve defaults|stored goob-audio? else navigator.language match? else source default|subs: stored or off',
+     note: 'Step 7. Per viewer: nothing of this reaches the room.', state: {v: 'audio jpn (browser ja-JP), subs off'}},
+    {ph: 'play', from: 'viewer', to: 'dash', tag: 'spec', label: 'setInitialMediaSettingsFor("audio", {lang: "jpn"}); attachSource(manifest)',
+     note: 'player.cljs set-initial-audio! before attach, so the first segments are already the right language.'},
+    {ph: 'play', from: 'dash', to: 'srv', tag: 'built', label: 'GET manifest, video + audio(jpn) segments only',
+     note: 'DASH fetches the selected set; the other language costs nothing on the wire.'},
+    {ph: 'play', from: 'viewer', to: 'viewer', tag: 'spec', label: '<track kind=subtitles srclang=eng src=/dash/<id>/subs-eng.vtt> mode hidden',
+     note: 'Native text track; rendered by the browser inside the <video>, so it survives the #58 wrapper fullscreen.'},
+    {ph: 'switch', from: 'viewer', to: 'dash', tag: 'spec', label: 'select audio → setCurrentTrack(eng track)',
+     note: 'dash.js flushes the audio buffer and refetches at currentTime: one possible waiting, no seek. The journey asserts seeks delta 0 and drift unchanged.',
+     state: {v: 'audio eng, subs eng showing'}},
+    {ph: 'switch', from: 'viewer', to: 'viewer', tag: 'spec', label: 'localStorage goob-audio=eng, goob-subs=eng',
+     note: 'Remembered per viewer; applied again on the next item (switch-item!) and the next visit.'}
+  ]
+});
+</script>
+#+END_EXPORT
+
+* Risks and open questions
+- *ffmpeg's dash muxer and =lang=.* dashenc writes the adaptation set's
+  =lang= from the first stream's =language= metadata; step 3 verifies it
+  on the Nabari file before anything else is built (grep the manifest). If
+  it does not, dash.js still exposes the tracks by index and the label
+  comes from our descriptor, so the UI survives; only auto-matching by
+  browser language would need the descriptor's order instead.
+- *Does =setCurrentTrack= seek?* dash.js re-buffers audio at the current
+  time; if a build moves =currentTime= by a frame the probe's =seeks=
+  counter would show it. The journey pins =seeks= delta 0. If it does
+  move, the switch marks the seek as ours (=mark-seek!=), which is a
+  landing, not a policy seek; CLAUDE.md's rule is untouched either way.
+- *ASS styling is lost.* Positioning, colours, karaoke, fonts: WebVTT keeps
+  dialogue and timing. Acceptable for a first step; a JASSUB renderer over
+  the stage is a later plan if it matters.
+- *Bitmap subtitles* cannot be converted without OCR; shown as unavailable.
+- *Disk*: one extra 128 kbit stream per language, ~1 MB/min; negligible.
+- *Existing library*: items keep working as single-audio until re-encoded;
+  =KEEP_ORIGINAL= is on by default so most can be. The re-encode runs the
+  whole ladder again (GPU, after the gpu-encoding branch).
+- *Subtitle timing vs. ladder*: sidecars are independent of DASH timing and
+  follow =currentTime=, so sync is the video's sync.
+- *Transcode on Windows*: the =.vtt= path goes through =ffmpeg-path= like
+  the manifest (forward slashes).
+
+* Verification
+1. =make test=: probe-media on the Nabari JSON yields two audio and one
+   text sub; the command has the maps, metadata, sets and the sidecar; the
+   migration applies; =.vtt= content type; descriptor shape; re-encode
+   route. Assertion audit on each new test.
+2. =make compile= clean. =make run GPU=wsl= on the Nabari file: the manifest
+   has three adaptation sets with =lang="eng"= and =lang="jpn"=,
+   =subs-eng.vtt= exists and has cues; the watch page shows both selects;
+   switching audio mid-play changes the sound and not the clock; subs
+   render; reload remembers; fullscreen shows subs.
+3. =make e2e E2E_ARGS="--project=chromium tracks"= three runs green; the
+   sync-policy journeys unchanged.
+4. One CI run with all legs green.
