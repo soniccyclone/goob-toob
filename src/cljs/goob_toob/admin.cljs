@@ -504,6 +504,9 @@
 (defn page []
   (let [root (h :div.row-gap {})
         body (h :div.row-gap {})]
+    ;; like the watch page (body.watching): the console fills the window
+    ;; instead of an 1100 px column the queue editor spills out of (#84)
+    (.add (.-classList (.-body js/document)) "admin")
     (ui/add! root body)
     (let [show-admin (fn [] (render-admin body))
           show-login (fn [] (ui/clear! body) (ui/add! body (login-view show-admin)))]
