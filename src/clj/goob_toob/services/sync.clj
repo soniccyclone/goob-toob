@@ -39,10 +39,19 @@
 (defn beat-msg [room] (assoc (state-msg room) :type "beat"))
 
 (defn video-descriptor
-  "What the watch page needs to play a video row."
+  "What the watch page needs to play a video row: the manifest, every audio
+  track as the probe saw it (one adaptation set each, in this order), the
+  text subtitles with their sidecar URLs and how many bitmap subtitles were
+  skipped. A row from before the tracks column has :audio [] :subs []."
   [v]
-  {:id (:id v) :title (:title v) :duration (:duration v)
-   :dash (str "/dash/" (:id v) "/manifest.mpd")})
+  (let [{:keys [audio subs]} (:tracks v)]
+    {:id (:id v) :title (:title v) :duration (:duration v)
+     :dash (str "/dash/" (:id v) "/manifest.mpd")
+     :audio (vec audio)
+     :subs (vec (for [s subs :when (:text s)]
+                  {:lang (:lang s) :title (:title s)
+                   :url (str "/dash/" (:id v) "/" (:file s))}))
+     :subs-unavailable (count (remove :text subs))}))
 
 (defn peers-list [room]
   (mapv (fn [[cid c]]

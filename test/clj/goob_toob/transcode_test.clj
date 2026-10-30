@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.data.json :as json]
             [goob-toob.config :as config]
             [goob-toob.repos.storage :as storage]
             [goob-toob.repos.video :as videos]
@@ -65,12 +66,13 @@
   (is (nil? (transcode/priority-cmd 4242 false))))
 
 (deftest probe-media-reads-height-audio-and-duration
-  (is (= {:height 696 :width 1920 :audio? true :duration 12.5}
+  (is (= {:height 696 :width 1920 :audio? true :duration 12.5
+          :audio [{:i 0 :lang "und" :title nil :channels nil :default false}] :subs []}
          (#'transcode/probe-media {:streams [{:codec_type "video" :height 696} {:codec_type "audio"}]
                                    :format {:duration "12.5"}}))))
 
 (deftest probe-media-defaults-when-fields-are-missing
-  (is (= {:height 1080 :width 1920 :audio? false :duration 1.0}
+  (is (= {:height 1080 :width 1920 :audio? false :duration 1.0 :audio [] :subs []}
          (#'transcode/probe-media {:streams [{:codec_type "video"}] :format {}}))))
 
 (deftest probe-media-refuses-a-file-without-video
@@ -88,7 +90,8 @@
                                     {:audio? false} config/default-ladder)]
     (is (not-any? #{"0:a:0"} cmd))
     (is (not-any? #{"-c:a"} cmd))
-    (is (= "id=0,streams=v" (second (drop-while #(not= "-adaptation_sets" %) cmd))))))
+    (is (= "id=0,streams=0,1,2,3" (second (drop-while #(not= "-adaptation_sets" %) cmd)))
+        "the four rungs, by output index, and no audio set")))
 
 (defn- script! [^java.io.File f body]
   (spit f (str "#!/bin/sh\n" body))
@@ -385,3 +388,144 @@
       (is (= 3 (count (:tried r))))
       (is (= "software (libx264)" (:label (transcode/encoder-info)))))
     (finally (reset! transcode/engine* nil))))
+
+;; ---- tracks (#85) -------------------------------------------------------------------
+
+(def ^:private nabari
+  "ffprobe of Nathan's dual-audio rip: h264 960x544, audio eng AAC 5.1
+  (default) and jpn AAC stereo, one ASS subtitle (eng), a TTF attachment."
+  (delay (json/read-str (slurp (io/resource "nabari-ffprobe.json")) :key-fn keyword)))
+
+(deftest probe-media-keeps-every-audio-track-in-order
+  (let [m (#'transcode/probe-media @nabari)]
+    (is (= {:height 544 :width 960 :audio? true} (select-keys m [:height :width :audio?])))
+    (is (= 1427.009 (:duration m)))
+    (is (= [{:i 0 :lang "eng" :title "AAC" :channels 6 :default true}
+            {:i 1 :lang "jpn" :title "ASS" :channels 2 :default false}]
+           (:audio m)))))
+
+(deftest probe-media-turns-text-subtitles-into-sidecar-names-and-ignores-attachments
+  (let [m (#'transcode/probe-media @nabari)]
+    (is (= [{:i 0 :lang "eng" :title "ASS" :codec "ass" :text true :file "subs-eng.vtt"}]
+           (:subs m)))
+    (is (= 5 (count (:streams @nabari))) "the fixture has the attachment stream the probe skips")))
+
+(defn- probe-with-subs [& subs]
+  {:streams (into [{:codec_type "video" :height 720 :width 1280} {:codec_type "audio" :channels 2}] subs)
+   :format {:duration "10.0"}})
+
+(deftest probe-media-lists-a-bitmap-subtitle-as-unavailable
+  (let [m (#'transcode/probe-media (probe-with-subs {:codec_type "subtitle" :codec_name "hdmv_pgs_subtitle"
+                                                     :tags {:language "eng"}}))]
+    (is (= [{:i 0 :lang "eng" :title nil :codec "hdmv_pgs_subtitle" :text false}] (:subs m)))
+    (is (not (contains? (first (:subs m)) :file)))))
+
+(deftest probe-media-numbers-a-second-text-subtitle-in-the-same-language
+  (let [m (#'transcode/probe-media
+           (probe-with-subs {:codec_type "subtitle" :codec_name "subrip" :tags {:language "eng" :title "Full"}}
+                            {:codec_type "subtitle" :codec_name "dvd_subtitle" :tags {:language "eng"}}
+                            {:codec_type "subtitle" :codec_name "ass" :tags {:language "eng" :title "Signs"}}
+                            {:codec_type "subtitle" :codec_name "mov_text"}))]
+    (is (= [[0 "eng" true "subs-eng.vtt"] [1 "eng" false nil] [2 "eng" true "subs-eng-2.vtt"] [3 "und" true "subs-und.vtt"]]
+           (mapv (juxt :i :lang :text :file) (:subs m)))
+        "the bitmap track in between takes no number; no language tag is und")
+    (is (= [{:i 0 :lang "und" :title nil :channels 2 :default false}] (:audio m)))))
+
+(deftest probe-media-without-audio-has-no-tracks
+  (is (= {:audio? false :audio [] :subs []}
+         (select-keys (#'transcode/probe-media {:streams [{:codec_type "video"}] :format {}})
+                      [:audio? :audio :subs]))))
+
+(defn- cmd-for [media ladder]
+  (#'transcode/ffmpeg-cmd (io/file "uploads/v1.mkv") (io/file "dash/v1/manifest.mpd") media ladder))
+
+(defn- flags-with [cmd flag] (map second (filter #(= flag (first %)) (partition 2 1 cmd))))
+
+(deftest ffmpeg-cmd-maps-every-audio-track-into-its-own-adaptation-set
+  (let [media (#'transcode/probe-media @nabari)
+        cmd   (cmd-for media [{:h 544 :v 1700} {:h 480 :v 1400} {:h 360 :v 600}])
+        after-dash (drop-while #(not= "dash/v1/manifest.mpd" %) cmd)]
+    (is (= ["[v0" "[v1" "[v2" "0:a:0" "0:a:1" "0:s:0"] (flags-with cmd "-map")))
+    (is (= ["-c:a" "aac" "-b:a" "128k" "-ac" "2"
+            "-metadata:s:a:0" "language=eng" "-metadata:s:a:0" "title=AAC"
+            "-metadata:s:a:1" "language=jpn" "-metadata:s:a:1" "title=ASS"
+            "-f" "dash"]
+           (take 16 (drop-while #(not= "-c:a" %) cmd)))
+        "one stereo AAC per track, each tagged with its language and title")
+    (is (= "id=0,streams=0,1,2 id=1,streams=3 id=2,streams=4" (after cmd "-adaptation_sets"))
+        "video rungs are outputs 0..2, the audio tracks 3 and 4, each its own set")
+    (is (= ["dash/v1/manifest.mpd" "-map" "0:s:0" "-c:s" "webvtt" "dash/v1/subs-eng.vtt"] after-dash)
+        "the subtitle sidecar is a second output after the manifest")))
+
+(deftest ffmpeg-cmd-for-one-audio-track-is-todays-command-plus-metadata-and-explicit-set-indices
+  ;; what main produced before #85 for a one-rung, one-audio source, with the
+  ;; two changes a reviewer should see: the language/title metadata and the
+  ;; adaptation sets by output index instead of the v/a shorthand
+  (let [media (#'transcode/probe-media
+               {:streams [{:codec_type "video" :height 360 :width 640}
+                          {:codec_type "audio" :channels 2 :tags {:language "eng"}}]
+                :format {:duration "10.0"}})
+        today (concat (when-not transcode/windows? ["nice" "-n" "10"])
+                      ["ffmpeg" "-hide_banner" "-loglevel" "warning" "-nostdin" "-y"
+                       "-i" "uploads/v1.mkv"
+                       "-filter_complex" "[0:v]split=1[s0];[s0]scale=-2:360[v0]"
+                       "-map" "[v0" "-map" "0:a:0"
+                       "-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p" "-sc_threshold" "0"
+                       "-force_key_frames" "expr:gte(t,n_forced*4)"
+                       "-b:v:0" "600k"
+                       "-c:a" "aac" "-b:a" "128k" "-ac" "2"
+                       "-metadata:s:a:0" "language=eng"                   ; new
+                       "-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
+                       "-adaptation_sets" "id=0,streams=0 id=1,streams=1" ; was id=0,streams=v id=1,streams=a
+                       "-progress" "pipe:1" "-nostats"
+                       "dash/v1/manifest.mpd"])]
+    (is (= today (cmd-for media [{:h 360 :v 600}])))
+    (is (= 1 (count (filter #{"0:a:0"} (cmd-for media config/default-ladder)))) "still mapped once per source track")))
+
+(deftest ffmpeg-cmd-without-audio-has-video-only-sets-and-no-sidecar
+  (let [media (#'transcode/probe-media {:streams [{:codec_type "video" :height 720 :width 1280}] :format {}})
+        cmd   (cmd-for media [{:h 720 :v 2800} {:h 360 :v 600}])]
+    (is (= ["[v0" "[v1"] (flags-with cmd "-map")))
+    (is (not-any? #{"-c:a" "-c:s" "webvtt"} cmd))
+    (is (not-any? #(str/starts-with? % "-metadata") cmd))
+    (is (= "id=0,streams=0,1" (after cmd "-adaptation_sets")))
+    (is (= "dash/v1/manifest.mpd" (last cmd)))))
+
+(deftest ffmpeg-cmd-skips-bitmap-subtitles-and-numbers-sidecars
+  (let [media (#'transcode/probe-media
+               (probe-with-subs {:codec_type "subtitle" :codec_name "subrip" :tags {:language "eng"}}
+                                {:codec_type "subtitle" :codec_name "hdmv_pgs_subtitle" :tags {:language "eng"}}
+                                {:codec_type "subtitle" :codec_name "ass" :tags {:language "eng"}}))
+        cmd   (cmd-for media [{:h 360 :v 600}])]
+    (is (= ["[v0" "0:a:0" "0:s:0" "0:s:2"] (flags-with cmd "-map")) "0:s:1 is the bitmap track")
+    (is (= ["dash/v1/subs-eng.vtt" "dash/v1/subs-eng-2.vtt"] (flags-with cmd "webvtt")))))
+
+(deftest sidecar-paths-use-forward-slashes-like-the-manifest
+  (let [cmd (#'transcode/ffmpeg-cmd
+             (io/file "C:\\Users\\goob\\videos\\uploads\\v1.mkv")
+             (io/file "C:\\Users\\goob\\videos\\dash\\v1\\manifest.mpd")
+             {:audio? true :subs [{:i 0 :lang "eng" :text true :file "subs-eng.vtt"}]} [{:h 360 :v 600}])]
+    (is (= "C:/Users/goob/videos/dash/v1/subs-eng.vtt" (last cmd)))))
+
+(deftest the-gpu-tiers-keep-the-same-audio-and-sidecar-side
+  (let [media (#'transcode/probe-media @nabari)
+        cpu   (cmd-for media [{:h 480 :v 1400} {:h 360 :v 600}])
+        gpu   (#'transcode/ffmpeg-cmd (io/file "uploads/v1.mkv") (io/file "dash/v1/manifest.mpd") media
+                                      [{:h 480 :v 1400} {:h 360 :v 600}] [:nvenc :full])
+        tail  #(drop-while (fn [x] (not= "-c:a" x)) %)]
+    (is (= (tail cpu) (tail gpu)))
+    (is (= "h264_nvenc" (after gpu "-c:v")))))
+
+(deftest process-job-stores-the-tracks-before-the-encode
+  (fake-ffmpeg! 0)
+  (video-with-original! "v1")
+  (let [order (atom [])]
+    (with-redefs [transcode/run-ffmpeg (let [f @#'transcode/run-ffmpeg]
+                                         (fn [& args] (swap! order conj :ffmpeg) (apply f args)))
+                  videos/set-tracks! (let [f videos/set-tracks!]
+                                       (fn [& args] (swap! order conj :tracks) (apply f args)))]
+      (#'transcode/process-job "v1"))
+    (is (= [:tracks :ffmpeg] @order))
+    (is (= {:audio [{:i 0 :lang "und" :title nil :channels nil :default false}] :subs []}
+           (:tracks (videos/get-by-id "v1"))))
+    (is (= "ready" (:status (videos/get-by-id "v1"))))))

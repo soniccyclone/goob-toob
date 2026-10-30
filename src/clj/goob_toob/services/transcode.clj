@@ -48,14 +48,55 @@
       (throw (ex-info (str "ffprobe failed (exit " exit "): "
                            (apply str (take-last 400 err))) {:exit exit :err err})))))
 
-(defn- probe-media [probe]
+(def text-sub-codecs
+  "Subtitle codecs ffmpeg can turn into WebVTT (dialogue and timing; ASS
+  styling is lost). Anything else (PGS, DVD, DVB bitmaps) is listed as
+  unavailable and never mapped."
+  #{"ass" "ssa" "subrip" "srt" "webvtt" "mov_text" "text"})
+
+(defn- stream-lang [s] (or (not-empty (get-in s [:tags :language])) "und"))
+(defn- stream-title [s] (not-empty (get-in s [:tags :title])))
+
+(defn- audio-tracks
+  "ffprobe's audio streams in order; :i is the audio-relative index that
+  -map 0:a:<i> takes."
+  [streams]
+  (vec (map-indexed (fn [i s]
+                      {:i i :lang (stream-lang s) :title (stream-title s)
+                       :channels (some-> s :channels long)
+                       :default (= 1 (get-in s [:disposition :default]))})
+                    (filter #(= "audio" (:codec_type %)) streams))))
+
+(defn- sub-tracks
+  "ffprobe's subtitle streams in order; :text whether it converts to WebVTT,
+  and for those the sidecar name: subs-<lang>.vtt, then subs-<lang>-2.vtt
+  for a second text track in the same language, and so on."
+  [streams]
+  (loop [[s & more] (filter #(= "subtitle" (:codec_type %)) streams)
+         i 0 seen {} acc []]
+    (if-not s
+      acc
+      (let [lang (stream-lang s)
+            text? (contains? text-sub-codecs (:codec_name s))
+            n (if text? (inc (get seen lang 0)) (get seen lang 0))
+            t (cond-> {:i i :lang lang :title (stream-title s) :codec (:codec_name s) :text text?}
+                text? (assoc :file (str "subs-" lang (when (> n 1) (str "-" n)) ".vtt")))]
+        (recur more (inc i) (if text? (assoc seen lang n) seen) (conj acc t))))))
+
+(defn- probe-media
+  "The media facts the job needs: size, duration, every audio track and
+  every subtitle track (see audio-tracks, sub-tracks). :audio? stays for
+  the callers that only ask whether there is sound."
+  [probe]
   (let [v (first (filter #(= "video" (:codec_type %)) (:streams probe)))
-        a (first (filter #(= "audio" (:codec_type %)) (:streams probe)))
+        audio (audio-tracks (:streams probe))
         dur (some-> probe :format :duration Double/parseDouble)]
     (when-not v (throw (ex-info "no video stream found" {})))
     {:height (or (some-> v :height long) 1080)
      :width (or (some-> v :width long) 1920)
-     :audio? (boolean a)
+     :audio? (boolean (seq audio))
+     :audio audio
+     :subs (sub-tracks (:streams probe))
      :duration (or dur 1.0)}))
 
 (defn ladder-for
@@ -196,23 +237,51 @@
                                (str "-bufsize:v:" i) (str (* 2 v) "k")])))
           (range) ladder))
 
-(defn- dash-args [audio? ^java.io.File out]
+(defn- audio-of
+  "The audio tracks a command maps: the probe's :audio, or one nameless
+  track when a caller only said :audio? true."
+  [{:keys [audio? audio]}]
+  (or (not-empty audio) (when audio? [{:i 0}])))
+
+(defn- dash-args
+  "The audio side and the dash muxer. Video rungs are outputs 0..n-1, audio
+  track k is output n+k, and every one is its own adaptation set so each
+  language is a switchable track, not a quality rung of the first (the
+  muxer writes the set's lang from the stream's language metadata)."
+  [n audio ^java.io.File out]
   (concat
    ;; stereo only: multi-channel ffmpeg-AAC carries a PCE that Chrome's
    ;; decoder rejects (CHUNK_DEMUXER_ERROR_APPEND_FAILED → spinner forever),
    ;; and a watch party through a quick tunnel doesn't need 5.1
-   (when audio? ["-c:a" "aac" "-b:a" "128k" "-ac" "2"])
+   (when (seq audio) ["-c:a" "aac" "-b:a" "128k" "-ac" "2"])
+   (mapcat (fn [k {:keys [lang title]}]
+             (concat (when lang [(str "-metadata:s:a:" k) (str "language=" lang)])
+                     (when title [(str "-metadata:s:a:" k) (str "title=" title)])))
+           (range) audio)
    ["-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
-    "-adaptation_sets" (if audio? "id=0,streams=v id=1,streams=a" "id=0,streams=v")
+    "-adaptation_sets" (str/join " " (cons (str "id=0,streams=" (str/join "," (range n)))
+                                           (map (fn [k] (str "id=" (inc k) ",streams=" (+ n k)))
+                                                (range (count audio)))))
     "-progress" "pipe:1" "-nostats"
     (ffmpeg-path out)]))
+
+(defn- subtitle-outputs
+  "One WebVTT sidecar output per text subtitle, next to the manifest (ASS,
+  SSA, SubRip, mov_text: a built-in conversion). Bitmap tracks stay out."
+  [tracks ^java.io.File out]
+  (let [mpd (ffmpeg-path out)
+        dir (subs mpd 0 (inc (.lastIndexOf mpd "/")))]
+    (mapcat (fn [{:keys [i file]}]
+              ["-map" (str "0:s:" i) "-c:s" "webvtt" (str dir file)])
+            (filter :text tracks))))
 
 (defn- ffmpeg-cmd
   "The whole ffmpeg command for one attempt. [:cpu :cpu] is the original
   libx264 pipeline; a hardware [engine tier] swaps the video side."
   ([in out media ladder] (ffmpeg-cmd in out media ladder [:cpu :cpu]))
-  ([^java.io.File in ^java.io.File out {:keys [audio?] :as media} ladder [eid tier]]
+  ([^java.io.File in ^java.io.File out {:keys [subs] :as media} ladder [eid tier]]
    (let [n (count ladder)
+         audio (audio-of media)
          eng (engine eid)
          hw? (some? eng)
          dev (hw-device)
@@ -229,7 +298,7 @@
                      "[v" i "]"))
          scales (str/join ";" (map-indexed (fn [i r] (rung i (:h r))) ladder))
          maps-v (mapcat (fn [i] ["-map" (str "[v" i)]) (range n))
-         maps-a (when audio? ["-map" "0:a:0"])]
+         maps-a (mapcat (fn [{:keys [i]}] ["-map" (str "0:a:" i)]) audio)]
      (concat
       ;; nice is Unix-only; on Windows just run ffmpeg directly
       (when-not windows? ["nice" "-n" "10"])
@@ -245,7 +314,8 @@
          "-sc_threshold" "0"])
       ["-force_key_frames" "expr:gte(t,n_forced*4)"]
       (rung-bitrates ladder hw?)
-      (dash-args audio? out)))))
+      (dash-args n audio out)
+      (subtitle-outputs subs out)))))
 
 ;; ---- the probe --------------------------------------------------------------------
 
@@ -530,10 +600,13 @@
               out (java.io.File. (storage/dash-dir video-id) "manifest.mpd")
               media (probe-media (ffprobe in))
               ladder (ladder-for media (:ladder cfg))
-              _ (log/info (format "transcode start: %s (%.0fs, height %d, ladder %s)"
+              _ (log/info (format "transcode start: %s (%.0fs, height %d, ladder %s, audio %s, subs %s)"
                                  (:title video) (:duration media) (:height media)
-                                 (str/join ", " (map :h ladder))))
+                                 (str/join ", " (map :h ladder))
+                                 (str/join ", " (map :lang (:audio media)))
+                                 (str/join ", " (map #(str (:lang %) (when-not (:text %) " (bitmap)")) (:subs media)))))
               _ (videos/set-duration! video-id (:duration media))
+              _ (videos/set-tracks! video-id (select-keys media [:audio :subs]))
               _ (videos/set-status! video-id "transcoding" :progress 0.0)
               {:keys [exit stderr]} (run-attempts! in out media ladder video-id)]
           (cond

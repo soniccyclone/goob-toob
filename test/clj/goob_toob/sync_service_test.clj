@@ -36,6 +36,31 @@
 (defn- report-behind! [id secs]
   (sync/status! id "lag" (- (expected id) secs) false))
 
+(deftest video-descriptor-carries-the-tracks
+  (videos/insert! {:id "v1" :title "Ep 1" :original-path "/tmp/v1.mp4"})
+  (videos/set-duration! "v1" 42.0)
+  (videos/set-tracks! "v1" {:audio [{:i 0 :lang "eng" :title "AAC" :channels 6 :default true}
+                                    {:i 1 :lang "jpn" :title nil :channels 2 :default false}]
+                            :subs [{:i 0 :lang "eng" :title "ASS" :codec "ass" :text true :file "subs-eng.vtt"}
+                                   {:i 1 :lang "jpn" :title nil :codec "hdmv_pgs_subtitle" :text false}
+                                   {:i 2 :lang "eng" :title "Signs" :codec "subrip" :text true :file "subs-eng-2.vtt"}]})
+  (is (= {:id "v1" :title "Ep 1" :duration 42.0 :dash "/dash/v1/manifest.mpd"
+          :audio [{:i 0 :lang "eng" :title "AAC" :channels 6 :default true}
+                  {:i 1 :lang "jpn" :title nil :channels 2 :default false}]
+          :subs [{:lang "eng" :title "ASS" :url "/dash/v1/subs-eng.vtt"}
+                 {:lang "eng" :title "Signs" :url "/dash/v1/subs-eng-2.vtt"}]
+          :subs-unavailable 1}
+         (sync/video-descriptor (videos/get-by-id "v1")))
+      "text subtitles with their sidecar URL, the bitmap one only counted"))
+
+(deftest video-descriptor-of-a-row-without-tracks-has-empty-vectors
+  (videos/insert! {:id "v1" :title "Old" :original-path "/tmp/v1.mp4"})
+  (is (= {:id "v1" :title "Old" :duration nil :dash "/dash/v1/manifest.mpd"
+          :audio [] :subs [] :subs-unavailable 0}
+         (sync/video-descriptor (videos/get-by-id "v1"))))
+  (is (= {:audio [] :subs [] :subs-unavailable 0}
+         (select-keys (sync/video-descriptor {:id "x" :tracks {:audio nil :subs nil}}) [:audio :subs :subs-unavailable]))))
+
 (deftest tick-slows-a-playing-room-for-a-laggard-and-recovers
   (run
     (fn []
@@ -271,7 +296,8 @@
         (let [m (first @*sent*)]
           (is (= "state" (:type m)))
           (is (= "v2" (:video-id m)))
-          (is (= {:id "v2" :title "Clip v2" :duration 20.0 :dash "/dash/v2/manifest.mpd"}
+          (is (= {:id "v2" :title "Clip v2" :duration 20.0 :dash "/dash/v2/manifest.mpd"
+                  :audio [] :subs [] :subs-unavailable 0}
                  (:video m)))
           (is (false? (:ended m))))))))
 
@@ -505,7 +531,8 @@
         (is (= [["v2" 0]] (mapv (juxt :video-id :position) (rooms/queue id))))
         (is (= ["item" "queue"] (ops)))
         (let [[item queue] @*sent*]
-          (is (= {:id "v2" :title "Clip v2" :duration 20.0 :dash "/dash/v2/manifest.mpd"}
+          (is (= {:id "v2" :title "Clip v2" :duration 20.0 :dash "/dash/v2/manifest.mpd"
+                  :audio [] :subs [] :subs-unavailable 0}
                  (:video item)))
           (is (false? (:playing item)))
           (is (= 0.0 (:pos item)))

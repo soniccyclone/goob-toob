@@ -73,8 +73,38 @@
   (select-keys v [:id :title :duration :status :progress]))
 
 (defn public-videos [_] (response (map public-video (videos/list-ready))))
-(defn admin-videos [_] (response (map #(update % :error (fn [e] (some->> e (take 800) str/join)))
-                                       (videos/list-all))))
+
+(defn- admin-video
+  "A library row for the admin page: the error clipped, :tracks as parsed
+  by the repo and :has-original, which decides between \"re-encode\" and
+  \"re-upload\" (#85)."
+  [v]
+  (-> v
+      (update :error (fn [e] (some->> e (take 800) str/join)))
+      (assoc :has-original (some? (storage/find-original (:id v))))))
+
+(defn admin-videos [_] (response (map admin-video (videos/list-all))))
+
+(defn reencode-video
+  "Runs the whole transcode again on the kept original (a library item from
+  before #85 gains its tracks this way): status back to \"uploaded\", the
+  job queued, 202 with the row. 409 when the original is gone (KEEP_ORIGINAL
+  was off: upload it again) or the item is already queued or encoding; 404
+  for an unknown id."
+  [{:keys [params]}]
+  (let [id (:id params)
+        v  (or (videos/get-by-id id)
+               (throw (ex-info "no such video" {:type :not-found :video-id id})))]
+    (cond
+      (#{"uploaded" "transcoding"} (:status v))
+      (throw (ex-info "already encoding" {:type :conflict :video-id id}))
+      (nil? (storage/find-original id))
+      (throw (ex-info "no original to re-encode; upload it again" {:type :conflict :video-id id}))
+      :else
+      (do (videos/set-status! id "uploaded" :progress 0.0 :error nil)
+          (log/info "re-encode queued:" (:title v) id)
+          (transcode/submit! id)
+          (-> (response (admin-video (videos/get-by-id id))) (status 202))))))
 
 (defn public-rooms
   "Rooms whose current video is ready, plus empty ones (:now nil, :items 0):
@@ -318,6 +348,7 @@
     (str/ends-with? name ".m4s") "video/mp4"
     (str/ends-with? name ".init") "video/mp4"
     (str/ends-with? name ".m4a") "audio/mp4"
+    (str/ends-with? name ".vtt") "text/vtt; charset=utf-8"
     :else "application/octet-stream"))
 
 (defn- parse-range [^String hdr len]
@@ -402,6 +433,7 @@
                              ["/me" {:get whoami}]
                              ["/videos" {:get admin-videos}]
                              ["/videos/:id" {:delete delete-video}]
+                             ["/videos/:id/reencode" {:post reencode-video}]
                              ["/upload" {:post upload
                                          :middleware [wrap-multipart-params wrap-keyword-params]}]
                              ["/info" {:get storage-info}]
