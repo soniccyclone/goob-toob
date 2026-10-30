@@ -9,6 +9,7 @@
             [goob-toob.config :as config]
             [goob-toob.log :as log]
             [goob-toob.repos.video :as videos]
+            [goob-toob.repos.settings :as settings]
             [goob-toob.repos.storage :as storage])
   (:import [java.lang ProcessBuilder]
            [java.util.concurrent TimeUnit]))
@@ -53,6 +54,7 @@
         dur (some-> probe :format :duration Double/parseDouble)]
     (when-not v (throw (ex-info "no video stream found" {})))
     {:height (or (some-> v :height long) 1080)
+     :width (or (some-> v :width long) 1920)
      :audio? (boolean a)
      :duration (or dur 1.0)}))
 
@@ -76,32 +78,277 @@
 (defn- ffmpeg-path [^java.io.File f]
   (str/replace (.getPath f) "\\" "/"))
 
-(defn- ffmpeg-cmd [^java.io.File in ^java.io.File out {:keys [audio?]} ladder]
-  (let [n (count ladder)
-        split (str "[0:v]split=" n (str/join (for [i (range n)] (str "[s" i "]"))) ";")
-        scales (str/join ";" (for [i (range n)]
-                               (str "[s" i "]scale=-2:" (:h (nth ladder i)) "[v" i "]")))
-        maps-v (mapcat (fn [i] ["-map" (str "[v" i)]) (range n))
-        maps-a (when audio? ["-map" "0:a:0"])
-        bitrates (mapcat (fn [i rung] [(str "-b:v:" i) (str (:v rung) "k")])
-                         (range n) ladder)]
-    (concat
-     ;; nice is Unix-only; on Windows just run ffmpeg directly
-     (when-not windows? ["nice" "-n" "10"])
-     [(ffmpeg-bin) "-hide_banner" "-loglevel" "warning" "-nostdin" "-y" "-i" (.getPath in)]
-     ["-filter_complex" (str split scales)]
-     maps-v maps-a
-     ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p"
-      "-sc_threshold" "0" "-force_key_frames" "expr:gte(t,n_forced*4)"]
-     bitrates
-     ;; stereo only: multi-channel ffmpeg-AAC carries a PCE that Chrome's
-     ;; decoder rejects (CHUNK_DEMUXER_ERROR_APPEND_FAILED → spinner forever),
-     ;; and a watch party through a quick tunnel doesn't need 5.1
-     (when audio? ["-c:a" "aac" "-b:a" "128k" "-ac" "2"])
-     ["-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
-      "-adaptation_sets" (if audio? "id=0,streams=v id=1,streams=a" "id=0,streams=v")
-      "-progress" "pipe:1" "-nostats"
-      (ffmpeg-path out)])))
+;; ---- encoders: the GPU when it works, libx264 when it does not ----------------
+;; Four hardware families, in preference order, each with up to three tiers:
+;;   :full    the GPU decodes, scales every rung and encodes (nothing touches
+;;            the CPU but the audio);
+;;   :upload  the CPU decodes once, the frames go up, the GPU scales every
+;;            rung and encodes (a source the GPU cannot decode: 10-bit on an
+;;            old part, a codec it lacks, or NVDEC missing as under WSL2);
+;;   :encode  the CPU decodes and scales, the GPU only encodes.
+;; An encoder being listed by ffmpeg means nothing: no driver, a laptop with
+;; the dGPU asleep, a VM, a container without the device. So probe-engines!
+;; runs a real one-second job per engine and tier at startup (the :full
+;; probe decodes a real H.264 sample, so a GPU that cannot decode is caught
+;; there and not on every job) and keeps the first that works; a job that
+;; still fails on the GPU falls back a tier at a time, then to the CPU
+;; (attempts), so an encode never fails for a GPU reason. The admin can
+;; switch it all off (settings :hwenc "off").
+
+(def ^:private test-src "testsrc2=duration=1:size=640x360:rate=30")
+
+(defn hw-device
+  "The Linux render node for VAAPI (GOOB_HW_DEVICE, else the first
+  /dev/dri/renderD*); nil on Windows and on a box without one."
+  []
+  (or (System/getenv "GOOB_HW_DEVICE")
+      (when-not windows?
+        (first (for [n (range 128 136)
+                     :let [p (str "/dev/dri/renderD" n)]
+                     :when (.exists (java.io.File. p))]
+                 p)))))
+
+(def engines
+  "Hardware encoders in preference order. :init are global ffmpeg args,
+  :decode the input-side args of the :full tier, :scale builds one rung's
+  GPU scaler, :sw-format the pixel format the encoder takes from system
+  memory in the :encode tier (nil: the encoder has no :encode tier),
+  :upload the filter that lifts system frames onto the GPU (the :upload
+  tier and the probes), :upload? whether the :encode tier's system frames
+  must be hwuploaded too (VAAPI), :codec the encoder and its quality knobs.
+  :device? needs hw-device."
+  [{:id :nvenc :vendor "NVIDIA NVENC" :encoder "h264_nvenc"
+    :init ["-init_hw_device" "cuda=hw" "-filter_hw_device" "hw"]
+    :decode ["-hwaccel" "cuda" "-hwaccel_output_format" "cuda" "-extra_hw_frames" "16"]
+    :scale (fn [w h] (str "scale_cuda=" w ":" h ":format=yuv420p"))
+    :upload "format=yuv420p,hwupload_cuda"
+    :sw-format "yuv420p"
+    :codec ["-c:v" "h264_nvenc" "-preset" "p4" "-tune" "hq" "-rc" "vbr" "-profile:v" "high"
+            "-bf" "2" "-spatial-aq" "1" "-forced-idr" "1"]}
+   {:id :qsv :vendor "Intel Quick Sync" :encoder "h264_qsv"
+    :init ["-init_hw_device" "qsv=hw" "-filter_hw_device" "hw"]
+    :decode ["-hwaccel" "qsv" "-hwaccel_output_format" "qsv" "-extra_hw_frames" "16"]
+    :scale (fn [w h] (str "scale_qsv=w=" w ":h=" h ":format=nv12"))
+    :upload "format=nv12,hwupload=extra_hw_frames=16"
+    :sw-format "nv12"
+    :codec ["-c:v" "h264_qsv" "-preset" "medium" "-profile:v" "high" "-look_ahead" "0" "-forced_idr" "1"]}
+   {:id :amf :vendor "AMD AMF" :encoder "h264_amf"
+    ;; AMF has no portable decode/scale path in ffmpeg: encode tier only
+    :init [] :decode nil :scale nil :upload nil
+    :sw-format "nv12"
+    :codec ["-c:v" "h264_amf" "-usage" "transcoding" "-quality" "balanced" "-rc" "vbr_peak" "-profile:v" "high"]}
+   {:id :vaapi :vendor "VAAPI" :encoder "h264_vaapi" :device? true
+    :init (fn [dev] ["-init_hw_device" (str "vaapi=hw:" dev) "-filter_hw_device" "hw"])
+    :decode ["-hwaccel" "vaapi" "-hwaccel_output_format" "vaapi" "-extra_hw_frames" "16"]
+    :scale (fn [w h] (str "scale_vaapi=w=" w ":h=" h ":format=nv12"))
+    :upload "format=nv12,hwupload"
+    :sw-format "nv12" :upload? true
+    :codec ["-c:v" "h264_vaapi" "-profile:v" "high" "-rc_mode" "VBR"]}])
+
+(defn- engine [id] (first (filter #(= id (:id %)) engines)))
+
+(defn- init-args [eng dev]
+  (let [i (:init eng)] (if (fn? i) (i dev) i)))
+
+(defn even-width
+  "The even width that keeps the source's aspect at height h (the GPU
+  scalers take no -2)."
+  [{:keys [width height]} h]
+  (let [w (Math/round (* (double h) (/ (double width) (double height))))]
+    (long (if (odd? w) (inc w) w))))
+
+(defn parse-encoders
+  "The encoder names in `ffmpeg -encoders` output."
+  [text]
+  (set (keep #(second (re-find #"^\s*[VASFXBD.]{6}\s+([A-Za-z0-9_]+)\s" %)) (str/split-lines text))))
+
+(def ^:private tier-order [:full :upload :encode])
+
+(defn attempts
+  "What a job tries, in order, from the probed engine and tier: the probed
+  pair, then each lower tier the engine has, then the CPU. hwenc \"off\"
+  or no engine: the CPU alone."
+  [{:keys [engine tier]} hwenc]
+  (if (or (= "off" hwenc) (nil? engine) (= :cpu engine))
+    [[:cpu :cpu]]
+    (let [eng (first (filter #(= engine (:id %)) engines))
+          has (set (cond-> [] (:scale eng) (conj :full)
+                     (and (:upload eng) (:scale eng)) (conj :upload)
+                     (:sw-format eng) (conj :encode)))]
+      (conj (vec (for [t (drop-while #(not= tier %) tier-order) :when (has t)] [engine t]))
+            [:cpu :cpu]))))
+
+(defn- rung-bitrates [ladder hw?]
+  (mapcat (fn [i {:keys [v]}]
+            (concat [(str "-b:v:" i) (str v "k")]
+                    ;; VBR on a GPU encoder wanders more than x264: pin it
+                    (when hw? [(str "-maxrate:v:" i) (str (long (* 1.5 v)) "k")
+                               (str "-bufsize:v:" i) (str (* 2 v) "k")])))
+          (range) ladder))
+
+(defn- dash-args [audio? ^java.io.File out]
+  (concat
+   ;; stereo only: multi-channel ffmpeg-AAC carries a PCE that Chrome's
+   ;; decoder rejects (CHUNK_DEMUXER_ERROR_APPEND_FAILED → spinner forever),
+   ;; and a watch party through a quick tunnel doesn't need 5.1
+   (when audio? ["-c:a" "aac" "-b:a" "128k" "-ac" "2"])
+   ["-f" "dash" "-seg_duration" "4" "-use_template" "1" "-use_timeline" "1"
+    "-adaptation_sets" (if audio? "id=0,streams=v id=1,streams=a" "id=0,streams=v")
+    "-progress" "pipe:1" "-nostats"
+    (ffmpeg-path out)]))
+
+(defn- ffmpeg-cmd
+  "The whole ffmpeg command for one attempt. [:cpu :cpu] is the original
+  libx264 pipeline; a hardware [engine tier] swaps the video side."
+  ([in out media ladder] (ffmpeg-cmd in out media ladder [:cpu :cpu]))
+  ([^java.io.File in ^java.io.File out {:keys [audio?] :as media} ladder [eid tier]]
+   (let [n (count ladder)
+         eng (engine eid)
+         hw? (some? eng)
+         dev (hw-device)
+         outs (str/join (for [i (range n)] (str "[s" i "]")))
+         ;; :upload lifts the decoded frames once, then splits on the GPU
+         split (str "[0:v]" (when (= :upload tier) (str (:upload eng) ",")) "split=" n outs ";")
+         rung (fn [i h]
+                (str "[s" i "]"
+                     (case tier
+                       (:full :upload) ((:scale eng) (even-width media h) h)
+                       :encode (str "scale=-2:" h ",format=" (:sw-format eng)
+                                    (when (:upload? eng) ",hwupload"))
+                       (str "scale=-2:" h))
+                     "[v" i "]"))
+         scales (str/join ";" (map-indexed (fn [i r] (rung i (:h r))) ladder))
+         maps-v (mapcat (fn [i] ["-map" (str "[v" i)]) (range n))
+         maps-a (when audio? ["-map" "0:a:0"])]
+     (concat
+      ;; nice is Unix-only; on Windows just run ffmpeg directly
+      (when-not windows? ["nice" "-n" "10"])
+      [(ffmpeg-bin) "-hide_banner" "-loglevel" "warning" "-nostdin" "-y"]
+      (when hw? (init-args eng dev))
+      (when (= :full tier) (:decode eng))
+      ["-i" (.getPath in)]
+      ["-filter_complex" (str split scales)]
+      maps-v maps-a
+      (if hw?
+        (:codec eng)
+        ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p"
+         "-sc_threshold" "0"])
+      ["-force_key_frames" "expr:gte(t,n_forced*4)"]
+      (rung-bitrates ladder hw?)
+      (dash-args audio? out)))))
+
+;; ---- the probe --------------------------------------------------------------------
+
+(defonce engine* (atom nil)) ; {:engine kw :tier kw :tried [...] :at ms} once probed
+
+(defn- run-quiet
+  "Runs cmd, waits up to timeout-ms. {:ok? :err}; a timeout is a failure."
+  [cmd timeout-ms]
+  (try
+    (let [p (-> (ProcessBuilder. (vec cmd)) (.redirectErrorStream true) .start)
+          out (future (read-all (.getInputStream p)))]
+      (if (.waitFor p timeout-ms TimeUnit/MILLISECONDS)
+        {:ok? (zero? (.exitValue p)) :err (apply str (take-last 300 @out))}
+        (do (.destroyForcibly p) {:ok? false :err "timed out"})))
+    (catch Exception e {:ok? false :err (.getMessage e)})))
+
+(defn available-encoders []
+  (let [p (-> (ProcessBuilder. [(ffmpeg-bin) "-hide_banner" "-encoders"]) .start)
+        out (read-all (.getInputStream p))]
+    (.waitFor p)
+    (parse-encoders out)))
+
+(defn- probe-sample!
+  "A one-second H.264 file for the :full probe to decode (libx264, the
+  encoder every build has); nil when it cannot be made."
+  []
+  (let [f (java.io.File. (System/getProperty "java.io.tmpdir") "goob-probe.mp4")]
+    (if (or (.exists f)
+            (:ok? (run-quiet [(ffmpeg-bin) "-hide_banner" "-loglevel" "error" "-nostdin" "-y"
+                              "-f" "lavfi" "-i" test-src "-c:v" "libx264" "-preset" "ultrafast"
+                              "-pix_fmt" "yuv420p" (.getPath f)]
+                             30000)))
+      f
+      nil)))
+
+(defn- probe-cmd
+  "A one-second job that exercises the tier: :full decodes the H.264 sample
+  on the GPU and scales there, :upload lifts synthetic frames to the GPU
+  and scales there, :encode hands the encoder system frames."
+  [eng tier dev sample]
+  (concat
+   [(ffmpeg-bin) "-hide_banner" "-loglevel" "error" "-nostdin"]
+   (init-args eng dev)
+   (case tier
+     :full   (concat (:decode eng) ["-i" (.getPath ^java.io.File sample)
+                                   "-vf" ((:scale eng) 160 90)])
+     :upload ["-f" "lavfi" "-i" test-src "-vf" (str (:upload eng) "," ((:scale eng) 320 180))]
+     :encode ["-f" "lavfi" "-i" test-src
+              "-vf" (str "format=" (:sw-format eng) (when (:upload? eng) ",hwupload"))])
+   (:codec eng)
+   ["-b:v" "800k" "-f" "null" "-"]))
+
+(defn- tiers-of [eng]
+  (cond-> []
+    (and (:decode eng) (:scale eng)) (conj :full)
+    (and (:upload eng) (:scale eng)) (conj :upload)
+    (:sw-format eng) (conj :encode)))
+
+(defn probe-engines!
+  "Tries every engine ffmpeg lists, full tier then encode tier, with a real
+  encode; keeps the first that works. Cached in engine*; see start!."
+  []
+  (let [listed (try (available-encoders) (catch Exception _ #{}))
+        dev (hw-device)
+        sample (probe-sample!)
+        tried (atom [])
+        candidates (for [eng engines
+                         :when (contains? listed (:encoder eng))
+                         :when (or (not (:device? eng)) dev)
+                         tier (tiers-of eng)
+                         :when (or (not= :full tier) sample)]
+                     [eng tier])
+        ;; reduce + reduced: stop at the first success without running the
+        ;; probes a lazy seq would chunk ahead
+        found (reduce (fn [_ [eng tier]]
+                        (let [{:keys [ok? err]} (run-quiet (probe-cmd eng tier dev sample) 30000)]
+                          (swap! tried conj {:engine (:id eng) :tier tier :ok? ok?
+                                             :err (when-not ok? (last (str/split-lines (str err))))})
+                          (when ok? (reduced {:engine (:id eng) :tier tier}))))
+                      nil candidates)
+        result (merge {:engine :cpu :tier :cpu} found
+                      {:tried @tried :listed (vec (filter (set (map :encoder engines)) listed))
+                       :at (System/currentTimeMillis)})]
+    (reset! engine* result)
+    (if found
+      (log/info "transcode: encoder" (:vendor (engine (:engine found)))
+                (case (:tier found)
+                  :full "(full GPU pipeline)"
+                  :upload "(GPU scale and encode, CPU decode)"
+                  "(GPU encode, CPU decode and scale)"))
+      (log/info "transcode: software libx264;"
+                (if (seq @tried)
+                  (str "no working GPU encoder: "
+                       (str/join "; " (map #(str (name (:engine %)) "/" (name (:tier %)) " " (:err %)) @tried)))
+                  "ffmpeg lists no GPU encoder")))
+    result))
+
+(defn encoder-info
+  "What the admin console shows."
+  []
+  (let [{:keys [engine tier tried listed] :as e} (or @engine* {:engine :cpu :tier :cpu :probing? true})]
+    (do
+      {:engine (name engine) :tier (name tier)
+       :label (cond
+                (:probing? e) "probing the GPU…"
+                (= :cpu engine) (str "software (libx264)"
+                                     (when-let [d (:downgraded e)] (str ", " d " gave up mid-job")))
+                :else (str (:vendor (goob-toob.services.transcode/engine engine))
+                           (case tier
+                             :full ", full GPU pipeline"
+                             :upload ", GPU scale and encode"
+                             ", GPU encode")))
+       :listed listed :tried tried})))
 
 (defn priority-cmd
   "Command that drops an already-running ffmpeg to below-normal priority on
@@ -161,6 +408,41 @@
      (swap! running #(apply disj % ps))
      (when (seq ps) (log/info "transcode: stopped" (count ps) "ffmpeg process(es)")))))
 
+(defn- wait-probe!
+  "The first job after start waits for the startup probe (seconds), never
+  longer than a minute."
+  []
+  (loop [i 0]
+    (when (and (:probing? @engine*) (< i 120))
+      (Thread/sleep 500)
+      (recur (inc i)))))
+
+(defn- clear-dash! [^java.io.File out]
+  (doseq [^java.io.File f (.listFiles (.getParentFile out))] (.delete f)))
+
+(defn- run-attempts!
+  "Runs the job on each of (attempts) in turn until one exits 0 or the CPU
+  has had its go. A GPU failure is logged and the next attempt starts from
+  a clean dash dir; when the GPU's :encode tier itself fails the probe
+  result is downgraded so later jobs skip it. Returns the last run's
+  {:exit :stderr}."
+  [in out media ladder video-id]
+  (wait-probe!)
+  (loop [[[eid tier :as att] & more] (attempts @engine* (settings/get :hwenc))]
+    (let [{:keys [exit stderr] :as r} (run-ffmpeg (ffmpeg-cmd in out media ladder att)
+                                                  video-id (:duration media))]
+      (if (or (zero? exit) @stopping? (empty? more))
+        (do (when (and (zero? exit) (not= :cpu eid))
+              (log/info "transcode: encoded on" (name eid) (name tier)))
+            r)
+        (do (log/info "transcode:" (name eid) (name tier) "failed, falling back to"
+                      (str/join "/" (map name (first more))) "::" (str/join (take-last 200 stderr)))
+            (when (= :encode tier)
+              (swap! engine* assoc :engine :cpu :tier :cpu :downgraded (name eid)))
+            (clear-dash! out)
+            (videos/set-progress! video-id 0.0)
+            (recur more))))))
+
 (defn- note-interrupted [video-id]
   (log/info "transcode interrupted by shutdown:" video-id "(resumes on next start)"))
 
@@ -179,8 +461,7 @@
                                  (str/join ", " (map :h ladder))))
               _ (videos/set-duration! video-id (:duration media))
               _ (videos/set-status! video-id "transcoding" :progress 0.0)
-              {:keys [exit stderr]} (run-ffmpeg (ffmpeg-cmd in out media ladder)
-                                                video-id (:duration media))]
+              {:keys [exit stderr]} (run-attempts! in out media ladder video-id)]
           (cond
             (zero? exit)
             (do (videos/set-status! video-id "ready" :progress 1.0 :error nil)
@@ -217,5 +498,10 @@
             (process-job vid)
             (recur)))))
     (reset! control {:jobs jobs})
+    ;; the probe runs real encodes (a few seconds at most); the first job
+    ;; waits for it, the server does not
+    (when-not @engine*
+      (reset! engine* {:engine :cpu :tier :cpu :probing? true})
+      (future (probe-engines!)))
     (doseq [vid (videos/requeue-stuck)] (submit! vid))
     (log/info "transcode workers:" (:workers cfg))))

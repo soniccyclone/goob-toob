@@ -65,12 +65,12 @@
   (is (nil? (transcode/priority-cmd 4242 false))))
 
 (deftest probe-media-reads-height-audio-and-duration
-  (is (= {:height 696 :audio? true :duration 12.5}
+  (is (= {:height 696 :width 1920 :audio? true :duration 12.5}
          (#'transcode/probe-media {:streams [{:codec_type "video" :height 696} {:codec_type "audio"}]
                                    :format {:duration "12.5"}}))))
 
 (deftest probe-media-defaults-when-fields-are-missing
-  (is (= {:height 1080 :audio? false :duration 1.0}
+  (is (= {:height 1080 :width 1920 :audio? false :duration 1.0}
          (#'transcode/probe-media {:streams [{:codec_type "video"}] :format {}}))))
 
 (deftest probe-media-refuses-a-file-without-video
@@ -197,3 +197,168 @@
     (#'transcode/process-job "v1"))
   (is (= "transcoding" (:status (videos/get-by-id "v1"))))
   (is (nil? (:error (videos/get-by-id "v1")))))
+
+;; ---- GPU engines ------------------------------------------------------------------
+
+(defn- after [cmd flag] (second (drop-while #(not= flag %) cmd)))
+
+(deftest the-cpu-command-is-the-original-pipeline
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? true :width 1920 :height 1080} [{:h 720 :v 2800} {:h 360 :v 600}])]
+    (is (= "libx264" (after cmd "-c:v")))
+    (is (= "[0:v]split=2[s0][s1];[s0]scale=-2:720[v0];[s1]scale=-2:360[v1]" (after cmd "-filter_complex")))
+    (is (not-any? #{"-init_hw_device" "-hwaccel" "-maxrate:v:0"} cmd))))
+
+(deftest the-nvenc-full-tier-decodes-scales-and-encodes-on-the-gpu
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? true :width 960 :height 544} [{:h 480 :v 1400} {:h 360 :v 600}]
+                                    [:nvenc :full])]
+    (is (= "cuda=hw" (after cmd "-init_hw_device")))
+    (is (= "cuda" (after cmd "-hwaccel")))
+    (is (= "cuda" (after cmd "-hwaccel_output_format")))
+    (is (= "[0:v]split=2[s0][s1];[s0]scale_cuda=848:480:format=yuv420p[v0];[s1]scale_cuda=636:360:format=yuv420p[v1]"
+           (after cmd "-filter_complex")) "even widths from the source aspect, the GPU scaler takes no -2")
+    (is (= "h264_nvenc" (after cmd "-c:v")))
+    (is (= "2100k" (after cmd "-maxrate:v:0")))
+    (is (= "2800k" (after cmd "-bufsize:v:0")))
+    (is (= "expr:gte(t,n_forced*4)" (after cmd "-force_key_frames")))
+    (is (not-any? #{"libx264" "-pix_fmt" "-sc_threshold"} cmd))
+    (is (= "aac" (after cmd "-c:a")) "audio is untouched")
+    (is (= "dash" (after cmd "-f")))))
+
+(deftest the-encode-tier-decodes-and-scales-on-the-cpu
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? false :width 1920 :height 1080} [{:h 360 :v 600}]
+                                    [:qsv :encode])]
+    (is (= "qsv=hw" (after cmd "-init_hw_device")))
+    (is (not-any? #{"-hwaccel"} cmd) "no GPU decode in this tier")
+    (is (= "[0:v]split=1[s0];[s0]scale=-2:360,format=nv12[v0]" (after cmd "-filter_complex")))
+    (is (= "h264_qsv" (after cmd "-c:v")))))
+
+(deftest vaapi-uploads-system-frames-and-names-its-device
+  (with-redefs [transcode/hw-device (constantly "/dev/dri/renderD129")]
+    (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                      {:audio? false :width 1280 :height 720} [{:h 360 :v 600}]
+                                      [:vaapi :encode])]
+      (is (= "vaapi=hw:/dev/dri/renderD129" (after cmd "-init_hw_device")))
+      (is (= "[0:v]split=1[s0];[s0]scale=-2:360,format=nv12,hwupload[v0]" (after cmd "-filter_complex")))
+      (is (= "h264_vaapi" (after cmd "-c:v"))))))
+
+(deftest amf-has-no-full-tier
+  (is (= [:encode] (#'transcode/tiers-of (#'transcode/engine :amf))))
+  (is (= [:full :upload :encode] (#'transcode/tiers-of (#'transcode/engine :nvenc)))))
+
+(deftest the-upload-tier-decodes-on-the-cpu-and-scales-on-the-gpu
+  (let [cmd (#'transcode/ffmpeg-cmd (io/file "v1.mkv") (io/file "dash/v1/manifest.mpd")
+                                    {:audio? true :width 960 :height 544} [{:h 480 :v 1400} {:h 360 :v 600}]
+                                    [:nvenc :upload])]
+    (is (not-any? #{"-hwaccel"} cmd) "no GPU decode")
+    (is (= "[0:v]format=yuv420p,hwupload_cuda,split=2[s0][s1];[s0]scale_cuda=848:480:format=yuv420p[v0];[s1]scale_cuda=636:360:format=yuv420p[v1]"
+           (after cmd "-filter_complex")) "one upload, then the split and every scale on the GPU")
+    (is (= "h264_nvenc" (after cmd "-c:v")))))
+
+(deftest even-width-keeps-the-aspect-and-stays-even
+  (is (= 1280 (transcode/even-width {:width 1920 :height 1080} 720)))
+  (is (= 848 (transcode/even-width {:width 960 :height 544} 480)))
+  (is (= 636 (transcode/even-width {:width 960 :height 544} 360)))
+  (is (= 1708 (transcode/even-width {:width 1708 :height 720} 720))))
+
+(deftest parse-encoders-reads-ffmpegs-table
+  (is (= #{"libx264" "h264_nvenc" "h264_qsv"}
+         (transcode/parse-encoders
+          (str "Encoders:\n V..... = Video\n ------\n"
+               " V....D libx264              libx264 H.264 / AVC\n"
+               " V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)\n"
+               " V..... h264_qsv             H.264 (Intel Quick Sync Video acceleration)\n")))))
+
+(deftest attempts-fall-back-a-tier-then-to-the-cpu
+  (is (= [[:nvenc :full] [:nvenc :upload] [:nvenc :encode] [:cpu :cpu]] (transcode/attempts {:engine :nvenc :tier :full} "auto")))
+  (is (= [[:nvenc :upload] [:nvenc :encode] [:cpu :cpu]] (transcode/attempts {:engine :nvenc :tier :upload} "auto")))
+  (is (= [[:amf :encode] [:cpu :cpu]] (transcode/attempts {:engine :amf :tier :encode} "auto")))
+  (is (= [[:cpu :cpu]] (transcode/attempts {:engine :cpu :tier :cpu} "auto")))
+  (is (= [[:cpu :cpu]] (transcode/attempts nil "auto")) "nothing probed yet")
+  (is (= [[:cpu :cpu]] (transcode/attempts {:engine :nvenc :tier :full} "off")) "the admin switched it off"))
+
+(defn- fake-ffmpeg-failing-on!
+  "An ffmpeg that fails whenever its args mention token (and says so), and
+  behaves like fake-ffmpeg! otherwise; lists libx264 and h264_nvenc."
+  [token]
+  (fake-ffmpeg! 0)
+  (let [bin (io/file (storage/root) "bin")]
+    (script! (io/file bin "ffmpeg")
+             (str "case \"$*\" in *-encoders*) echo ' V....D libx264   x'; echo ' V....D h264_nvenc  x'; exit 0;; esac\n"
+                  "echo \"$*\" >> \"$(dirname \"$0\")/calls\"\n"
+                  "case \"$*\" in *" token "*) echo '" token " said no' >&2; exit 1;; esac\n"
+                  "for last; do :; done\n"
+                  "echo out_time_ms=1000000\n"
+                  "echo out_time_ms=2000000\n"
+                  "echo '<MPD/>' > \"$last\"\n"
+                  "exit 0\n"))))
+
+(defn- calls [] (str/split-lines (slurp (io/file (storage/root) "bin" "calls"))))
+
+(deftest a-job-falls-back-from-the-gpu-to-the-cpu
+  (fake-ffmpeg-failing-on! "h264_nvenc")
+  (reset! transcode/engine* {:engine :nvenc :tier :full})
+  (try
+    (let [orig (video-with-original! "v1")]
+      (#'transcode/process-job "v1")
+      (is (= "ready" (:status (videos/get-by-id "v1"))))
+      (let [cs (calls)]
+        (is (= 4 (count cs)) "full, upload, encode, cpu")
+        (is (str/includes? (first cs) "-hwaccel cuda"))
+        (is (str/includes? (second cs) "hwupload_cuda,split"))
+        (is (str/includes? (nth cs 2) "h264_nvenc"))
+        (is (not (str/includes? (nth cs 2) "-hwaccel")))
+        (is (str/includes? (last cs) "libx264")))
+      (is (= :cpu (:engine @transcode/engine*)) "the encode tier failed too, so later jobs skip the GPU")
+      (is (= "nvenc" (:downgraded @transcode/engine*))))
+    (finally (reset! transcode/engine* nil))))
+
+(deftest a-job-stays-on-the-gpu-when-it-works
+  (fake-ffmpeg-failing-on! "never-matches")
+  (reset! transcode/engine* {:engine :nvenc :tier :full})
+  (try
+    (video-with-original! "v1")
+    (#'transcode/process-job "v1")
+    (is (= "ready" (:status (videos/get-by-id "v1"))))
+    (is (= 1 (count (calls))))
+    (is (str/includes? (first (calls)) "h264_nvenc"))
+    (is (= :nvenc (:engine @transcode/engine*)))
+    (finally (reset! transcode/engine* nil))))
+
+(deftest hwenc-off-keeps-a-job-on-the-cpu
+  (fake-ffmpeg-failing-on! "never-matches")
+  (reset! transcode/engine* {:engine :nvenc :tier :full})
+  (try
+    (goob-toob.repos.settings/set! :hwenc "off")
+    (video-with-original! "v1")
+    (#'transcode/process-job "v1")
+    (is (= 1 (count (calls))))
+    (is (str/includes? (first (calls)) "libx264"))
+    (finally (reset! transcode/engine* nil))))
+
+(deftest the-probe-keeps-the-first-tier-whose-test-job-works
+  ;; the fake lists libx264 and h264_nvenc; its nvenc :full probe fails on
+  ;; the GPU decode (-hwaccel), the :upload probe succeeds, so the :encode
+  ;; tier is never tried (the WSL2 shape: CUDA and NVENC but no NVDEC)
+  (fake-ffmpeg-failing-on! "-hwaccel")
+  (try
+    (let [r (transcode/probe-engines!)]
+      (is (= :nvenc (:engine r)))
+      (is (= :upload (:tier r)))
+      (is (= [{:engine :nvenc :tier :full :ok? false} {:engine :nvenc :tier :upload :ok? true}]
+             (mapv #(dissoc % :err) (:tried r))))
+      (is (= ["h264_nvenc"] (:listed r)))
+      (is (= "NVIDIA NVENC, GPU scale and encode" (:label (transcode/encoder-info))))
+      (is (str/includes? (first (calls)) "libx264") "the :full probe decodes a real sample made with libx264"))
+    (finally (reset! transcode/engine* nil))))
+
+(deftest the-probe-falls-back-to-software-when-nothing-works
+  (fake-ffmpeg-failing-on! "h264_nvenc")
+  (try
+    (let [r (transcode/probe-engines!)]
+      (is (= :cpu (:engine r)))
+      (is (= 3 (count (:tried r))))
+      (is (= "software (libx264)" (:label (transcode/encoder-info)))))
+    (finally (reset! transcode/engine* nil))))

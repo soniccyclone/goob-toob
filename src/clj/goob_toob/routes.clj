@@ -185,7 +185,8 @@
   (let [cfg (config/cfg)]
     (response {:storage-dir (:storage-dir cfg)
                :free-mb (storage/free-space-mb)
-               :workers (:workers cfg)})))
+               :workers (:workers cfg)
+               :encoder (transcode/encoder-info)})))
 
 ;; ---- client playback diagnostics ---------------------------------------------
 ;; The watch page POSTs dash.js/video faults and stall reports here so that
@@ -254,8 +255,15 @@
   (when-let [unknown (seq (remove (set (keys settings/defaults)) (keys params)))]
     (throw (ex-info (str "unknown setting " (name (first unknown))) {:type :bad-request})))
   (doseq [[k v] params]
-    (settings/set! k (boolean v)))
+    (settings/set! k v))
   (response (settings/all)))
+
+(defn probe-encoder
+  "Re-runs the GPU probe (a GPU that woke up, a driver installed) and
+  answers with what the admin console shows."
+  [_]
+  (transcode/probe-engines!)
+  (response (transcode/encoder-info)))
 
 (defn telemetry [{:keys [params]}]
   (let [{:keys [token session nick samples]} params]
@@ -398,6 +406,7 @@
                                          :middleware [wrap-multipart-params wrap-keyword-params]}]
                              ["/info" {:get storage-info}]
                              ["/settings" {:get admin-settings :put update-settings}]
+                             ["/encoder/probe" {:post probe-encoder}]
                              ["/rooms" {:get admin-rooms :post create-room}]
                              ["/rooms/:id" {:delete delete-room :patch update-room}]
                              ["/rooms/:id/items" {:post add-item :put reorder-items}]
