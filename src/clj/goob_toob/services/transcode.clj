@@ -90,12 +90,22 @@
 ;; the dGPU asleep, a VM, a container without the device. So probe-engines!
 ;; runs a real one-second job per engine and tier at startup (the :full
 ;; probe decodes a real H.264 sample, so a GPU that cannot decode is caught
-;; there and not on every job) and keeps the first that works; a job that
-;; still fails on the GPU falls back a tier at a time, then to the CPU
-;; (attempts), so an encode never fails for a GPU reason. The admin can
-;; switch it all off (settings :hwenc "off").
+;; there and not on every job), then times every working tier against
+;; libx264 on a short clip and keeps the fastest: a GPU is only chosen when
+;; it is at least as fast as the CPU, within a margin, because it also
+;; frees the CPU that hosts the party (a 16-core box ties a laptop GPU, and
+;; WSL2's upload path is slower than x264). A job that still fails on the
+;; GPU falls back a tier at a time, then to the CPU (attempts), so an encode
+;; never fails for a GPU reason. The admin can switch it all off (settings
+;; :hwenc "off").
 
 (def ^:private test-src "testsrc2=duration=1:size=640x360:rate=30")
+(def ^:private bench-src "testsrc2=duration=20:size=1280x720:rate=30") ; long enough that an encoder's start-up does not decide it
+(def ^:private bench-ladder [{:h 720 :v 2800} {:h 360 :v 600}])
+(def gpu-margin
+  "A GPU tier is chosen when its bench wall time is at most this times the
+  CPU's: it then costs nothing in speed and gives the CPU back."
+  1.15)
 
 (defn hw-device
   "The Linux render node for VAAPI (GOOB_HW_DEVICE, else the first
@@ -288,6 +298,55 @@
    (:codec eng)
    ["-b:v" "800k" "-f" "null" "-"]))
 
+(defn- bench-cmd
+  "The real pipeline on a short synthetic clip to -f null: what a job would
+  run, minus the dash muxer, so tiers can be timed against each other."
+  [[eid tier] dev]
+  (let [eng (engine eid)
+        n (count bench-ladder)
+        media {:width 1280 :height 720}
+        outs (str/join (for [i (range n)] (str "[s" i "]")))
+        split (str "[0:v]" (when (= :upload tier) (str (:upload eng) ",")) "split=" n outs ";")
+        rung (fn [i h]
+               (str "[s" i "]"
+                    (case tier
+                      (:full :upload) ((:scale eng) (even-width media h) h)
+                      :encode (str "scale=-2:" h ",format=" (:sw-format eng) (when (:upload? eng) ",hwupload"))
+                      (str "scale=-2:" h))
+                    "[v" i "]"))]
+    (concat
+     [(ffmpeg-bin) "-hide_banner" "-loglevel" "error" "-nostdin"]
+     (when eng (init-args eng dev))
+     ["-f" "lavfi" "-i" bench-src
+      "-filter_complex" (str split (str/join ";" (map-indexed (fn [i r] (rung i (:h r))) bench-ladder)))]
+     (mapcat (fn [i] ["-map" (str "[v" i)]) (range n))
+     (if eng
+       (:codec eng)
+       ["-c:v" "libx264" "-preset" "veryfast" "-profile:v" "high" "-pix_fmt" "yuv420p" "-sc_threshold" "0"])
+     (rung-bitrates bench-ladder (some? eng))
+     ["-f" "null" "-"])))
+
+(defn- bench!
+  "Wall milliseconds of the bench for one attempt; nil when it fails."
+  [att dev]
+  (let [t0 (System/nanoTime)
+        {:keys [ok?]} (run-quiet (bench-cmd att dev) 120000)]
+    (when ok? (long (/ (- (System/nanoTime) t0) 1e6)))))
+
+(defn choose
+  "The attempt to run jobs on, from the bench times: the fastest GPU tier
+  when it is within gpu-margin of the CPU, else the CPU. bench is
+  {[engine tier] ms}; the CPU's key is [:cpu :cpu]."
+  [bench]
+  (let [cpu (get bench [:cpu :cpu])
+        gpus (sort-by val (dissoc bench [:cpu :cpu]))
+        [best ms] (first gpus)]
+    (cond
+      (nil? best) [:cpu :cpu]
+      (nil? cpu) best
+      (<= ms (* gpu-margin cpu)) best
+      :else [:cpu :cpu])))
+
 (defn- tiers-of [eng]
   (cond-> []
     (and (:decode eng) (:scale eng)) (conj :full)
@@ -308,24 +367,36 @@
                          tier (tiers-of eng)
                          :when (or (not= :full tier) sample)]
                      [eng tier])
-        ;; reduce + reduced: stop at the first success without running the
-        ;; probes a lazy seq would chunk ahead
-        found (reduce (fn [_ [eng tier]]
-                        (let [{:keys [ok? err]} (run-quiet (probe-cmd eng tier dev sample) 30000)]
-                          (swap! tried conj {:engine (:id eng) :tier tier :ok? ok?
-                                             :err (when-not ok? (last (str/split-lines (str err))))})
-                          (when ok? (reduced {:engine (:id eng) :tier tier}))))
-                      nil candidates)
-        result (merge {:engine :cpu :tier :cpu} found
-                      {:tried @tried :listed (vec (filter (set (map :encoder engines)) listed))
-                       :at (System/currentTimeMillis)})]
+        ;; every tier that works at all (doall: the probes are side effects)
+        working (doall
+                 (for [[eng tier] candidates
+                       :let [{:keys [ok? err]} (run-quiet (probe-cmd eng tier dev sample) 30000)
+                             _ (swap! tried conj {:engine (:id eng) :tier tier :ok? ok?
+                                                  :err (when-not ok? (last (str/split-lines (str err))))})]
+                       :when ok?]
+                   [(:id eng) tier]))
+        ;; then the race: each working GPU tier and the CPU on the same clip
+        bench (when (seq working)
+                (into {} (keep (fn [att] (when-let [ms (bench! att dev)] [att ms]))
+                               (conj (vec working) [:cpu :cpu]))))
+        [eid tier] (choose bench)
+        result {:engine eid :tier tier
+                :bench (into {} (map (fn [[k v]] [(str/join "/" (map name k)) v]) bench))
+                :tried @tried :listed (vec (filter (set (map :encoder engines)) listed))
+                :at (System/currentTimeMillis)}
+        times (str/join ", " (for [[k v] (sort-by val bench)] (str (str/join "/" (map name k)) " " v " ms")))]
     (reset! engine* result)
-    (if found
-      (log/info "transcode: encoder" (:vendor (engine (:engine found)))
-                (case (:tier found)
+    (cond
+      (not= :cpu eid)
+      (log/info "transcode: encoder" (:vendor (engine eid))
+                (case tier
                   :full "(full GPU pipeline)"
                   :upload "(GPU scale and encode, CPU decode)"
-                  "(GPU encode, CPU decode and scale)"))
+                  "(GPU encode, CPU decode and scale)")
+                "; bench:" times)
+      (seq working)
+      (log/info "transcode: software libx264; the GPU works but is slower here; bench:" times)
+      :else
       (log/info "transcode: software libx264;"
                 (if (seq @tried)
                   (str "no working GPU encoder: "
@@ -336,19 +407,22 @@
 (defn encoder-info
   "What the admin console shows."
   []
-  (let [{:keys [engine tier tried listed] :as e} (or @engine* {:engine :cpu :tier :cpu :probing? true})]
-    (do
-      {:engine (name engine) :tier (name tier)
-       :label (cond
-                (:probing? e) "probing the GPU…"
-                (= :cpu engine) (str "software (libx264)"
-                                     (when-let [d (:downgraded e)] (str ", " d " gave up mid-job")))
-                :else (str (:vendor (goob-toob.services.transcode/engine engine))
-                           (case tier
-                             :full ", full GPU pipeline"
-                             :upload ", GPU scale and encode"
-                             ", GPU encode")))
-       :listed listed :tried tried})))
+  (let [{:keys [engine tier tried listed bench] :as e} (or @engine* {:engine :cpu :tier :cpu :probing? true})
+        times (when (seq bench)
+                (str " (bench: " (str/join ", " (for [[k v] (sort-by val bench)] (str k " " v " ms"))) ")"))]
+    {:engine (name engine) :tier (name tier)
+     :label (cond
+              (:probing? e) "probing the GPU…"
+              (= :cpu engine) (str "software (libx264)"
+                                   (when-let [d (:downgraded e)] (str ", " d " gave up mid-job"))
+                                   times)
+              :else (str (:vendor (goob-toob.services.transcode/engine engine))
+                         (case tier
+                           :full ", full GPU pipeline"
+                           :upload ", GPU scale and encode"
+                           ", GPU encode")
+                         times))
+     :bench bench :listed listed :tried tried}))
 
 (defn priority-cmd
   "Command that drops an already-running ffmpeg to below-normal priority on

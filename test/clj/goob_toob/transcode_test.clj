@@ -338,20 +338,43 @@
     (is (str/includes? (first (calls)) "libx264"))
     (finally (reset! transcode/engine* nil))))
 
-(deftest the-probe-keeps-the-first-tier-whose-test-job-works
+(deftest the-probe-tries-every-tier-then-races-the-working-ones-against-the-cpu
   ;; the fake lists libx264 and h264_nvenc; its nvenc :full probe fails on
-  ;; the GPU decode (-hwaccel), the :upload probe succeeds, so the :encode
-  ;; tier is never tried (the WSL2 shape: CUDA and NVENC but no NVDEC)
+  ;; the GPU decode (-hwaccel, the WSL2 shape: CUDA and NVENC but no NVDEC),
+  ;; :upload and :encode work; every fake run takes the same time, so the
+  ;; race is a tie and the GPU wins it (gpu-margin)
   (fake-ffmpeg-failing-on! "-hwaccel")
+  (.delete (io/file (System/getProperty "java.io.tmpdir") "goob-probe.mp4")) ; a run before may have left it
   (try
     (let [r (transcode/probe-engines!)]
       (is (= :nvenc (:engine r)))
-      (is (= :upload (:tier r)))
-      (is (= [{:engine :nvenc :tier :full :ok? false} {:engine :nvenc :tier :upload :ok? true}]
+      (is (#{:upload :encode} (:tier r)))
+      (is (= [{:engine :nvenc :tier :full :ok? false} {:engine :nvenc :tier :upload :ok? true}
+              {:engine :nvenc :tier :encode :ok? true}]
              (mapv #(dissoc % :err) (:tried r))))
+      (is (= #{"nvenc/upload" "nvenc/encode" "cpu/cpu"} (set (keys (:bench r)))) "the race ran the working tiers and the CPU")
+      (is (every? number? (vals (:bench r))))
       (is (= ["h264_nvenc"] (:listed r)))
-      (is (= "NVIDIA NVENC, GPU scale and encode" (:label (transcode/encoder-info))))
+      (is (str/starts-with? (:label (transcode/encoder-info)) "NVIDIA NVENC, GPU "))
+      (is (str/includes? (:label (transcode/encoder-info)) "bench:"))
       (is (str/includes? (first (calls)) "libx264") "the :full probe decodes a real sample made with libx264"))
+    (finally (reset! transcode/engine* nil))))
+
+(deftest choose-prefers-a-gpu-that-keeps-up-and-the-cpu-otherwise
+  (is (= [:nvenc :encode] (transcode/choose {[:nvenc :encode] 5400 [:cpu :cpu] 5500})) "a tie goes to the GPU")
+  (is (= [:nvenc :encode] (transcode/choose {[:nvenc :encode] 6200 [:cpu :cpu] 5500})) "within the margin")
+  (is (= [:cpu :cpu] (transcode/choose {[:nvenc :upload] 11300 [:cpu :cpu] 5500})) "twice as slow: the CPU")
+  (is (= [:nvenc :encode] (transcode/choose {[:nvenc :upload] 11300 [:nvenc :encode] 5400 [:cpu :cpu] 5500})) "the fastest GPU tier is the one compared")
+  (is (= [:qsv :full] (transcode/choose {[:qsv :full] 3000 [:nvenc :encode] 5400 [:cpu :cpu] 5500})) "across engines too")
+  (is (= [:cpu :cpu] (transcode/choose {[:cpu :cpu] 5500})) "nothing on the GPU")
+  (is (= [:cpu :cpu] (transcode/choose {})))
+  (is (= [:nvenc :encode] (transcode/choose {[:nvenc :encode] 5400})) "the CPU bench failed: still the GPU"))
+
+(deftest a-gpu-that-is-slower-leaves-jobs-on-the-cpu
+  (reset! transcode/engine* {:engine :cpu :tier :cpu :bench {"nvenc/upload" 11300 "cpu/cpu" 5500}})
+  (try
+    (is (= [[:cpu :cpu]] (transcode/attempts @transcode/engine* "auto")))
+    (is (str/includes? (:label (transcode/encoder-info)) "software (libx264) (bench: cpu/cpu 5500 ms, nvenc/upload 11300 ms)"))
     (finally (reset! transcode/engine* nil))))
 
 (deftest the-probe-falls-back-to-software-when-nothing-works
