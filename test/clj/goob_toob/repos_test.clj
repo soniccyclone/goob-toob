@@ -244,15 +244,21 @@
 ;; ---- settings (006) -------------------------------------------------------------
 
 (deftest settings-read-as-defaults-until-set
-  (is (= {:telemetry true} (settings/all)))
+  (is (= {:telemetry true :hwenc "auto"} (settings/all)))
   (is (true? (settings/telemetry?)))
   (is (false? (settings/set! :telemetry false)))
   (is (false? (settings/telemetry?)))
-  (is (= {:telemetry false} (settings/all)))
+  (is (= {:telemetry false :hwenc "auto"} (settings/all)))
   (is (true? (settings/set! :telemetry true)) "set again overwrites the row")
   (is (true? (settings/telemetry?))))
+
+(deftest hwenc-is-auto-or-off
+  (is (= "off" (settings/set! :hwenc "off")))
+  (is (= "off" (settings/get :hwenc)))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"auto or off" (settings/set! :hwenc "fast")))
+  (is (= "auto" (settings/set! :hwenc "auto"))))
 
 (deftest settings-refuse-an-unknown-key
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown setting"
                         (settings/set! :volume 11)))
-  (is (= {:telemetry true} (settings/all))))
+  (is (= {:telemetry true :hwenc "auto"} (settings/all))))

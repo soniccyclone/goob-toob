@@ -4,6 +4,17 @@ PASS    ?= goob-dev-password
 PORT    ?= 8080
 
 MOUNTS := -v $(STORAGE):/data:z -v $(CURDIR):/app:z -w /app
+# GPU=wsl hands the container the Windows GPU through WSL2 (NVIDIA: /dev/dxg
+# + the driver store; also /dev/dri); GPU=linux passes the render nodes and
+# the NVIDIA CDI device. Without it ffmpeg's probe finds no GPU and the
+# transcode stays on libx264.
+ifeq ($(GPU),wsl)
+GPU_FLAGS := --device /dev/dxg --device /dev/dri --security-opt label=disable -v /usr/lib/wsl:/usr/lib/wsl:ro -e LD_LIBRARY_PATH=/usr/lib/wsl/lib
+endif
+ifeq ($(GPU),linux)
+GPU_FLAGS := --device /dev/dri --device nvidia.com/gpu=all --security-opt label=disable
+endif
+MOUNTS += $(GPU_FLAGS)
 ENV    := -e STORAGE_DIR=/data -e ADMIN_PASSWORD=$(PASS) -e PORT=8080
 
 uberjar: ## build server uberjar (CLJS included) -> target/goob-toob.jar
@@ -35,7 +46,7 @@ dev: ## interactive container with repo mounted (shadow watch, REPL)
 
 run: ## run the app (PORT=8080 default, override with make run PORT=...)
 	mkdir -p $(STORAGE)
-	podman run --rm -p $(PORT):8080 -v $(STORAGE):/data:z $(ENV) $(IMAGE)
+	podman run --rm -p $(PORT):8080 -v $(STORAGE):/data:z $(GPU_FLAGS) $(ENV) $(IMAGE)
 
 test: ## run the CLJ test suite in the container
 	podman run --rm $(MOUNTS) $(ENV) $(IMAGE) clojure -M:test

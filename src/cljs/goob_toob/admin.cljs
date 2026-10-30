@@ -320,29 +320,51 @@
                   (or (= "SELECT" (.-tagName a))
                       (and (= "INPUT" (.-tagName a)) (= "text" (.-type a))))))))
 
-(defn- settings-card
-  "The global switches (#57: record playback telemetry). Reads the stored
-  values once, writes on change."
-  []
-  (let [box  (h :input {:type "checkbox" :checked true})
-        card (h :label.cohost box "record playback telemetry (every viewer, every room)")]
+(defn- switch
+  "One global setting as a checkbox: on-value/off-value are what PUT sends
+  for key k; on-msg/off-msg the toast. checked? reads the setting's value."
+  [k label checked? on-value off-value on-msg off-msg]
+  (let [box (h :input {:type "checkbox" :checked true})]
     (-> (api/get-json "/api/admin/settings")
-        (.then (fn [{:keys [data]}] (set! (.-checked box) (boolean (:telemetry data))))))
+        (.then (fn [{:keys [data]}] (set! (.-checked box) (boolean (checked? (get data k)))))))
     (set! (.-onchange box)
           (fn [^js e]
             (let [on? (.-checked (.-target e))]
-              (-> (api/req "PUT" "/api/admin/settings" {:telemetry on?})
+              (-> (api/req "PUT" "/api/admin/settings" {k (if on? on-value off-value)})
                   (.then (fn [{:keys [status data]}]
                            (if (= 200 status)
-                             (toast (if on? "telemetry on: viewers record from their next welcome"
-                                            "telemetry off: nothing is sent, nothing is stored"))
+                             (toast (if on? on-msg off-msg))
                              (do (set! (.-checked box) (not on?))
                                  (toast (or (:error data) "settings save failed"))))))))))
-    card))
+    (h :label.cohost box label)))
+
+(defn- settings-card
+  "The global switches: GPU encoding (auto/off, with what the probe found
+  and a re-probe) and the #57 playback telemetry."
+  [encoder-slot]
+  (h :div.card.row-gap
+     (h :h3 "settings")
+     (h :div.goo
+        (switch :hwenc "encode on the GPU when one works" #(not= "off" %) "auto" "off"
+                "GPU encoding on: the next transcode uses what the probe found"
+                "GPU encoding off: libx264 only from the next transcode")
+        encoder-slot
+        (h :button.btn.ghost
+           {:onclick (fn [_]
+                       (set! (.-textContent encoder-slot) "probing…")
+                       (-> (api/post! "/api/admin/encoder/probe" {})
+                           (.then (fn [{:keys [data]}]
+                                    (set! (.-textContent encoder-slot) (str "encoder: " (:label data)))
+                                    (toast (str "probe done: " (:label data)))))))}
+           "re-probe GPU"))
+     (switch :telemetry "record playback telemetry (every viewer, every room)" true? true false
+             "telemetry on: viewers record from their next welcome"
+             "telemetry off: nothing is sent, nothing is stored")))
 
 (defn- render-admin [body]
   (ui/clear! body)
   (let [info-slot   (h :div.muted "")
+        encoder-slot (h :span.muted "encoder: …")
         tele-slot   (h :div.row-gap {})
         refresh-t   #(-> (api/get-json "/api/admin/telemetry")
                          (.then (fn [{:keys [data]}] (render-telemetry tele-slot data))))
@@ -434,10 +456,10 @@
            (h :table.lib
               (h :thead (h :tr (h :th "title") (h :th "link") (h :th "queue") (h :th "co-hosts") (h :th "")))
               rtbody))
+        (settings-card encoder-slot)
         (h :div.card.row-gap
            (h :h3 "telemetry")
            (h :p.muted "every viewer who pressed play sends their playback numbers once every five minutes (and the tail when the tab closes): one file per viewer, per room, per day, kept 30 days. \"analyse\" flags the episodes — stretches off 1.0×, drift, stall clusters, dropped frames, starved buffers, the A/V desync signatures.")
-           (settings-card)
            (h :div.goo (h :button.btn.ghost {:onclick (fn [_] (refresh-t))} "refresh"))
            tele-slot)
         (when-not (.-goob js/window)
@@ -449,7 +471,9 @@
         (.then (fn [{:keys [data]}]
                  (set! (.-textContent info-slot)
                        (str (:storage-dir data) " · " (fmt-space (:free-mb data))
-                            " free · " (:workers data) " transcode worker(s)")))))
+                            " free · " (:workers data) " transcode worker(s)"))
+                 (set! (.-textContent encoder-slot)
+                       (str "encoder: " (or (get-in data [:encoder :label]) "unknown"))))))
     (refresh-v)
     (refresh-r)
     (refresh-t) ; on demand after that: a periodic re-render would close an open analysis

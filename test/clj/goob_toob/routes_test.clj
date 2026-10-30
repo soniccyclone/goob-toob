@@ -451,15 +451,18 @@
         room   (rooms/create! "v1")
         tok    (:token room)]
     (is (= 401 (:status (call app :get "/api/admin/settings"))) "admin only")
-    (is (= {:telemetry true} (:body (call app :get "/api/admin/settings" :cookie cookie))))
-    (is (= {:telemetry false} (:body (call app :put "/api/admin/settings" :cookie cookie
-                                           :body {:telemetry false}))))
+    (is (= {:telemetry true :hwenc "auto"} (:body (call app :get "/api/admin/settings" :cookie cookie))))
+    (is (= {:telemetry false :hwenc "auto"} (:body (call app :put "/api/admin/settings" :cookie cookie
+                                                         :body {:telemetry false}))))
     (let [resp (call app :post "/api/telemetry" :body (tele-chunk tok))]
       (is (= 403 (:status resp)))
       (is (= "telemetry is off" (:error (:body resp)))))
     (is (nil? (seq (.listFiles (today-dir (:id room))))) "nothing is stored while off")
     (is (= 400 (:status (call app :put "/api/admin/settings" :cookie cookie :body {:volume 11})))
         "an unknown key is refused")
-    (is (= {:telemetry true} (:body (call app :put "/api/admin/settings" :cookie cookie
-                                          :body {:telemetry true}))))
+    (is (= {:telemetry true :hwenc "auto"} (:body (call app :put "/api/admin/settings" :cookie cookie
+                                                        :body {:telemetry true}))))
+    (is (= "off" (:hwenc (:body (call app :put "/api/admin/settings" :cookie cookie :body {:hwenc "off"})))))
+    (is (= 400 (:status (call app :put "/api/admin/settings" :cookie cookie :body {:hwenc "turbo"}))))
+    (is (map? (:encoder (:body (call app :get "/api/admin/info" :cookie cookie)))) "the info card carries the encoder")
     (is (= 200 (:status (call app :post "/api/telemetry" :body (tele-chunk tok)))))))
