@@ -7,7 +7,8 @@
             [goob-toob.ui :as ui :refer [h]]
             [goob-toob.ws :as wsx]
             [goob-toob.player :as player]
-            [goob-toob.sync-core :as sc]))
+            [goob-toob.sync-core :as sc]
+            [goob-toob.tracks :as tracks]))
 
 (defn- play! [video]
   ;; browsers reject .play() without a user gesture; the video's native play
@@ -41,7 +42,11 @@
   ;; frames, quality index, quality cap, fullscreen (booleans as 0/1)
   ["t" "ct" "exp" "d" "r" "rr" "p" "b" "rs" "ab" "vb" "df" "tf" "q" "qc" "fs"])
 
-(def ^:private tele
+(def ^:private ^js tele
+  ;; ^js: a plain object read by property name; without the hint the
+  ;; release build renames the accesses (tele.recent -> tele.Cc) while the
+  ;; literal keeps its keys, and the sampler threw once a second on the
+  ;; fields that are not DOM extern names (recent, idled, autoat, autofired)
   (js-obj "session" (.slice (.toString (js/Math.random) 36) 2 12)
           "t0" nil "rows" (array) "events" (array) "seq" 0 "sent" 0
           "active" false "idled" false "recent" (array)
@@ -829,6 +834,140 @@
                 (lock-height! st (js/parseInt v))))))
     sel))
 
+;; ---- audio and subtitle tracks (per viewer, never room state) ----
+;; A rip's languages come through the descriptor: :audio, one entry per DASH
+;; audio adaptation set, and :subs, one per WebVTT sidecar. The viewer's
+;; choice is a language code in localStorage (goob-audio, goob-subs),
+;; resolved per item (tracks/resolve-audio, resolve-subs): nothing of it
+;; goes on the wire, the room clock does not know, a host cannot force it.
+;; Audio goes through dash.js (set-initial-audio! before the manifest
+;; arrives, set-audio! at runtime: a buffer flush and a refetch at the
+;; current time, no seek, and currentTime, playbackRate and preservesPitch
+;; are never touched here). Subtitles are native <track> elements on the
+;; <video>, one per sidecar, the chosen one mode "showing" and the others
+;; "hidden": rendered by the browser inside the element, so they survive
+;; the #58 wrapper fullscreen, and switched with no player call at all.
+;; The selects hide themselves when an item has one audio track and no
+;; subtitles, so a plain clip's row looks as it always did.
+
+(def ^:private audio-key "goob-audio")
+(def ^:private subs-key "goob-subs")
+
+(defn- track-elements [^js video]
+  (array-seq (.querySelectorAll video "track")))
+
+(defn- showing-track
+  "The <track> element whose text track is showing, or nil."
+  [^js video]
+  (first (filter #(= "showing" (.-mode (.-track ^js %))) (track-elements video))))
+
+(defn- audio-select [refs]
+  (.querySelector ^js (:tracks-slot refs) "select.audio"))
+
+(defn- playing-audio
+  "The language of the audio track playing, in the descriptor's own code.
+  dash.js bcp-47-normalizes every lang= as it parses the manifest (jpn ->
+  ja, eng -> en, und stays), so what it reports is mapped back onto the
+  item's :audio list by alias; a code the item did not list comes back as
+  dash.js has it. Nil before stream-init."
+  [^js st]
+  (when-let [ctx (.-player st)]
+    (when-let [now (player/current-audio ctx)]
+      (or (first (filter #(tracks/same-lang? now %) (.-audiolist st))) now))))
+
+(defn- show-subs!
+  "lang's <track> showing (nil: none), the others hidden so their cues stay
+  loaded for a later switch; the select and st follow."
+  [^js st refs lang]
+  (let [{:keys [^js video ^js tracks-slot]} refs]
+    (set! (.-subslang st) lang)
+    (doseq [^js t (track-elements video)]
+      (set! (.-mode (.-track t))
+            (if (and lang (tracks/same-lang? lang (.getAttribute t "srclang"))) "showing" "hidden")))
+    (when-let [^js sel (.querySelector tracks-slot "select.subs")]
+      (set! (.-value sel) (or lang "off")))))
+
+(defn- choose-audio!
+  "The viewer picked lang: the player switches (once the stream is
+  initialized; before that the initial setting already carries it) and
+  the choice is remembered."
+  [^js st lang]
+  (set! (.-audiolang st) lang)
+  (ui/store-set! audio-key lang)
+  (when-let [ctx (.-player st)]
+    (when (.-streamok st)
+      (player/set-audio! ctx lang)))
+  (log! (unchecked-get st "token") :audio-track {:lang lang}))
+
+(defn- option [value label]
+  (doto (h :option {:value value})
+    (.appendChild (.createTextNode js/document label))))
+
+(defn- render-tracks!
+  "The item's tracks on the page: the viewer's audio language resolved
+  (st.audiolang, read by the player attach that follows), the previous
+  item's <track> elements replaced by one per sidecar, the two selects
+  rebuilt (hidden for one audio and no subs), the stored subtitle choice
+  applied. nil descriptor: an empty room, everything goes."
+  [^js st refs {:keys [audio subs subs-unavailable]}]
+  (let [{:keys [^js video ^js tracks-slot]} refs
+        audio (vec audio)
+        subs (vec subs)
+        alang (tracks/resolve-audio audio (ui/store-get audio-key) (.-language js/navigator))
+        slang (tracks/resolve-subs subs (ui/store-get subs-key))
+        plain? (and (<= (count audio) 1) (empty? subs))]
+    (set! (.-audiolang st) alang)
+    (set! (.-audiolist st) (mapv :lang audio))
+    (doseq [^js t (track-elements video)] (.remove t))
+    (doseq [s subs]
+      (.appendChild video (h :track {:kind "subtitles" :srclang (:lang s)
+                                     :label (tracks/lang-label (:lang s) (:title s))
+                                     :src (:url s)})))
+    (ui/clear! tracks-slot)
+    (set! (.-display (.-style tracks-slot)) (if (and plain? (not (pos? (or subs-unavailable 0)))) "none" ""))
+    (when-not plain?
+      (let [asel (h :select.audio {:title "audio track"})
+            ssel (h :select.subs {:title "subtitles"})]
+        (doseq [a audio]
+          (.appendChild asel (option (:lang a) (tracks/lang-label (:lang a) (:title a)))))
+        (when alang (set! (.-value asel) alang))
+        (set! (.-onchange asel) #(choose-audio! st (.-value asel)))
+        (.appendChild ssel (option "off" "off"))
+        (doseq [s subs]
+          (.appendChild ssel (option (:lang s) (tracks/lang-label (:lang s) (:title s)))))
+        (set! (.-onchange ssel)
+              #(let [v (.-value ssel)
+                     lang (when (not= "off" v) v)]
+                 (show-subs! st refs lang)
+                 (ui/store-set! subs-key (or lang "off"))
+                 (log! (unchecked-get st "token") :subs-track {:lang lang})))
+        (ui/add! tracks-slot asel (h :span.muted "audio") ssel (h :span.muted "subtitles"))))
+    (when (pos? (or subs-unavailable 0))
+      (ui/add! tracks-slot
+               (h :span.muted.subs-note
+                  (str subs-unavailable " subtitle track" (when (not= 1 subs-unavailable) "s")
+                       (if (= 1 subs-unavailable) " is" " are") " bitmap, not shown"))))
+    (show-subs! st refs slang)))
+
+(defn- reconcile-audio!
+  "After stream-init: dash.js may have started another language than the
+  one resolved (an untagged set, a lang= the descriptor did not carry).
+  When the wanted language is among the stream's tracks it is switched to
+  now; otherwise the select shows what actually plays when it has that
+  option (a language the descriptor never listed leaves it alone). Nothing
+  stored: the viewer's preference is a language, not what one item could do."
+  [^js st token refs]
+  (when-let [ctx (.-player st)]
+    (let [want (.-audiolang st)
+          now (playing-audio st)]
+      (when (and want now (not (tracks/same-lang? want now)))
+        (if (player/set-audio! ctx want)
+          (log! token :audio-track {:lang want :from now :why "initial"})
+          (do (when-let [^js sel (audio-select refs)]
+                (when (some #(= now (.-value ^js %)) (array-seq (.-options sel)))
+                  (set! (.-value sel) now)))
+              (log! token :audio-track {:lang now :wanted want :why "unavailable"})))))))
+
 ;; ---- the queue (playlists, part 3) ----
 ;; The server owns the queue and the current item: an `item` state on every
 ;; change (auto-advance, next/prev/jump, an admin edit that moves the
@@ -914,14 +1053,16 @@
       #(log! token :video-error {:code (some-> (.-error video) .-code)
                                  :msg (some-> (.-error video) .-message)}))
     (set! (.-player st)
-      (player/create video dash (.-startkbps st)
+      (player/create video dash (.-startkbps st) (.-audiolang st)
         (fn [_ctx]
-          ;; fires again on every attach!: the res menu, the stream flag
-          ;; and the start path are per stream
-          (log! token :stream-init {:dash (.-dash st) :ua (.-userAgent js/navigator)})
+          ;; fires again on every attach!: the res menu, the stream flag,
+          ;; the audio track and the start path are per stream
+          (log! token :stream-init {:dash (.-dash st) :ua (.-userAgent js/navigator)
+                                    :audio (playing-audio st)})
           (ui/clear! res-slot)
           (ui/add! res-slot (res-menu st))
           (set! (.-streamok st) true)
+          (reconcile-audio! st token refs)
           (settle! st token video))))
     ;; faults must be wired NOW, not on streamInitialized —
     ;; a broken manifest never initializes, that's the point
@@ -948,7 +1089,7 @@
   "Point the page at video: title, duration, the quality cap off, the
   source swapped (or the player made, for a room that opened empty), the
   queue card re-marked. The dash on-ready then settles the new stream."
-  [^js st token refs {:keys [id title duration dash]}]
+  [^js st token refs {:keys [id title duration dash] :as v}]
   (let [{:keys [^js video title-el lag-hint]} refs]
     (set! (.-vid st) id)
     (set! (.-dash st) dash)
@@ -959,10 +1100,12 @@
     (set! (.-textContent lag-hint) "")
     (stage-empty! refs false)
     (host-row-enabled! refs true)
-    (log! token :item {:id id})
+    ;; the viewer's languages for this item, before the attach reads them
+    (render-tracks! st refs v)
+    (log! token :item {:id id :audio (.-audiolang st) :subs (.-subslang st)})
     (if-let [ctx (.-player st)]
       (do (player/set-max-kbps ctx -1)
-          (player/attach! ctx dash))
+          (player/attach! ctx dash (.-audiolang st)))
       (create-player! st token refs dash))
     (set! (.-buffering st) false)
     (render-queue! st refs)))
@@ -981,9 +1124,10 @@
     (set! (.-textContent lag-hint) "")
     (stage-empty! refs true)
     (host-row-enabled! refs false)
+    (render-tracks! st refs nil)
     (log! token :item {:id nil})
     (when-let [ctx (.-player st)]
-      (player/attach! ctx nil))
+      (player/attach! ctx nil nil))
     (set! (.-buffering st) false)
     (render-queue! st refs)))
 
@@ -1141,6 +1285,7 @@
         fwd-btn (h :button.btn.ghost.jump {:title "forward 10 s (shift: 5 s)"} "10s ⏩")
         seek (h :input.seek {:type "range" :value 0 :min 0 :step 0.5})
         res-slot (h :span {})
+        tracks-slot (h :span.tracks {:style "display:none"})
         viewer-row (h :div.controls {})
         host-row (h :div.controls {:style "display:none"})
         badge (h :span.badge.host "you drive")
@@ -1232,7 +1377,7 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
-    (ui/add! viewer-row res-slot (h :span.muted "picture quality")
+    (ui/add! viewer-row res-slot (h :span.muted "picture quality") tracks-slot
              (volume-control st) (fs-setting st fs-chat))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
              (h :span.muted "everyone follows you") slow-note)
@@ -1261,7 +1406,7 @@
                        (h :div.row {}
                           chat-input
                           (h :button.btn.aqua {:onclick send-chat} "💬")))))
-     :title-el title-el :seek seek :res-slot res-slot :admin-link admin-link
+     :title-el title-el :seek seek :res-slot res-slot :tracks-slot tracks-slot :admin-link admin-link
      :chat-log chat-log :fs-chat fs-chat :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :login-hint login-hint
      :slow-note slow-note
@@ -1361,6 +1506,7 @@
                   "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "expired" false "telemetry" false
+                  "audiolang" nil "subslang" nil "audiolist" []
                   "audio" (js-obj "ctx" nil "gainnode" nil "compressor" nil "pct" (saved-volume)
                                   "slider" nil "label" nil "wrap" nil "dead" false)
                   "counters" (js-obj "seeks" 0 "stalls" 0
@@ -1391,6 +1537,11 @@
                          :off-rate-s (off-rate-s st)
                          :fullscreen (boolean (.-fullscreen st))
                          :vid (.-vid st) :ended (boolean (.-ended st))
+                         ;; the tracks: what plays, what shows, how many cues
+                         ;; the showing sidecar has loaded (0 with none)
+                         :audio-lang (when (.-streamok st) (playing-audio st))
+                         :subs (when v (some-> (showing-track v) (.getAttribute "srclang")))
+                         :text-cues (or (when v (some-> (showing-track v) .-track .-cues .-length)) 0)
                          :telemetry {:pending (.-length (.-rows tele)) :events (.-length (.-events tele))
                                      :chunks (.-seq tele) :sent-bytes (.-sent tele)
                                      :active (.-active tele)}

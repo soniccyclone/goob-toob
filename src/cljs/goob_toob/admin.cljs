@@ -3,7 +3,8 @@
   with transcode status, rooms with shareable links, co-host control, a
   rename, the queue editor and the telemetry files with their analysis."
   (:require [goob-toob.ui :as ui :refer [h]]
-            [goob-toob.api :as api]))
+            [goob-toob.api :as api]
+            [goob-toob.tracks :as tracks]))
 
 (defn- login-view [on-ok]
   (let [input (h :input {:type "password" :placeholder "admin password"})
@@ -79,11 +80,22 @@
                (h :div.bar {:style "width:140px;margin-top:4px"}
                   (h :i {:style (str "width:" (int (* 100 (or (:progress v) 0))) "%")}))))
           (h :td (or (ui/fmt-time (:duration v)) "—"))
+          ;; the tracks plan: what the encode kept; nil for a row from before
+          (h :td.muted (or (tracks/tracks-text (:tracks v)) "—"))
           (h :td {:class "err"} (some-> (:error v) (#(subs % 0 (min 80 (count %))))))
           (h :td
              (h :div.goo
                (h :button.btn.aqua {:disabled (not= st "ready")
                                     :onclick #((.-room acts) v)} "make room")
+               ;; a re-encode runs the whole ladder again from the original,
+               ;; tracks included; an item whose original is gone needs the
+               ;; file again
+               (if (:has-original v)
+                 (h :button.btn.ghost {:disabled (boolean (#{"transcoding" "uploaded"} st))
+                                       :title "transcode again from the original (audio languages and subtitles included)"
+                                       :onclick #((.-reencode acts) v)} "re-encode")
+                 (h :span.muted {:title "the original file is gone: upload it again to get its tracks"}
+                    "re-upload for tracks"))
                (h :button.btn.danger {:onclick #((.-del acts) v)} "del"))))))))
 
 ;; ---- rooms: rename + queue editor ---------------------------------------------
@@ -394,6 +406,14 @@
                                    (ui/copy! url)
                                    (toast (str "room open! link copied: " url)))
                                  (refresh-r)))))))
+        _ (set! (.-reencode acts)
+                (fn [v]
+                  (-> (api/post! (str "/api/admin/videos/" (:id v) "/reencode") {})
+                      (.then (fn [{:keys [status data]}]
+                               (toast (if (= 202 status)
+                                        (str "re-encoding " (:title v) " — its tracks come with it")
+                                        (str "can't re-encode — " (or (:error data) (str "status " status)))))
+                               (refresh-v))))))
         _ (set! (.-del acts)
                 (fn [v]
                   (when (js/confirm (str "delete " (:title v) " and its stream files?"))
@@ -447,8 +467,9 @@
            uploads)
         (h :div.card.row-gap
            (h :h3 "library")
+           (h :p.muted "every audio language in a file becomes its own track and every text subtitle (SRT, ASS, WebVTT) a sidecar, each viewer picking theirs on the watch page. ASS styling, positioning and fonts are not kept — the dialogue and its timing are; bitmap subtitles (PGS, DVD) are skipped. \"re-encode\" rebuilds an item uploaded before this from its original.")
            (h :table.lib
-              (h :thead (h :tr (h :th "title") (h :th "status") (h :th "length") (h :th "") (h :th "")))
+              (h :thead (h :tr (h :th "title") (h :th "status") (h :th "length") (h :th "tracks") (h :th "") (h :th "")))
               vtbody))
         (h :div.card.row-gap
            (h :h3 "open rooms")
