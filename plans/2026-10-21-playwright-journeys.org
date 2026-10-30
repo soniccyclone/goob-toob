@@ -482,6 +482,24 @@ carries the tail; =goobProbe()= gains =:telemetry= (=:pending= rows,
 |--------------------------------+---------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | =every session is recorded=    | host and viewer synced; sample the viewer =:telemetry-window= (25 s); the viewer leaves for the lobby; poll the admin listing | the probe's pending rows ≥ =:telemetry-min-samples= before leaving; the room's listing gains a =-viewer.jsonl= file with ≥ 1 chunk and ≥ 20 samples; the analysis endpoint answers 200 with an episodes vector (none required on a clean run) and lists the viewer |
 
+*** =tracks.cljs= (added 2026-10-30, audio and subtitle tracks)
+Audio and subtitle tracks, per viewer and never room state
+(~2026-10-30-audio-subtitle-tracks.org~). The setup builds a second
+fixture, =:dual=: a 60 s MKV with two audio streams (440 Hz tagged =eng=
+"English", 880 Hz tagged =jpn= "Japanese") and a three-cue SRT muxed as
+an =eng= subtitle stream, so the transcode writes two audio adaptation
+sets and a WebVTT sidecar; the single-audio clip is untouched for every
+other journey. Headless cannot hear which tone plays, so =goobProbe()=
+gains =:audio-lang= (what dash.js plays, in the descriptor's own code),
+=:subs= (the showing =<track>='s srclang) and =:text-cues= (its loaded
+cues), and the journeys judge those next to the clock: a switch is a
+buffer flush, not a seek. Group =b= in CI.
+| journey                                         | steps                                                                                                                      | asserts                                                                                                                                                                                                                                                                                                                                                                 |
+|-------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =viewers pick their own audio and stay in sync= | pair on the dual clip, both landed; the viewer picks =jpn= in the audio select; sample 10 s, host probed alongside          | both start on =eng= (browser =en-US=); the viewer's =:audio-lang= is =jpn= within =:switch-within= and on every sample, the host's =eng= on every sample; viewer =seeks= delta 0 across the switch; drift p95 ≤ =:steady-p95=; stalls ≤ 1 (the flush); =rate= 1 throughout; =goob-audio= "jpn" on the viewer, unset on the host; the host's select still reads =eng= |
+| =subtitles are a viewer's choice=               | pair on the dual clip; the viewer picks =jpn= audio and =eng= subs; the viewer reloads, joins, settles; sample 6 s          | the viewer's =:subs= is =eng= with =:text-cues= ≥ 3 and one showing text track, =goob-subs= "eng"; the host's =:subs= nil, 0 cues, no showing track, its select "off", nothing stored; after the reload =:audio-lang= =jpn=, =:subs= =eng=, cues ≥ 3 and both selects agree; the host's subs still nil; drift p95 ≤ =:steady-p95= with subs showing                 |
+| =a plain clip shows no track controls=          | host on the single-audio fixture, landed                                                                                   | no =select.audio=, no =select.subs=, the =.tracks= slot hidden, no =<track>= elements; the probe reads =:subs= nil and =:text-cues= 0                                                                                                                                                                                                                              |
+
 About a dozen journeys; three engines; target under ten minutes in the
 container, with the engines run as separate CI matrix legs so each is
 under four.
