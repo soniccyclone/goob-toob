@@ -12,6 +12,7 @@
             [goob-toob.repos.video :as videos]
             [goob-toob.routes :as routes]
             [goob-toob.services.sync :as sync]
+            [goob-toob.services.transcode :as transcode]
             [goob-toob.test-util :refer [with-tmp]])
   (:import [java.time LocalDate]))
 
@@ -147,6 +148,15 @@
     (is (= "world" (slurp (:body part))))
     (is (= "bytes 6-10/11" (get-in part [:headers "Content-Range"])))))
 
+(deftest subtitle-sidecars-are-served-as-webvtt
+  (spit (io/file (storage/dash-dir "v1") "subs-eng.vtt") "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n")
+  (let [app  (container-app)
+        resp (call app :get "/dash/v1/subs-eng.vtt")]
+    (is (= 200 (:status resp)))
+    (is (= "text/vtt; charset=utf-8" (get-in resp [:headers "Content-Type"])))
+    (is (str/starts-with? (slurp (:body resp)) "WEBVTT"))
+    (is (= "application/octet-stream" (#'routes/content-type-for "x.bin")))))
+
 (deftest dash-files-outside-the-dir-are-404
   (storage/dash-dir "v1")
   (let [app (container-app)]
@@ -164,6 +174,71 @@
     (is (= 200 (:status (call app :delete "/api/admin/videos/v1" :cookie cookie))))
     (is (nil? (videos/get-by-id "v1")))
     (is (not (.exists (io/file (config/storage-dir) "dash" "v1"))))))
+
+(defn- original! [id]
+  (let [f (io/file (storage/uploads-dir) (str id ".mkv"))]
+    (spit f "not really a video")
+    f))
+
+(deftest admin-videos-carry-tracks-and-whether-the-original-is-kept
+  (video! "kept" :status "ready")
+  (original! "kept")
+  (videos/set-tracks! "kept" {:audio [{:i 0 :lang "eng" :title nil :channels 2 :default true}
+                                      {:i 1 :lang "jpn" :title nil :channels 2 :default false}]
+                              :subs [{:i 0 :lang "eng" :title nil :codec "ass" :text true :file "subs-eng.vtt"}]})
+  (video! "gone" :status "ready")
+  (let [app    (container-app)
+        cookie (login! app)
+        rows   (into {} (map (juxt :id identity) (:body (call app :get "/api/admin/videos" :cookie cookie))))]
+    (is (true? (get-in rows ["kept" :has-original])))
+    (is (false? (get-in rows ["gone" :has-original])))
+    (is (= ["eng" "jpn"] (map :lang (get-in rows ["kept" :tracks :audio]))))
+    (is (= ["subs-eng.vtt"] (map :file (get-in rows ["kept" :tracks :subs]))))
+    (is (nil? (get-in rows ["gone" :tracks])))
+    (is (contains? (rows "gone") :tracks))))
+
+(deftest reencode-requeues-a-video-whose-original-is-kept
+  (video! "v1" :status "ready")
+  (videos/set-status! "v1" "failed" :progress 0.7 :error "boom")
+  (original! "v1")
+  (let [submitted (atom [])
+        app       (container-app)
+        cookie    (login! app)
+        resp      (with-redefs [transcode/submit! #(swap! submitted conj %)]
+                    (call app :post "/api/admin/videos/v1/reencode" :cookie cookie))]
+    (is (= 202 (:status resp)))
+    (is (= ["v1"] @submitted))
+    (is (= {:id "v1" :status "uploaded" :progress 0.0 :error nil :has-original true}
+           (select-keys (:body resp) [:id :status :progress :error :has-original])))
+    (is (= "uploaded" (:status (videos/get-by-id "v1"))))
+    (is (= 0.0 (:progress (videos/get-by-id "v1"))))
+    (is (nil? (:error (videos/get-by-id "v1"))))))
+
+(deftest reencode-without-an-original-is-409-and-leaves-the-row-alone
+  (video! "v1" :status "ready")
+  (let [submitted (atom [])
+        app       (container-app)
+        cookie    (login! app)
+        resp      (with-redefs [transcode/submit! #(swap! submitted conj %)]
+                    (call app :post "/api/admin/videos/v1/reencode" :cookie cookie))]
+    (is (= 409 (:status resp)))
+    (is (= "no original to re-encode; upload it again" (get-in resp [:body :error])))
+    (is (empty? @submitted))
+    (is (= "ready" (:status (videos/get-by-id "v1"))))
+    (is (= 404 (:status (call app :post "/api/admin/videos/nope/reencode" :cookie cookie))))))
+
+(deftest reencode-is-admin-only-and-refused-while-encoding
+  (video! "v1" :status "transcoding")
+  (original! "v1")
+  (let [app    (container-app)
+        cookie (login! app)]
+    (is (= 401 (:status (call app :post "/api/admin/videos/v1/reencode"))))
+    (is (= 404 (:status ((routes/app {:admin? false}) (req :post "/api/admin/videos/v1/reencode")))))
+    (let [resp (with-redefs [transcode/submit! (fn [_] (throw (ex-info "must not run" {})))]
+                 (call app :post "/api/admin/videos/v1/reencode" :cookie cookie))]
+      (is (= 409 (:status resp)))
+      (is (= "already encoding" (get-in resp [:body :error]))))
+    (is (= "transcoding" (:status (videos/get-by-id "v1"))))))
 
 (deftest clientlog-is-rate-limited-per-token
   (reset! routes/clientlog-hits {})

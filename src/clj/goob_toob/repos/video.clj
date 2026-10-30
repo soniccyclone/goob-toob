@@ -8,7 +8,11 @@
             [goob-toob.repos.room :as rooms]))
 
 (defn- row->video [row]
-  (update row :ladder #(some-> % json/read-str)))
+  (-> row
+      (update :ladder #(some-> % json/read-str))
+      ;; {:audio [...] :subs [...]} from the probe (#85); nil on a row
+      ;; encoded before migration 007
+      (update :tracks #(some-> % (json/read-str :key-fn keyword)))))
 
 (defn insert! [video]
   (let [{:keys [id title original-path]} video]
@@ -59,6 +63,14 @@
 (defn set-duration! [id duration]
   (jdbc/execute! (db/db)
     (sql/format {:update :videos :set {:duration duration} :where [:= :id id]})))
+
+(defn set-tracks!
+  "Stores the probe's tracks, {:audio [{:i :lang :title :channels :default}]
+  :subs [{:i :lang :title :codec :text :file}]}, as JSON; get-by-id reads
+  it back under :tracks."
+  [id tracks]
+  (jdbc/execute! (db/db)
+    (sql/format {:update :videos :set {:tracks (json/write-str tracks)} :where [:= :id id]})))
 
 (defn delete!
   "Deletes the video row. Refused (:type :conflict, naming the rooms) while

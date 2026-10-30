@@ -62,6 +62,21 @@
                    :values [{:id id :title id :status "uploaded" :created-at at}]})))
   (is (= ["b" "a"] (map :id (videos/list-all)))))
 
+(deftest tracks-round-trip-as-json-and-read-nil-before-they-are-set
+  (video! "v1")
+  (is (nil? (:tracks (videos/get-by-id "v1"))) "migration 007 leaves the column NULL")
+  (is (contains? (videos/get-by-id "v1") :tracks))
+  (let [tracks {:audio [{:i 0 :lang "eng" :title "AAC" :channels 6 :default true}
+                        {:i 1 :lang "jpn" :title nil :channels 2 :default false}]
+                :subs [{:i 0 :lang "eng" :title "ASS" :codec "ass" :text true :file "subs-eng.vtt"}
+                       {:i 1 :lang "fre" :title nil :codec "hdmv_pgs_subtitle" :text false}]}]
+    (videos/set-tracks! "v1" tracks)
+    (is (= tracks (:tracks (videos/get-by-id "v1"))))
+    (is (= tracks (:tracks (first (videos/list-all)))))
+    (is (string? (:tracks (jdbc/execute-one! (db/db) (sql/format {:select [:tracks] :from [:videos] :where [:= :id "v1"]})
+                                             {:builder-fn next.jdbc.result-set/as-unqualified-lower-maps})))
+        "stored as text")))
+
 (deftest deleting-an-unqueued-video-just-deletes-it
   (video! "v1")
   (videos/delete! "v1")

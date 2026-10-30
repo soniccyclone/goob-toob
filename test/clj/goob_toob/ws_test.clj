@@ -212,7 +212,28 @@
     (is (= [["v1" "Ep 1" 0] ["v2" "Ep 2" 1]] (map (juxt :video-id :title :position) (:queue w))))
     (is (= "v1" (:video-id w)))
     (is (= "v1" (get-in w [:state :video-id])))
-    (is (= {:id "v1" :title "Ep 1" :duration 42.0 :dash "/dash/v1/manifest.mpd"} (:video w)))))
+    (is (= {:id "v1" :title "Ep 1" :duration 42.0 :dash "/dash/v1/manifest.mpd"
+            :audio [] :subs [] :subs-unavailable 0}
+           (:video w)))))
+
+(deftest welcome-and-item-carry-the-audio-and-subtitle-tracks
+  (let [room   (two-item-room!)
+        tracks {:audio [{:i 0 :lang "eng" :title "AAC" :channels 6 :default true}
+                        {:i 1 :lang "jpn" :title nil :channels 2 :default false}]
+                :subs [{:i 0 :lang "eng" :title "ASS" :codec "ass" :text true :file "subs-eng.vtt"}]}
+        _      (videos/set-tracks! "v1" tracks)
+        _      (videos/set-tracks! "v2" tracks)
+        w      (:welcome (connect! room "ann"))
+        host   (connect! room "host" (login!))
+        viewer (connect! room "bob")]
+    (is (= (:audio tracks) (get-in w [:video :audio])))
+    (is (= [{:lang "eng" :title "ASS" :url "/dash/v1/subs-eng.vtt"}] (get-in w [:video :subs])))
+    (is (= 0 (get-in w [:video :subs-unavailable])))
+    (send! (:ws host) {:type "cmd" :op "next"})
+    (let [item (recv-item! (:in viewer))]
+      (is (= "v2" (:video-id item)))
+      (is (= (:audio tracks) (get-in item [:video :audio])))
+      (is (= [{:lang "eng" :title "ASS" :url "/dash/v2/subs-eng.vtt"}] (get-in item [:video :subs]))))))
 
 (deftest host-next-switches-every-viewer
   (let [room   (two-item-room!)
@@ -283,7 +304,9 @@
           item (recv-item! (:in viewer))]
       (is (= 201 (:status resp)))
       (is (= "v2" (get-in resp [:body :video-id])))
-      (is (= {:id "v2" :title "Ep 2" :duration 50.0 :dash "/dash/v2/manifest.mpd"} (:video item)))
+      (is (= {:id "v2" :title "Ep 2" :duration 50.0 :dash "/dash/v2/manifest.mpd"
+              :audio [] :subs [] :subs-unavailable 0}
+             (:video item)))
       (is (= "v2" (:video-id item)))
       (is (false? (:playing item)))
       (is (= 0.0 (:pos item))))
