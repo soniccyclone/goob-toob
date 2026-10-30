@@ -396,8 +396,9 @@
      (rung-bitrates bench-ladder (some? eng))
      ["-f" "null" "-"])))
 
-(defn- bench!
-  "Wall milliseconds of the bench for one attempt; nil when it fails."
+(defn bench!
+  "Wall milliseconds of the bench for one attempt; nil when it fails.
+  Public so a test can pin the times instead of racing fake processes."
   [att dev]
   (let [t0 (System/nanoTime)
         {:keys [ok?]} (run-quiet (bench-cmd att dev) 120000)]

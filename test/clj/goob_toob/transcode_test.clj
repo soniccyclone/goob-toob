@@ -349,7 +349,11 @@
   (fake-ffmpeg-failing-on! "-hwaccel")
   (.delete (io/file (System/getProperty "java.io.tmpdir") "goob-probe.mp4")) ; a run before may have left it
   (try
-    (let [r (transcode/probe-engines!)]
+    ;; the race itself is pinned: fake processes finish in 3 or 4 ms and a
+    ;; millisecond is more than the 15 % margin, so the real bench! would
+    ;; decide this test by scheduler luck (it did, twice, on main)
+    (let [r (with-redefs [transcode/bench! (fn [[eid _] _] (if (= :cpu eid) 1000 950))]
+              (transcode/probe-engines!))]
       (is (= :nvenc (:engine r)))
       (is (#{:upload :encode} (:tier r)))
       (is (= [{:engine :nvenc :tier :full :ok? false} {:engine :nvenc :tier :upload :ok? true}
