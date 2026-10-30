@@ -287,6 +287,14 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
 .vol-pct { min-width: 3.4em; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .vol-pct.boost { color: var(--aqua-soft); opacity: 1; }
 
+/* ---- viewer tracks: audio and subtitles, per viewer (the tracks plan) ---- */
+/* the two selects are plain <select>s, styled by the forms rule above like
+   the picture-quality one; the span only lays them out. video::cue is left
+   to the browser's default rendering on purpose. */
+.tracks { display: inline-flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.tracks select { max-width: 14rem; }
+.subs-note { white-space: nowrap; }
+
 /* ---- admin: room rename + queue editor ---- */
 .editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }
 .room-title { width: 100%; max-width: 16rem; }

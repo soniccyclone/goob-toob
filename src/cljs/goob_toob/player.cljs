@@ -1,12 +1,33 @@
 (ns goob-toob.player
   "dash.js wrapper: attach a DASH manifest to a <video>, pick auto (ABR,
-  best sync) or a locked resolution."
-  (:require ["dashjs" :refer [MediaPlayer]]))
+  best sync) or a locked resolution, and the audio language (one
+  adaptation set per language since the tracks plan)."
+  (:require ["dashjs" :refer [MediaPlayer]]
+            [goob-toob.tracks :as tracks]))
+
+(defn set-initial-audio!
+  "Which audio adaptation set the stream being attached starts on, by
+  language, so the first segments fetched are already the right ones.
+  Order matters in dash.js 4.7.4: setInitialMediaSettingsFor throws
+  before initialize, and attachSource on a player that already streamed
+  resets the media controller, initial settings included, so this goes
+  right *after* attachSource and before the manifest arrives (the load is
+  async, the selection runs on streamInitialized). The lang goes in as a
+  RegExp over its aliases (^(en|eng)$): handed a string dash.js runs
+  bcp-47-normalize over it first (eng -> en) and then fails to match the
+  manifest's own \"eng\". Nil lang: nothing set, dash.js picks on its own."
+  [ctx lang]
+  (when lang
+    (try
+      (.setInitialMediaSettingsFor ctx "audio"
+                                   #js {:lang (js/RegExp. (tracks/lang-regex-source lang))})
+      (catch js/Error _ nil))))
 
 (defn create
   "Returns the dash.js context. on-ready fires when the stream is
-  initialized (bitrate list available)."
-  [video-el url start-kbps on-ready]
+  initialized (bitrate list available). lang is the audio language the
+  first stream starts on (see set-initial-audio!), or nil."
+  [video-el url start-kbps lang on-ready]
   (let [ctx (.create (MediaPlayer))]
     (.on ctx "streamInitialized"
          (fn [_] (on-ready ctx)))
@@ -16,16 +37,58 @@
                                               :abr #js {:initialBitrate #js {:video start-kbps}}
                                               :gaps #js {:jumpLargeGaps false}}
                               :debug #js {:logLevel 1}})
-    (.initialize ctx video-el url false)
+    ;; the view first, the source after: the audio setting must sit between
+    (.initialize ctx video-el nil false)
+    (.attachSource ctx url)
+    (set-initial-audio! ctx lang)
     ctx))
 
 (defn attach!
   "Switch the player to another manifest in place (nil drops the source:
   dash.js resets its controllers and clears the element). The player's
   settings persist; streamInitialized fires again for a new source, so
-  create's on-ready re-runs."
-  [ctx url]
-  (.attachSource ctx url))
+  create's on-ready re-runs. lang: the audio language the new stream
+  starts on, or nil (set-initial-audio!)."
+  [ctx url lang]
+  (.attachSource ctx url)
+  (when url (set-initial-audio! ctx lang)))
+
+(defn- track-lang [^js track]
+  (let [l (.-lang track)]
+    (when (and (string? l) (not= "" l)) l)))
+
+(defn audio-tracks
+  "The stream's audio adaptation sets as [{:lang :label :index :track}],
+  manifest order; [] before the stream is initialized (dash.js throws on
+  getTracksFor until then)."
+  [ctx]
+  (try
+    (mapv (fn [^js t]
+            {:lang (track-lang t)
+             :label (some-> (.-labels t) (aget 0) .-text)
+             :index (.-index t)
+             :track t})
+          (array-seq (or (.getTracksFor ctx "audio") #js [])))
+    (catch js/Error _ [])))
+
+(defn current-audio
+  "The language of the audio track playing, nil before stream-init or for
+  an untagged set."
+  [ctx]
+  (try (some-> (.getCurrentTrackFor ctx "audio") track-lang)
+       (catch js/Error _ nil)))
+
+(defn set-audio!
+  "Switch to the audio track in lang (first match over its aliases).
+  dash.js flushes the audio buffer and refetches at the current time: no
+  seek, currentTime and playbackRate untouched. True when a switch was
+  made; nil when no such track or it already plays, or before stream-init."
+  [ctx lang]
+  (when-let [{:keys [^js track] :as t} (first (filter #(tracks/same-lang? lang (:lang %))
+                                                      (audio-tracks ctx)))]
+    (when-not (tracks/same-lang? (:lang t) (current-audio ctx))
+      (try (.setCurrentTrack ctx track) true
+           (catch js/Error _ nil)))))
 
 (defn video-representations [ctx]
   (->> (array-seq (.getBitrateInfoListFor ctx "video"))
