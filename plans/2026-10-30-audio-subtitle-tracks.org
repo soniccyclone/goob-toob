@@ -2,7 +2,7 @@
 #+OPTIONS: toc:2 num:nil ^:nil
 #+DATE: 2026-10-30
 #+SETUPFILE: ~/.config/opencode/skills/org-plan/themes/default.setup
-# Status: draft 2026-10-30; waiting for Nathan's approval.
+# Status: approved 2026-10-30.
 
 * Goal
 Anime rips carry two audio tracks and a subtitle track; today the transcode

@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-10-30 Fri 09:46 -->
+<!-- 2026-10-30 Fri 10:24 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Audio and subtitle tracks: everyone in sync, each in their own language</title>
@@ -30,19 +30,19 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org06de980">Goal</a></li>
-<li><a href="#orgd608c93">Findings</a></li>
-<li><a href="#org63acec6">Decisions</a></li>
-<li><a href="#org93253e7">Plan</a></li>
-<li><a href="#org09026f6">Flow</a></li>
-<li><a href="#org39ccce1">Risks and open questions</a></li>
-<li><a href="#orgf871495">Verification</a></li>
+<li><a href="#org427b262">Goal</a></li>
+<li><a href="#orgf40d88f">Findings</a></li>
+<li><a href="#org43665b7">Decisions</a></li>
+<li><a href="#org3e252ab">Plan</a></li>
+<li><a href="#orgcd0fd1a">Flow</a></li>
+<li><a href="#org46939db">Risks and open questions</a></li>
+<li><a href="#orgbe9fb38">Verification</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org06de980" class="outline-2">
-<h2 id="org06de980">Goal</h2>
-<div class="outline-text-2" id="text-org06de980">
+<div id="outline-container-org427b262" class="outline-2">
+<h2 id="org427b262">Goal</h2>
+<div class="outline-text-2" id="text-org427b262">
 <p>
 Anime rips carry two audio tracks and a subtitle track; today the transcode
 keeps the first audio stream only (<code>-map 0:a:0</code>) and drops every subtitle.
@@ -56,9 +56,9 @@ language they want."
 </p>
 </div>
 </div>
-<div id="outline-container-orgd608c93" class="outline-2">
-<h2 id="orgd608c93">Findings</h2>
-<div class="outline-text-2" id="text-orgd608c93">
+<div id="outline-container-orgf40d88f" class="outline-2">
+<h2 id="orgf40d88f">Findings</h2>
+<div class="outline-text-2" id="text-orgf40d88f">
 <ul class="org-ul">
 <li><code>src/clj/goob_toob/services/transcode.clj:85</code> maps <code>0:a:0</code> and nothing
 else; <code>probe-media</code> keeps only <code>:audio?</code> (a boolean) from ffprobe, which
@@ -103,9 +103,9 @@ fixture with no new binaries.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org63acec6" class="outline-2">
-<h2 id="org63acec6">Decisions</h2>
-<div class="outline-text-2" id="text-org63acec6">
+<div id="outline-container-org43665b7" class="outline-2">
+<h2 id="org43665b7">Decisions</h2>
+<div class="outline-text-2" id="text-org43665b7">
 <ul class="org-ul">
 <li><b>Per viewer, never room state.</b> Audio and subtitle choice live in
 <code>localStorage</code> (<code>goob-audio</code>, <code>goob-subs</code>, language codes). Nothing on
@@ -134,9 +134,9 @@ the select shows what is playing.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org93253e7" class="outline-2">
-<h2 id="org93253e7">Plan</h2>
-<div class="outline-text-2" id="text-org93253e7">
+<div id="outline-container-org3e252ab" class="outline-2">
+<h2 id="org3e252ab">Plan</h2>
+<div class="outline-text-2" id="text-org3e252ab">
 <ol class="org-ol">
 <li><b>Probe keeps the tracks.</b> <code>transcode.clj</code> <code>probe-media</code> returns
 <code>:audio [{:i :lang :title :channels :default?}]</code> (ffprobe order) and
@@ -233,9 +233,9 @@ ASS limits.</li>
 </ol>
 </div>
 </div>
-<div id="outline-container-org09026f6" class="outline-2">
-<h2 id="org09026f6">Flow</h2>
-<div class="outline-text-2" id="text-org09026f6">
+<div id="outline-container-orgcd0fd1a" class="outline-2">
+<h2 id="orgcd0fd1a">Flow</h2>
+<div class="outline-text-2" id="text-orgcd0fd1a">
 <style>
 .opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
 .opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -435,9 +435,9 @@ orgPlanSequence('tracks', {
 </script>
 </div>
 </div>
-<div id="outline-container-org39ccce1" class="outline-2">
-<h2 id="org39ccce1">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org39ccce1">
+<div id="outline-container-org46939db" class="outline-2">
+<h2 id="org46939db">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org46939db">
 <ul class="org-ul">
 <li><b>ffmpeg's dash muxer and <code>lang</code>.</b> dashenc writes the adaptation set's
 <code>lang</code> from the first stream's <code>language</code> metadata; step 3 verifies it
@@ -465,9 +465,9 @@ the manifest (forward slashes).</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgf871495" class="outline-2">
-<h2 id="orgf871495">Verification</h2>
-<div class="outline-text-2" id="text-orgf871495">
+<div id="outline-container-orgbe9fb38" class="outline-2">
+<h2 id="orgbe9fb38">Verification</h2>
+<div class="outline-text-2" id="text-orgbe9fb38">
 <ol class="org-ol">
 <li><code>make test</code>: probe-media on the Nabari JSON yields two audio and one
 text sub; the command has the maps, metadata, sets and the sidecar; the
@@ -488,7 +488,7 @@ sync-policy journeys unchanged.</li>
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-30</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-10-30 Fri 09:46</p>
+<p class="date">Created: 2026-10-30 Fri 10:24</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

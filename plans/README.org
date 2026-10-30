@@ -7,7 +7,7 @@ Newest date wins when figuring out what we're building.
 
 | Written    | Plan                                          | Status                                    |
 |------------+-----------------------------------------------+-------------------------------------------|
-| 2026-10-30 | [[file:2026-10-30-audio-subtitle-tracks.org][Audio and subtitle tracks: everyone in sync, each in their own language]] | draft 2026-10-30, awaiting approval      |
+| 2026-10-30 | [[file:2026-10-30-audio-subtitle-tracks.org][Audio and subtitle tracks: everyone in sync, each in their own language]] | approved 2026-10-30                      |
 | 2026-10-21 | [[file:2026-10-21-playwright-journeys.org][Playwright journeys: critical paths through a real browser, judged by metrics]] | shipped as v0.4.5, 2026-10-22 (#43)    |
 | 2026-10-21 | [[file:2026-10-21-room-playlists.org][Room playlists: queue up the library, binge together]] | shipped v0.5.12 2026-10-27              |
 | 2026-10-21 | [[file:2026-10-21-autoplay-on-load.org][Autoplay on load: join a playing room without pressing play]] | shipped as v0.5.0, 2026-10-24 (#48)    |
