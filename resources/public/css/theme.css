@@ -105,6 +105,7 @@ input:focus, select:focus { box-shadow: 0 0 0 3px rgba(143, 224, 50, 0.4); }
 /* ---- watch page ---- */
 /* the watch page runs edge to edge, YouTube-style: the stage gets the width */
 body.watching main { max-width: none; }
+body.admin main { max-width: none; } /* #84: the console fills the window too */
 .watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; }
 @media (max-width: 900px) { .watch-layout { grid-template-columns: 1fr; } }
 
@@ -244,6 +245,7 @@ video.stage {
 
 table.lib { width: 100%; border-collapse: collapse; }
 table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid rgba(31,200,219,0.2); text-align: left; }
+table.lib th { white-space: nowrap; }
 .muted { opacity: 0.65; font-size: 0.85rem; }
 .err { color: var(--danger); white-space: pre-wrap; font-size: 0.8rem; }
 .ok { color: var(--slime); }
@@ -299,14 +301,14 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
 .editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }
 .room-title { width: 100%; max-width: 16rem; }
 details.queue summary { cursor: pointer; white-space: nowrap; }
-.queue-editor { margin-top: 0.5rem; min-width: 22rem; }
+.queue-editor { margin-top: 0.5rem; min-width: 0; }
 .qitem { display: flex; align-items: center; gap: 0.6rem; padding: 0.25rem 0; }
 .qitem .pos { opacity: 0.6; min-width: 1.2rem; text-align: right; }
-.qitem .qtitle { flex: 1; }
+.qitem .qtitle { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .qitem.now .qtitle { color: var(--slime); font-weight: 800; }
 .qitem .btn, .qadd .btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
 .qadd { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
-.qadd select { flex: 1; }
+.qadd select { flex: 1; min-width: 0; }
 
 /* #57: admin telemetry listing */
 .tele-room { padding: 0.4rem 0; border-bottom: 1px solid rgba(31,200,219,0.2); }
