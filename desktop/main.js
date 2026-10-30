@@ -197,6 +197,12 @@ app.on('web-contents-created', (e, wc) => {
   });
 });
 
+// #83: a reload (or a fresh window) has no user activation, so Chromium's
+// default policy parks the player until a click; the desktop shell is our
+// own browser, so let it start with sound on its own, like the "lenient"
+// e2e project. Must be set before the app is ready.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
