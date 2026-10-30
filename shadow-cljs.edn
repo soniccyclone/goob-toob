@@ -28,6 +28,8 @@
                         :audio            {:entries [goob-toob.e2e.journeys.audio]
                                            :depends-on #{:config}}
                         :telemetry        {:entries [goob-toob.e2e.journeys.telemetry]
+                                           :depends-on #{:config}}
+                        :tracks           {:entries [goob-toob.e2e.journeys.tracks]
                                            :depends-on #{:config}}}
            :js-options {:js-provider :import}
            :compiler-options {:optimizations :simple

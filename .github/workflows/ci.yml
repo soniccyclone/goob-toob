@@ -102,9 +102,9 @@ jobs:
           mkdir -p "$GOOB_E2E_STORAGE"
           case "${{ matrix.group }}" in
             a) SPECS="sync-policy host-and-viewer control lobby-admin-chat audio" ;;
-            b) SPECS="playlists autoplay resilience telemetry" ;;
+            b) SPECS="playlists autoplay resilience telemetry tracks" ;;
           esac
-          ALL="sync-policy host-and-viewer control lobby-admin-chat audio playlists autoplay resilience telemetry"
+          ALL="sync-policy host-and-viewer control lobby-admin-chat audio playlists autoplay resilience telemetry tracks"
           for f in out/*.js; do
             n=$(basename "$f" .js)
             case "$n" in config|setup) continue ;; esac

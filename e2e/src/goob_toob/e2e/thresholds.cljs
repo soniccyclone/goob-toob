@@ -55,6 +55,10 @@
   {:clip-seconds      90
    :upload-seconds    180
    :extra-clip-seconds 60
+   ;; the tracks fixture (two audio languages, three subtitle cues); the
+   ;; last cue sits at 20 s; a journey pairs, switches, samples and reloads
+   ;; inside it
+   :dual-clip-seconds 60
    :end-lead          5.0
    :advance-window    18000
    :end-window        12000
@@ -89,5 +93,8 @@
    ;; #57 telemetry: the viewer plays this long before leaving, and the
    ;; file read back must hold at least this many 1 Hz samples
    :telemetry-window  25000
-   :telemetry-min-samples 20})
+   :telemetry-min-samples 20
+   ;; tracks: the viewer plays on the other language this long after the
+   ;; switch, host probed alongside
+   :tracks-window     10000})
 

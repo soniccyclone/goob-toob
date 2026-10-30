@@ -21,6 +21,36 @@
                              "-c:v" "libx264" "-preset" "veryfast" "-c:a" "aac" "-shortest" file]))
   file)
 
+(def ^:private srt
+  "Three cues, at 2 s, 10 s and 20 s: enough for a journey to count them."
+  (str "1\n00:00:02,000 --> 00:00:04,000\nfirst cue\n\n"
+       "2\n00:00:10,000 --> 00:00:12,000\nsecond cue\n\n"
+       "3\n00:00:20,000 --> 00:00:22,000\nthird cue\n"))
+
+(defn- dual-clip!
+  "The tracks fixture: an MKV with two audio streams (440 Hz tagged eng
+  \"English\", 880 Hz tagged jpn \"Japanese\") and the SRT above muxed as an
+  eng subtitle stream, the shape of a two-language rip without a binary
+  in the repo. The single-audio clip stays as it is for every other
+  journey."
+  [dir seconds]
+  (let [subs (path/join dir "subs.srt")
+        file (path/join dir "dual.mkv")]
+    (fs/writeFileSync subs srt)
+    (cp/execFileSync "ffmpeg"
+                     (clj->js ["-y" "-hide_banner" "-loglevel" "error"
+                               "-f" "lavfi" "-i" (str "testsrc2=size=1280x720:rate=30:duration=" seconds)
+                               "-f" "lavfi" "-i" (str "sine=frequency=440:duration=" seconds)
+                               "-f" "lavfi" "-i" (str "sine=frequency=880:duration=" seconds)
+                               "-i" subs
+                               "-map" "0:v" "-map" "1:a" "-map" "2:a" "-map" "3:s"
+                               "-c:v" "libx264" "-preset" "veryfast" "-c:a" "aac" "-c:s" "srt"
+                               "-metadata:s:a:0" "language=eng" "-metadata:s:a:0" "title=English"
+                               "-metadata:s:a:1" "language=jpn" "-metadata:s:a:1" "title=Japanese"
+                               "-metadata:s:s:0" "language=eng"
+                               file]))
+    file))
+
 (defn- wait-ready [base cookie id budget-ms]
   (go-try
     (let [deadline (+ (js/Date.now) budget-ms)]
@@ -44,6 +74,7 @@
              ;; queue holds no duplicates); shorter, they transcode faster
              extra-clips (mapv #(clip! (path/join tmp (str % ".mp4")) (:extra-clip-seconds W))
                                ["clip-b" "clip-c"])
+             dual-clip (dual-clip! tmp (:dual-clip-seconds W))
              cookie (<p! (api/login base password))
              upload! (fn [file]
                        (go-try
@@ -56,17 +87,21 @@
                          (if-let [f (first files)]
                            (recur (rest files) (conj ids (<? (upload! f))))
                            ids))
+             dual-id (<? (upload! dual-clip))
              t0 (js/Date.now)
              row (<? (wait-ready base cookie id (:transcode-within T)))
              extra (loop [ids extra-ids rows []]
                      (if-let [i (first ids)]
                        (let [r (<? (wait-ready base cookie i (:transcode-within T)))]
                          (recur (rest ids) (conj rows {:id i :title (:title r) :duration (:duration r)})))
-                       rows))]
+                       rows))
+             dual-row (<? (wait-ready base cookie dual-id (:transcode-within T)))]
          (metrics/reset-summary! full-config)
          (fs/writeFileSync (api/fixture-path dir)
                            (js/JSON.stringify
                             (clj->js {:cookie cookie :video-id id :title (:title row) :duration (:duration row)
                                       :extra extra
+                                      :dual {:id dual-id :title (:title dual-row) :duration (:duration dual-row)
+                                             :tracks (:tracks dual-row)}
                                       :upload-clip upload-clip :transcode-ms (- (js/Date.now) t0)})))
          nil))))
