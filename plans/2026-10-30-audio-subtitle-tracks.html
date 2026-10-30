@@ -1,0 +1,495 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-10-30 Fri 09:46 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audio and subtitle tracks: everyone in sync, each in their own language</title>
+<meta name="author" content="Nathan Barlow" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/htmlize.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/bigblow.css"/>
+<link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/bigblow/css/hideshow.css"/>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery/jquery-1.11.0.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-ui/jquery-ui-1.10.2.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.localscroll-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/jquery-scroll/jquery.scrollTo-1.4.3.1-min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/zclip/jquery.zclip.min.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/bigblow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/bigblow/js/hideshow.js"></script>
+<script type="text/javascript" src="https://fniessen.github.io/org-html-themes/src/vendor/stickytableheaders/jquery.stickytableheaders.min.js"></script>
+<style>.org-clojure-keyword{color:#0b7a75}.org-clojure-character{color:#8b4513}[class^="org-rainbow-delimiters-depth-"]{color:inherit}</style>
+<style>#content,#postamble{max-width:1400px}</style>
+</head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Audio and subtitle tracks: everyone in sync, each in their own language</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org06de980">Goal</a></li>
+<li><a href="#orgd608c93">Findings</a></li>
+<li><a href="#org63acec6">Decisions</a></li>
+<li><a href="#org93253e7">Plan</a></li>
+<li><a href="#org09026f6">Flow</a></li>
+<li><a href="#org39ccce1">Risks and open questions</a></li>
+<li><a href="#orgf871495">Verification</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org06de980" class="outline-2">
+<h2 id="org06de980">Goal</h2>
+<div class="outline-text-2" id="text-org06de980">
+<p>
+Anime rips carry two audio tracks and a subtitle track; today the transcode
+keeps the first audio stream only (<code>-map 0:a:0</code>) and drops every subtitle.
+After this change the DASH output carries every audio language as its own
+adaptation set and every text subtitle as a WebVTT sidecar, and each viewer
+picks their audio and subtitle language in the viewer row, remembered per
+viewer, never room state. The room clock does not know: a viewer on the
+Japanese track with English subs and one on the dub are in the same sync
+as today. Nathan's framing: "watch anime in sync together but in whatever
+language they want."
+</p>
+</div>
+</div>
+<div id="outline-container-orgd608c93" class="outline-2">
+<h2 id="orgd608c93">Findings</h2>
+<div class="outline-text-2" id="text-orgd608c93">
+<ul class="org-ul">
+<li><code>src/clj/goob_toob/services/transcode.clj:85</code> maps <code>0:a:0</code> and nothing
+else; <code>probe-media</code> keeps only <code>:audio?</code> (a boolean) from ffprobe, which
+already returns every stream with <code>tags.language</code>, <code>tags.title</code>,
+<code>channels</code> and <code>disposition.default</code>. The adaptation sets are
+<code>id=0,streams=v id=1,streams=a</code>, the shorthand that puts every audio
+output into one set (ffmpeg's dash muxer would then present two
+languages as one switchable "quality", which is wrong).</li>
+<li>The gpu-encoding branch (in flight) splits the command into
+<code>rung-bitrates</code> and <code>dash-args</code>; the audio side stays on the CPU there,
+so this plan edits <code>dash-args</code> and the audio maps only, whatever engine
+encodes the video.</li>
+<li><code>resources/migrations/001-init.sql</code>: <code>videos</code> has no column for track
+metadata. <code>repos/video.clj</code> has <code>insert!</code>, <code>set-status!</code>,
+<code>set-duration!</code>; the row flows to the client through
+<code>sync/video-descriptor</code> (<code>src/clj/goob_toob/services/sync.clj:41</code>:
+<code>:id :title :duration :dash</code>) in the welcome and the <code>item</code> state.</li>
+<li><code>src/clj/goob_toob/routes.clj:315</code> <code>content-type-for</code> knows <code>.mpd</code>,
+<code>.m4s</code>, <code>.init</code>, <code>.m4a</code>; a <code>.vtt</code> would be served as octet-stream.
+<code>dash-file</code> serves anything under the video's dash dir with Range
+support, so sidecars need only a content type.</li>
+<li><code>src/cljs/goob_toob/player.cljs</code> wraps dash.js 4.7.4 for quality only.
+dash.js has what the client side needs: <code>setInitialMediaSettingsFor
+  ("audio", {lang})</code> before <code>attachSource</code>, <code>getTracksFor("audio")</code>,
+<code>getCurrentTrackFor</code>, <code>setCurrentTrack(track)</code> at runtime; text tracks
+could go through dash.js too, but native <code>&lt;track&gt;</code> elements on the video
+are simpler, work with MSE, render inside the fullscreen wrapper of #58,
+and switch with <code>track.mode</code>.</li>
+<li><code>src/cljs/goob_toob/watch.cljs</code> viewer row: picture quality, the volume
+boost (#56), the fullscreen-chat checkbox. <code>st</code> has <code>vid</code>, <code>queue</code>, the
+probe <code>goobProbe()</code>. <code>switch-item!</code> re-attaches the source on an item
+change, which is where the audio preference must be re-applied.</li>
+<li><code>KEEP_ORIGINAL</code> defaults to true (<code>src/clj/goob_toob/config.clj:50</code>), so
+most library items still have their original and can be re-encoded in
+place; an item without one needs a re-upload.</li>
+<li>Nathan's test file <code>test_data/[a-s]_nabari_no_ou_-_01…mkv</code>: 960x544
+H.264, audio 0 <code>eng</code> AAC 5.1 (default), audio 1 <code>jpn</code> AAC stereo,
+subtitle 2 <code>eng</code> ASS, plus a TTF attachment. 24 minutes.</li>
+<li>The e2e fixture (<code>e2e/src/goob_toob/e2e/setup.cljs:17</code>) is a lavfi clip
+with one 440 Hz tone; a second tone and a tiny SRT make a dual-audio
+fixture with no new binaries.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org63acec6" class="outline-2">
+<h2 id="org63acec6">Decisions</h2>
+<div class="outline-text-2" id="text-org63acec6">
+<ul class="org-ul">
+<li><b>Per viewer, never room state.</b> Audio and subtitle choice live in
+<code>localStorage</code> (<code>goob-audio</code>, <code>goob-subs</code>, language codes). Nothing on
+the wire, nothing in the sync policy, nothing a host can force.</li>
+<li><b>Every audio language is its own adaptation set</b>, stereo AAC 128k each
+(the existing downmix: Chrome rejects ffmpeg's multi-channel AAC).
+Language from <code>tags.language</code> (ISO 639-2 as the rips carry it), falling
+back to <code>und</code> plus the index; <code>tags.title</code> shown when present ("Commentary").
+DASH only downloads the selected set, so extra languages cost disk, not
+bandwidth.</li>
+<li><b>Text subtitles become WebVTT sidecars</b> (<code>subs-&lt;lang&gt;[-&lt;n&gt;].vtt</code> in the
+dash dir): ASS, SSA, SubRip, WebVTT, mov_text. ASS positioning, karaoke
+and fonts are lost; dialogue survives. A real ASS renderer (JASSUB) is a
+possible later step, not this one. <b>Bitmap subtitles</b> (PGS, DVD, DVB)
+are listed as unavailable and skipped.</li>
+<li><b>Defaults</b>: audio = the viewer's stored choice, else the first track
+whose language matches <code>navigator.language</code>, else the source's default
+track. Subtitles = stored choice, else off. The selects hide themselves
+when there is one audio track and no subtitles, so a plain video's row
+looks as it does now.</li>
+<li><b>Re-encode</b>: an admin "re-encode" per library item requeues it when the
+original is still there; otherwise the button reads "re-upload".</li>
+<li><b>Rooms with mixed items</b>: the preference is a language, resolved per item
+on switch; an item without that language falls back to its default, and
+the select shows what is playing.</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org93253e7" class="outline-2">
+<h2 id="org93253e7">Plan</h2>
+<div class="outline-text-2" id="text-org93253e7">
+<ol class="org-ol">
+<li><b>Probe keeps the tracks.</b> <code>transcode.clj</code> <code>probe-media</code> returns
+<code>:audio [{:i :lang :title :channels :default?}]</code> (ffprobe order) and
+<code>:subs [{:i :lang :title :codec :text?}]</code>, <code>:text?</code> from a codec
+allowlist. <code>:audio?</code> stays for the callers that have it. Pure fn,
+tested on the Nabari ffprobe JSON (saved as a test fixture) and on a
+stream-less probe.</li>
+<li><b>Migration 007</b> adds <code>videos.tracks TEXT</code> (JSON of the probe's audio and
+subs, with each sub's output file name). <code>repos/video.clj</code> gains
+<code>set-tracks!</code> and reads the column into <code>:tracks</code>.</li>
+<li><b>ffmpeg command.</b> In <code>dash-args</code> / the maps: <code>-map 0:a:&lt;i&gt;</code> per audio
+stream, <code>-c:a:&lt;k&gt; aac -b:a:&lt;k&gt; 128k -ac:a:&lt;k&gt; 2</code>,
+<code>-metadata:s:a:&lt;k&gt; language=&lt;lang&gt;</code> (and <code>title</code>), adaptation sets by
+output index: <code>id=0,streams=0,…,&lt;n-1&gt; id=1,streams=&lt;n&gt; id=2,streams=&lt;n+1&gt;…</code>
+so each language is its own set and the muxer writes its <code>lang</code>
+attribute. Subtitles as a second output in the same command:
+<code>-map 0:s:&lt;i&gt; -c:s webvtt &lt;dash-dir&gt;/subs-&lt;lang&gt;.vtt</code> per text track
+(ASS → WebVTT is a built-in conversion). Bitmap tracks are not mapped.
+Tests pin the maps, the metadata, the adaptation-set string and the
+sidecar outputs for the Nabari shape, one-audio, no-audio.</li>
+<li><b>Serve <code>.vtt</code></b> as <code>text/vtt; charset=utf-8</code> in <code>content-type-for</code>.</li>
+<li><b>Descriptor.</b> <code>video-descriptor</code> adds <code>:audio</code> and <code>:subs</code> (each sub
+with its <code>:url</code>); the welcome and the <code>item</code> state carry them.</li>
+<li><b>Player wrapper.</b> <code>player.cljs</code>: <code>set-initial-audio! ctx lang</code> (before
+attach), <code>audio-tracks ctx</code> (<code>getTracksFor</code> → <code>[{:lang :label :index}]</code>),
+<code>set-audio! ctx lang</code> (<code>setCurrentTrack</code>), <code>on ctx "streamInitialized"</code>
+already there to refresh the select; <code>current-audio ctx</code>.</li>
+<li><b>Watch page.</b> Viewer row gains two selects after picture quality:
+"audio" (one option per track, label <code>title</code> or the language name) and
+"subtitles" ("off" plus one per text track). <code>st</code> gains <code>audio</code> and
+<code>subs</code> (language codes, from storage). On welcome/item:
+<code>set-initial-audio!</code> with the resolved default, then build the selects
+from the descriptor; after <code>streamInitialized</code> reconcile the select with
+<code>current-audio</code>. Audio change → <code>set-audio!</code> and store; subtitle change
+→ the matching <code>&lt;track&gt;</code> element gets <code>mode "showing"</code>, the others
+<code>hidden</code>, and store. <code>&lt;track kind</code>"subtitles" srclang=…
+label=… src=…&gt;= elements are created per item and removed on switch.
+Probe gains <code>:audio-lang</code> and <code>:subs</code>. The lag hint and the policy are
+untouched; a track switch flushes dash.js's audio buffer, which may show
+as one <code>waiting</code> and must not move <code>currentTime</code> (asserted below).</li>
+<li><b>Admin.</b> Library row gains "re-encode" (POST <code>/api/admin/videos/:id/
+   reencode</code>: status back to "uploaded", <code>transcode/submit!</code>) when
+<code>original_path</code> exists, else a muted "re-upload for tracks"; the row
+shows the track count ("2 audio · 1 subs").</li>
+<li><p>
+<b>E2E.</b> <code>setup.cljs</code> builds a second fixture clip with two audio streams
+(440 Hz tagged <code>eng</code>, 880 Hz tagged <code>jpn</code>) and a three-cue SRT muxed into
+an MKV via ffmpeg <code>-metadata:s:a:N language=…</code>. New spec
+<code>journeys/tracks.cljs</code>, module in <code>shadow-cljs.edn</code>, group <code>b</code> in
+<code>ci.yml</code>:
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">journey</th>
+<th scope="col" class="org-left">steps</th>
+<th scope="col" class="org-left">asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>viewers pick their own audio and stay in sync</code></td>
+<td class="org-left">pair on the dual-audio clip; viewer selects <code>jpn</code>; sample 10 s</td>
+<td class="org-left">viewer probe <code>:audio-lang</code> becomes <code>jpn</code> within <code>:switch-within</code>; host stays <code>eng</code>; viewer <code>seeks</code> delta 0; drift p95 ≤ <code>:steady-p95</code>; stalls ≤ 1 (the flush)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>subtitles are a viewer's choice</code></td>
+<td class="org-left">viewer picks the English subs; host leaves them off</td>
+<td class="org-left">viewer's showing track has cues (<code>video.textTracks</code> via the probe), host's has none; reload keeps both choices</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>a plain clip shows no track controls</code></td>
+<td class="org-left">the single-audio fixture</td>
+<td class="org-left">the audio and subtitle selects are hidden</td>
+</tr>
+</tbody>
+</table>
+<p>
+Rows added to <code>plans/2026-10-21-playwright-journeys.org</code>.
+</p></li>
+<li><b>Docs.</b> This plan stamped on ship; the admin help text mentions the
+ASS limits.</li>
+</ol>
+</div>
+</div>
+<div id="outline-container-org09026f6" class="outline-2">
+<h2 id="org09026f6">Flow</h2>
+<div class="outline-text-2" id="text-org09026f6">
+<style>
+.opseq{font:13px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#1b1f23;margin:1em 0}
+.opseq .bar{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opseq button{font:inherit;padding:4px 10px;border:1px solid #999;border-radius:4px;background:#f6f6f6;cursor:pointer;color:inherit}
+.opseq button:hover{background:#e9e9e9}
+.opseq .where{font-weight:600;margin-left:6px}
+.opseq .legend{margin-left:auto;display:flex;gap:10px}
+.opseq .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.opseq .svgwrap{overflow:auto;max-height:70vh;border:1px solid #ddd;background:#fff}
+.opseq svg{display:block}
+.opseq .lane rect{fill:#f3f4f6;stroke:#9aa0a6}
+.opseq .lane text{font-weight:600;font-size:13px;fill:#1b1f23}
+.opseq .lane .sub{font-weight:400;font-size:11px;fill:#555}
+.opseq .lifeline{stroke:#c4c8cc;stroke-dasharray:4 4}
+.opseq .phase rect{fill:#fafbfc}
+.opseq .phase text{font-size:12px;font-weight:700;fill:#333}
+.opseq .phase .ptag{font-weight:400;fill:#666}
+.opseq .step{cursor:pointer}
+.opseq .step .line{fill:none;stroke-width:1.6}
+.opseq .step text{font-size:11.5px;fill:#222}
+.opseq .step .num{font-weight:700;fill:#fff;font-size:10px}
+.opseq .step.future{opacity:.28}
+.opseq .step.past{opacity:.75}
+.opseq .halo{fill:none}
+.opseq .step.active .halo{fill:#fff3b0;opacity:.9}
+.opseq .note{margin-top:10px;padding:8px 10px;border-left:3px solid #999;background:#f7f7f9}
+.opseq .note b{margin-right:6px}
+.opseq .note span{color:#444}
+.opseq .state{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.opseq .card{border:1px solid #ddd;border-radius:6px;padding:8px 10px;background:#fcfcfd;min-height:96px}
+.opseq .card h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+.opseq .card.changed{border-color:#d98a00;background:#fff8e6}
+.opseq .card pre{margin:0;white-space:pre-wrap;font:12px/1.4 Menlo,Consolas,monospace;background:none;border:0;padding:0;box-shadow:none}
+</style>
+<script>
+window.orgPlanSequence = function (rootId, spec) {
+  var TAGS = Object.assign({built: '#2e8b57', spec: '#d98a00', browser: '#777', external: '#635bff', async: '#1f78b4'}, spec.tags || {});
+  var lanes = spec.lanes, steps = spec.steps, phases = spec.phases || {}, stores = spec.stores || [], init = spec.init || {};
+  var L = spec.laneWidth || 190, X0 = 110, TOP = 70, ROW = 46, PH = 34, NS = 'http://www.w3.org/2000/svg';
+  var W = X0 + (lanes.length - 1) * L + 120, xs = {};
+  lanes.forEach(function (l, i) { xs[l.id] = X0 + i * L; });
+
+  var root = document.getElementById(rootId);
+  root.className += ' opseq';
+  root.innerHTML = '<div class="bar"><button data-go="first">|&lt;</button><button data-go="prev">&larr; Prev</button>'
+    + '<button data-go="next">Next &rarr;</button><button data-go="last">&gt;|</button><button data-go="play">Play</button>'
+    + '<span class="where"></span><span class="legend"></span></div>'
+    + '<div class="svgwrap"><svg xmlns="' + NS + '"></svg></div><div class="note"></div><div class="state"></div>';
+  var svg = root.querySelector('svg');
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  function txt(x, y, s, a, p) { var t = el('text', Object.assign({x: x, y: y}, a || {}), p); t.textContent = s; return t; }
+  function color(tag) { return TAGS[tag] || '#555'; }
+
+  var y = TOP + 30, lastPh = null, bands = [];
+  steps.forEach(function (s) {
+    if (s.ph !== lastPh) { bands.push({phase: s.ph, y: y}); y += PH + 10; lastPh = s.ph; }
+    var lines = s.label.split('|'); s.y = y; s.h = ROW + (lines.length - 1) * 13; y += s.h;
+  });
+  var H = y + 20;
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  bands.forEach(function (b) {
+    var p = phases[b.phase] || {label: b.phase}, g = el('g', {class: 'phase'});
+    el('rect', {x: 0, y: b.y, width: W, height: PH - 4}, g);
+    txt(16, b.y + 15, p.label, {}, g);
+    if (p.tag) txt(16, b.y + 27, p.tag, {class: 'ptag'}, g);
+  });
+  lanes.forEach(function (l) {
+    var x = xs[l.id], g = el('g', {class: 'lane'});
+    el('line', {x1: x, y1: TOP, x2: x, y2: H, class: 'lifeline'});
+    var bw = Math.min(160, L - 16);
+    el('rect', {x: x - bw / 2, y: 16, width: bw, height: TOP - 24, rx: 5}, g);
+    txt(x, l.sub ? 38 : 46, l.label, {'text-anchor': 'middle'}, g);
+    if (l.sub) txt(x, 54, l.sub, {'text-anchor': 'middle', class: 'sub'}, g);
+  });
+
+  var gs = steps.map(function (s, i) {
+    var c = color(s.tag), g = el('g', {class: 'step'}), x1 = xs[s.from], x2 = xs[s.to], yy = s.y + 18, lines = s.label.split('|');
+    el('rect', {x: 0, y: s.y + 2, width: W, height: s.h - 4, class: 'halo'}, g);
+    if (s.from === s.to) {
+      el('path', {d: 'M' + x1 + ' ' + yy + ' h40 v16 h-34', class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + (x1 + 6) + ' ' + (yy + 16) + ' l8 -5 v10 z', fill: c}, g);
+      lines.forEach(function (t, k) { txt(x1 + 48, yy + 4 + k * 13, t, {}, g); });
+    } else {
+      var d = x2 > x1 ? 1 : -1;
+      el('line', {x1: x1, y1: yy, x2: x2 - d * 6, y2: yy, class: 'line', stroke: c}, g);
+      el('path', {d: 'M' + x2 + ' ' + yy + ' l' + (-d * 9) + ' -5 v10 z', fill: c}, g);
+      var est = Math.max.apply(null, lines.map(function (t) { return t.length; })) * 6.2;
+      var cx = Math.min(Math.max((x1 + x2) / 2, 46 + est / 2), W - 10 - est / 2);
+      lines.forEach(function (t, k) { txt(cx, yy - 6 - (lines.length - 1 - k) * 13, t, {'text-anchor': 'middle'}, g); });
+    }
+    el('circle', {cx: 28, cy: yy, r: 9, fill: c}, g);
+    txt(28, yy + 3.5, String(i + 1), {'text-anchor': 'middle', class: 'num'}, g);
+    g.addEventListener('click', function () { go(i); });
+    return g;
+  });
+
+  var legend = root.querySelector('.legend');
+  Object.keys(TAGS).filter(function (t) { return steps.some(function (s) { return s.tag === t; }); })
+    .forEach(function (t) { var s = document.createElement('span'); s.innerHTML = '<i style="background:' + TAGS[t] + '"></i>' + t; legend.appendChild(s); });
+  var state = root.querySelector('.state');
+  stores.forEach(function (st) {
+    var c = document.createElement('div'); c.className = 'card'; c.dataset.store = st.id;
+    c.innerHTML = '<h5></h5><pre></pre>'; c.querySelector('h5').textContent = st.label; state.appendChild(c);
+  });
+
+  var cur = -1, timer = null, playBtn = root.querySelector('[data-go=play]');
+  function stateAt(i) {
+    var st = Object.assign({}, init), ch = {};
+    for (var k = 0; k <= i; k++) { var s = steps[k].state; if (s) for (var key in s) { st[key] = s[key]; ch[key] = (k === i); } }
+    return {st: st, ch: ch};
+  }
+  function go(i) {
+    cur = Math.max(-1, Math.min(steps.length - 1, i));
+    gs.forEach(function (g, k) { g.setAttribute('class', 'step ' + (k < cur ? 'past' : k === cur ? 'active' : 'future')); });
+    var r = stateAt(cur);
+    stores.forEach(function (st) {
+      var c = state.querySelector('[data-store="' + st.id + '"]');
+      c.querySelector('pre').textContent = r.st[st.id] || ''; c.className = 'card' + (r.ch[st.id] ? ' changed' : '');
+    });
+    var where = root.querySelector('.where'), note = root.querySelector('.note');
+    if (cur < 0) { where.textContent = spec.startLabel || 'Start'; note.innerHTML = '<b>Start.</b> Next, the right arrow key, or click a message.'; return; }
+    var s = steps[cur], p = phases[s.ph] || {label: s.ph};
+    where.textContent = 'Step ' + (cur + 1) + ' of ' + steps.length + ' · ' + p.label;
+    note.innerHTML = '<b>' + (cur + 1) + '.</b> ' + s.label.split('|').join(' ') + (s.note ? '<br><span>' + s.note + '</span>' : '');
+    note.style.borderLeftColor = color(s.tag);
+    var wrap = svg.parentNode, top = s.y - wrap.clientHeight / 2;
+    if (Math.abs(wrap.scrollTop - top) > wrap.clientHeight / 3) wrap.scrollTo({top: Math.max(0, top), behavior: 'smooth'});
+  }
+  function play() {
+    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = 'Play'; return; }
+    playBtn.textContent = 'Pause';
+    timer = setInterval(function () { if (cur >= steps.length - 1) play(); else go(cur + 1); }, spec.playMs || 1400);
+  }
+  root.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    ({first: function () { go(-1); }, prev: function () { go(cur - 1); }, next: function () { go(cur + 1); },
+      last: function () { go(steps.length - 1); }, play: play})[b.dataset.go]();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (root.offsetParent === null || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
+  });
+  go(spec.start == null ? -1 : spec.start);
+};
+</script>
+<div id="tracks">Diagram did not render: open the browser console.</div>
+<script>
+orgPlanSequence('tracks', {
+  lanes: [
+    {id: 'admin', label: 'Admin', sub: 'upload'},
+    {id: 'srv', label: 'Server', sub: 'routes · transcode'},
+    {id: 'ff', label: 'ffmpeg'},
+    {id: 'db', label: 'SQLite + dash dir'},
+    {id: 'viewer', label: 'Viewer page', sub: 'watch.cljs'},
+    {id: 'dash', label: 'dash.js', sub: 'in the page'}
+  ],
+  phases: {
+    probe:  {label: '1 · Probe', tag: 'spec'},
+    encode: {label: '2 · Encode', tag: 'spec'},
+    play:   {label: '3 · Welcome and defaults', tag: 'spec'},
+    switch: {label: '4 · A viewer switches', tag: 'spec · per viewer'}
+  },
+  stores: [
+    {id: 'row', label: 'videos row'},
+    {id: 'dir', label: 'dash dir'},
+    {id: 'v', label: 'viewer'}
+  ],
+  init: {row: 'status uploaded, tracks NULL', dir: 'empty', v: 'not open'},
+  steps: [
+    {ph: 'probe', from: 'srv', to: 'ff', tag: 'built', label: 'ffprobe -show_streams',
+     note: 'transcode.clj ffprobe, unchanged; the JSON already has every stream.'},
+    {ph: 'probe', from: 'srv', to: 'srv', tag: 'spec', label: 'probe-media → :audio [eng 5.1 default, jpn 2.0] :subs [eng ass text]',
+     note: 'Step 1. Bitmap subs get :text? false and are never mapped.'},
+    {ph: 'probe', from: 'srv', to: 'db', tag: 'spec', label: 'set-tracks! (JSON)', state: {row: 'tracks: 2 audio, 1 sub (file subs-eng.vtt)'}},
+    {ph: 'encode', from: 'srv', to: 'ff', tag: 'spec', label: '-map 0:a:0 -map 0:a:1 … -metadata:s:a:1 language=jpn|-adaptation_sets id=0,streams=0,1,2 id=1,streams=3 id=2,streams=4|-map 0:s:0 -c:s webvtt subs-eng.vtt',
+     note: 'Step 3. Video rungs are outputs 0..n-1 whatever engine encodes them (gpu-encoding branch); each audio its own set so the muxer writes lang=.'},
+    {ph: 'encode', from: 'ff', to: 'db', tag: 'spec', label: 'manifest.mpd + segments + subs-eng.vtt',
+     state: {dir: 'manifest with 3 AdaptationSets (video, audio eng, audio jpn); subs-eng.vtt', row: 'status ready'}},
+    {ph: 'play', from: 'viewer', to: 'srv', tag: 'built', label: 'ws welcome', note: 'ws.clj, unchanged shape plus :audio/:subs in the descriptor (step 5).'},
+    {ph: 'play', from: 'viewer', to: 'viewer', tag: 'spec', label: 'resolve defaults|stored goob-audio? else navigator.language match? else source default|subs: stored or off',
+     note: 'Step 7. Per viewer: nothing of this reaches the room.', state: {v: 'audio jpn (browser ja-JP), subs off'}},
+    {ph: 'play', from: 'viewer', to: 'dash', tag: 'spec', label: 'setInitialMediaSettingsFor("audio", {lang: "jpn"}); attachSource(manifest)',
+     note: 'player.cljs set-initial-audio! before attach, so the first segments are already the right language.'},
+    {ph: 'play', from: 'dash', to: 'srv', tag: 'built', label: 'GET manifest, video + audio(jpn) segments only',
+     note: 'DASH fetches the selected set; the other language costs nothing on the wire.'},
+    {ph: 'play', from: 'viewer', to: 'viewer', tag: 'spec', label: '<track kind=subtitles srclang=eng src=/dash/<id>/subs-eng.vtt> mode hidden',
+     note: 'Native text track; rendered by the browser inside the <video>, so it survives the #58 wrapper fullscreen.'},
+    {ph: 'switch', from: 'viewer', to: 'dash', tag: 'spec', label: 'select audio → setCurrentTrack(eng track)',
+     note: 'dash.js flushes the audio buffer and refetches at currentTime: one possible waiting, no seek. The journey asserts seeks delta 0 and drift unchanged.',
+     state: {v: 'audio eng, subs eng showing'}},
+    {ph: 'switch', from: 'viewer', to: 'viewer', tag: 'spec', label: 'localStorage goob-audio=eng, goob-subs=eng',
+     note: 'Remembered per viewer; applied again on the next item (switch-item!) and the next visit.'}
+  ]
+});
+</script>
+</div>
+</div>
+<div id="outline-container-org39ccce1" class="outline-2">
+<h2 id="org39ccce1">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org39ccce1">
+<ul class="org-ul">
+<li><b>ffmpeg's dash muxer and <code>lang</code>.</b> dashenc writes the adaptation set's
+<code>lang</code> from the first stream's <code>language</code> metadata; step 3 verifies it
+on the Nabari file before anything else is built (grep the manifest). If
+it does not, dash.js still exposes the tracks by index and the label
+comes from our descriptor, so the UI survives; only auto-matching by
+browser language would need the descriptor's order instead.</li>
+<li><b>Does <code>setCurrentTrack</code> seek?</b> dash.js re-buffers audio at the current
+time; if a build moves <code>currentTime</code> by a frame the probe's <code>seeks</code>
+counter would show it. The journey pins <code>seeks</code> delta 0. If it does
+move, the switch marks the seek as ours (<code>mark-seek!</code>), which is a
+landing, not a policy seek; CLAUDE.md's rule is untouched either way.</li>
+<li><b>ASS styling is lost.</b> Positioning, colours, karaoke, fonts: WebVTT keeps
+dialogue and timing. Acceptable for a first step; a JASSUB renderer over
+the stage is a later plan if it matters.</li>
+<li><b>Bitmap subtitles</b> cannot be converted without OCR; shown as unavailable.</li>
+<li><b>Disk</b>: one extra 128 kbit stream per language, ~1 MB/min; negligible.</li>
+<li><b>Existing library</b>: items keep working as single-audio until re-encoded;
+<code>KEEP_ORIGINAL</code> is on by default so most can be. The re-encode runs the
+whole ladder again (GPU, after the gpu-encoding branch).</li>
+<li><b>Subtitle timing vs. ladder</b>: sidecars are independent of DASH timing and
+follow <code>currentTime</code>, so sync is the video's sync.</li>
+<li><b>Transcode on Windows</b>: the <code>.vtt</code> path goes through <code>ffmpeg-path</code> like
+the manifest (forward slashes).</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgf871495" class="outline-2">
+<h2 id="orgf871495">Verification</h2>
+<div class="outline-text-2" id="text-orgf871495">
+<ol class="org-ol">
+<li><code>make test</code>: probe-media on the Nabari JSON yields two audio and one
+text sub; the command has the maps, metadata, sets and the sidecar; the
+migration applies; <code>.vtt</code> content type; descriptor shape; re-encode
+route. Assertion audit on each new test.</li>
+<li><code>make compile</code> clean. <code>make run GPU=wsl</code> on the Nabari file: the manifest
+has three adaptation sets with <code>lang</code>"eng"= and <code>lang</code>"jpn"<code>,
+   =subs-eng.vtt</code> exists and has cues; the watch page shows both selects;
+switching audio mid-play changes the sound and not the clock; subs
+render; reload remembers; fullscreen shows subs.</li>
+<li><code>make e2e E2E_ARGS</code>"&#x2013;project=chromium tracks"= three runs green; the
+sync-policy journeys unchanged.</li>
+<li>One CI run with all legs green.</li>
+</ol>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<p class="date">Date: 2026-10-30</p>
+<p class="author">Author: Nathan Barlow</p>
+<p class="date">Created: 2026-10-30 Fri 09:46</p>
+<p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
+</div>
+</body>
+</html>
