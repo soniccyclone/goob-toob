@@ -868,16 +868,22 @@
 
 (defn- render-cues!
   "The chosen track's active cues into the overlay (div.cues, not .subs:
-  that is the select's class), one div.cue each, the
-  cue's own markup kept (getCueAsHTML: the <i>/<b> the ASS conversion
-  writes, parsed by the browser's WebVTT parser, never raw HTML). Called
-  on the track's cuechange and on every switch; an empty overlay hides
-  itself (CSS :empty)."
+  that is the select's class), one div.cue each, the cue's own markup
+  kept (getCueAsHTML: the <i>/<b> the ASS conversion writes, parsed by
+  the browser's WebVTT parser, never raw HTML). Called on the track's
+  cuechange, on every switch, and (subs-overlay!) on the element's
+  seeked and timeupdate and the track's load, because browsers skip
+  cuechange for a seek while paused and for cues that go active as the
+  file finishes loading; the DOM is touched only when the active set
+  actually changed. An empty overlay hides itself (CSS :empty)."
   [^js subs-el ^js track-el]
-  (ui/clear! subs-el)
-  (when-let [cues (some-> track-el .-track .-activeCues)]
-    (doseq [^js cue (array-seq cues)]
-      (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue)))))))
+  (let [cues (vec (some-> track-el .-track .-activeCues array-seq))
+        key (str/join "\u0001" (map #(str (.-startTime ^js %) "|" (.-text ^js %)) cues))]
+    (when (not= key (unchecked-get subs-el "goobkey"))
+      (unchecked-set subs-el "goobkey" key)
+      (ui/clear! subs-el)
+      (doseq [^js cue cues]
+        (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue))))))))
 
 (defn- apply-subs-theme!
   "The overlay's theme class (cues-modern, cues-cc, cues-retro) and st."
@@ -906,8 +912,10 @@
   stage: --stage-h on the wrapper follows the wrapper's height (a
   ResizeObserver, so fullscreen and a narrow phone both get the right
   size), theme.css scales the cues from it."
-  [^js st ^js wrap ^js subs-el]
+  [^js st ^js wrap ^js subs-el ^js video]
   (apply-subs-theme! st subs-el (tracks/resolve-subs-theme (ui/store-get subs-theme-key)))
+  (doseq [ev ["seeked" "timeupdate"]]
+    (.addEventListener video ev #(render-cues! subs-el (chosen-track video))))
   (let [size! #(.setProperty (.-style wrap) "--stage-h" (str (.-clientHeight wrap) "px"))]
     (size!)
     (when (exists? js/ResizeObserver)
@@ -923,12 +931,14 @@
     (set! (.-subslang st) lang)
     (when-let [^js old (chosen-track video)]
       (.removeAttribute old "data-chosen")
-      (set! (.-oncuechange (.-track old)) nil))
+      (set! (.-oncuechange (.-track old)) nil)
+      (set! (.-onload old) nil))
     (doseq [^js t (track-elements video)]
       (set! (.-mode (.-track t)) "hidden")
       (when (and lang (tracks/same-lang? lang (.getAttribute t "srclang")))
         (.setAttribute t "data-chosen" "")
-        (set! (.-oncuechange (.-track t)) #(draw! t))))
+        (set! (.-oncuechange (.-track t)) #(draw! t))
+        (set! (.-onload t) #(draw! t))))
     (draw! (chosen-track video))
     (when-let [^js sel (.querySelector tracks-slot "select.subs")]
       (set! (.-value sel) (or lang "off")))))
@@ -1632,7 +1642,7 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
-    (subs-overlay! st stage-wrap subs-el)
+    (subs-overlay! st stage-wrap subs-el video)
     (pip! st {:video video :stage-wrap stage-wrap :subs-el subs-el} pip-btn)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality") tracks-slot
              (volume-control st) (fs-setting st fs-chat))

@@ -253,6 +253,12 @@
         retro (<? (controls vp))
         host-c (<? (controls hp))
         host-probe (<? (party/probe hp))
+        ;; a second seek while still paused, from one cue straight into
+        ;; another (20-22 s): browsers skip cuechange here, the overlay
+        ;; must not keep the old text
+        _ (<p! (party/seek! hp 21.0))
+        recue-ms (<? (wait-ms! vp (overlay-shows "third cue") within))
+        recued (<? (controls vp))
         ;; the viewer comes back: a fresh page, the same localStorage
         _ (<p! (.reload vp))
         _ (<p! (party/wait-for! vp welcomed (:ready-timeout W)))
@@ -261,7 +267,7 @@
         back (<? (controls vp))
         back-probe (<? (party/probe vp))]
     (<p! (m/record! info {} []
-                    {:subs-ms subs-ms :cue-ms cue-ms :restore-ms restore-ms
+                    {:subs-ms subs-ms :cue-ms cue-ms :recue-ms recue-ms :recued (:overlay recued) :restore-ms restore-ms
                      :default (:overlay default) :cc (:overlay cc) :retro (:overlay retro)
                      :default-select (:theme default) :default-stored (:storedTheme default)
                      :retro-stored (:storedTheme retro)
@@ -283,6 +289,8 @@
     (-> (expect (get-in retro [:overlay :cues]) "one cue drawn") (.toBe 1))
     (-> (expect (get-in retro [:overlay :text]) "the cue's text") (.toBe "second cue"))
     (-> (expect (:storedTheme retro) "localStorage goob-subs-theme after retro") (.toBe "retro"))
+    (-> (expect recue-ms "a paused seek from one cue into another redraws") (.not.toBeNull))
+    (-> (expect (get-in recued [:overlay :text]) "the third cue, not the second") (.toBe "third cue"))
     (-> (expect (get-in host-c [:overlay :text]) "host's overlay, subs off") (.toBe ""))
     (-> (expect (:subs-text host-probe) "host's probe subs-text") (.toBe ""))
     (-> (expect restore-ms "theme and subs back after the reload") (.not.toBeNull))
