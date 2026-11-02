@@ -130,14 +130,24 @@ video.stage {
 /* the wrapper is the fullscreen target (#58): black letterbox, no border */
 .stage-wrap:fullscreen { width: 100%; height: 100%; border: none; background: #000; }
 .stage-wrap:fullscreen video.stage { width: 100%; height: 100%; object-fit: contain; box-shadow: none; }
-.fs-btn {
+.fs-btn, .pip-btn {
   position: absolute; top: 0.5rem; right: 0.5rem; z-index: 2;
   border: 2px solid var(--slime); border-radius: 999px; cursor: pointer;
   background: rgba(7, 35, 31, 0.75); color: var(--slime-brite);
   font: inherit; font-weight: 800; line-height: 1; padding: 0.35rem 0.55rem;
   opacity: 0.45; transition: opacity 0.15s ease;
 }
-.stage-wrap:hover .fs-btn, .fs-btn:focus-visible { opacity: 1; }
+.stage-wrap:hover .fs-btn, .fs-btn:focus-visible,
+.stage-wrap:hover .pip-btn, .pip-btn:focus-visible { opacity: 1; }
+/* ⧉ picture-in-picture (#93), left of ⛶; gone where the browser has no
+   PiP API (.nopip) and on an empty stage. The composite's canvas and the
+   hidden element it streams into sit under the picture, out of the way. */
+.pip-btn { right: 3.1rem; }
+.stage-wrap.nopip .pip-btn, .stage-wrap:fullscreen .pip-btn { display: none; }
+.pip-src {
+  position: absolute; left: 0; top: 0; width: 2px; height: 2px;
+  opacity: 0; pointer-events: none; z-index: 0;
+}
 /* chat over the fullscreen picture: bottom-left, above the native controls,
    see-through to clicks and keys, each bubble fades on its own */
 .fs-chat {
@@ -156,7 +166,7 @@ video.stage {
 /* an empty room (playlists): no source, no controls, the label over the
    black picture; the ratio is whatever the last video told the wrapper */
 .stage-wrap.empty video.stage { aspect-ratio: var(--ar); }
-.stage-wrap.empty .fs-btn { display: none; }
+.stage-wrap.empty .fs-btn, .stage-wrap.empty .pip-btn { display: none; }
 .stage-empty {
   display: none; position: absolute; inset: 0; z-index: 1;
   align-items: center; justify-content: center;

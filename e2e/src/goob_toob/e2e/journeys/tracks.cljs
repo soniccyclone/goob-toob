@@ -83,6 +83,42 @@
 (defn- overlay-shows [text]
   (str "goobProbe()['subs-text'].includes(" (json text) ")"))
 
+(defn- pip-state
+  "What picture-in-picture looks like from the page: the probe's :pip
+  keys, how many <video> elements exist (the hidden one only while in
+  PiP), the real element's own PiP button disabled, and what the
+  composite adds to the frame: the bottom 15% of the canvas against the
+  same band of the real element drawn fresh at the same size (the room is
+  paused when this is read, so the frame is the same one), :diff pixels
+  that differ, :yellow those of them that are retro yellow. The test
+  pattern has yellow of its own, so only the difference says a cue was
+  painted."
+  [^js page]
+  (go-try
+    (js->clj (<p! (.evaluate page (str "(() => { const p = goobProbe();"
+                                       " const vids = document.querySelectorAll('video');"
+                                       " const c = document.querySelector('canvas.pip-src');"
+                                       " let diff = 0, yellow = 0, w = 0, h = 0;"
+                                       " if (c && c.width > 0) { w = c.width; h = c.height;"
+                                       "   const y0 = Math.floor(h * 0.85);"
+                                       "   const s = document.createElement('canvas'); s.width = w; s.height = h;"
+                                       "   const sc = s.getContext('2d'); sc.drawImage(vids[0], 0, 0, w, h);"
+                                       "   const a = c.getContext('2d').getImageData(0, y0, w, h - y0).data;"
+                                       "   const b = sc.getImageData(0, y0, w, h - y0).data;"
+                                       "   for (let i = 0; i < a.length; i += 4) {"
+                                       "     if (Math.abs(a[i]-b[i]) + Math.abs(a[i+1]-b[i+1]) + Math.abs(a[i+2]-b[i+2]) > 60) {"
+                                       "       diff++; if (a[i] > 200 && a[i+1] > 200 && a[i+2] < 110) yellow++; } } }"
+                                       " return {pip: p.pip, loop: p['pip-loop'], frames: p['pip-frames'], paused: p['pip-paused'],"
+                                       "   videos: vids.length, nativeDisabled: vids[0].disablePictureInPicture,"
+                                       "   canvas: [w, h], diff: diff, yellow: yellow, playing: p.playing, elementPaused: p.paused}; })()")))
+             :keywordize-keys true)))
+
+(defn- pip-video-call!
+  "What the PiP window's own button does: play() or pause() on the
+  hidden element."
+  [^js page method]
+  (.evaluate page (str "document.querySelector('video.pip-src')." method "()")))
+
 (defn- pick! [^js page sel value]
   (.selectOption (.locator page sel) value))
 
@@ -253,6 +289,79 @@
     (-> (expect (:theme back) "theme select after the reload") (.toBe "retro"))
     (-> (expect (get-in back [:overlay :cls]) "overlay class after the reload") (.toContain "subs-retro"))
     (-> (expect (:subs-theme back-probe) "probe theme after the reload") (.toBe "retro"))))
+
+(defjourney "subtitles follow the video into picture-in-picture" [{:keys [browser browser-name base-url]} info]
+  ;; #93: the PiP window gets frames composited by the page, cues painted
+  ;; on, so what the viewer reads on the page they read in the window.
+  ;; The viewer parks inside the second cue in retro yellow, pops out,
+  ;; and the composite's bottom band must hold yellow pixels. The window's
+  ;; pause is a viewer's no-op (it bounces back) and a controller's room
+  ;; pause; leaving stops the loop and removes the hidden element.
+  (let [fx (api/fixture info)
+        {:keys [host viewer]} (<? (dual-pair! browser base-url browser-name fx))
+        hp (:page host) vp (:page viewer)
+        within (t browser-name :switch-within)
+        _ (<p! (pick! vp "select.subs" "eng"))
+        _ (<p! (pick! vp "select.subs-theme" "retro"))
+        _ (<? (wait-ms! vp (subs-showing "eng" 3) within))
+        _ (<p! (party/pause! hp))
+        _ (<p! (party/seek! hp 11.0))
+        cue-ms (<? (wait-ms! vp (overlay-shows "second cue") within))
+        before (<? (pip-state vp))
+        _ (<p! (.click (.locator vp ".pip-btn")))
+        enter-ms (<? (wait-ms! vp "goobProbe().pip === true && goobProbe()['pip-frames'] > 3" within))
+        in (<? (pip-state vp))
+        ;; the host plays: the hidden element follows the real one
+        _ (<p! (party/play! hp))
+        play-ms (<? (wait-ms! vp "goobProbe().pip && goobProbe()['pip-paused'] === false" within))
+        ;; the viewer presses pause in the window: no control, it bounces back
+        _ (<p! (pip-video-call! vp "pause"))
+        bounce-ms (<? (wait-ms! vp "goobProbe()['pip-paused'] === false && goobProbe().playing === true" within))
+        bounced (<? (pip-state vp))
+        ;; the host pops out too and presses pause in the window: the room pauses
+        _ (<p! (.click (.locator hp ".pip-btn")))
+        _ (<? (wait-ms! hp "goobProbe().pip === true" within))
+        _ (<p! (pip-video-call! hp "pause"))
+        room-pause-ms (<? (wait-ms! vp "goobProbe().playing === false && goobProbe().paused === true" within))
+        host-paused (<? (pip-state hp))
+        viewer-paused (<? (pip-state vp))
+        ;; both leave through the button
+        _ (<p! (.click (.locator vp ".pip-btn")))
+        _ (<p! (.click (.locator hp ".pip-btn")))
+        leave-ms (<? (wait-ms! vp "goobProbe().pip === false && goobProbe()['pip-loop'] === false" within))
+        after (<? (pip-state vp))
+        _ (<p! (.waitForTimeout vp 400))
+        later (<? (pip-state vp))
+        host-after (<? (pip-state hp))]
+    (<p! (m/record! info {} []
+                    {:cue-ms cue-ms :enter-ms enter-ms :play-ms play-ms :bounce-ms bounce-ms
+                     :room-pause-ms room-pause-ms :leave-ms leave-ms
+                     :before before :in in :bounced bounced :host-paused host-paused
+                     :viewer-paused viewer-paused :after after :later later :host-after host-after}))
+    (-> (expect cue-ms "the viewer parked inside the second cue") (.not.toBeNull))
+    (-> (expect (:nativeDisabled before) "the real element's own PiP button is off") (.toBe true))
+    (-> (expect (:videos before) "one <video> before PiP") (.toBe 1))
+    (-> (expect (:pip before) "not in PiP before the click") (.toBe false))
+    (-> (expect enter-ms "in PiP with frames drawn") (.not.toBeNull))
+    (-> (expect (:videos in) "the hidden element while in PiP") (.toBe 2))
+    (-> (expect (:loop in) "the loop on") (.toBe true))
+    (-> (expect (first (:canvas in)) "composite width (the 720p fixture)") (.toBeGreaterThan 0))
+    (-> (expect (:diff in) "pixels the composite adds to the frame's bottom band") (.toBeGreaterThan 500))
+    (-> (expect (:yellow in) "retro-yellow among them: the cue") (.toBeGreaterThan 100))
+    (-> (expect (:paused in) "the hidden element paused with the room") (.toBe true))
+    (-> (expect play-ms "the hidden element plays when the room does") (.not.toBeNull))
+    (-> (expect bounce-ms "a viewer's PiP pause bounces back") (.not.toBeNull))
+    (-> (expect (:playing bounced) "the room still plays") (.toBe true))
+    (-> (expect room-pause-ms "the host's PiP pause pauses the room") (.not.toBeNull))
+    (-> (expect (:playing host-paused) "room paused, host's view") (.toBe false))
+    (-> (expect (:paused host-paused) "host's hidden element paused") (.toBe true))
+    (-> (expect (:diff host-paused) "host's composite, subs off: the bare frame") (.toBeLessThan 200))
+    (-> (expect (:paused viewer-paused) "viewer's hidden element paused with the room") (.toBe true))
+    (-> (expect leave-ms "out of PiP with the loop off") (.not.toBeNull))
+    (-> (expect (:videos after) "the hidden element removed") (.toBe 1))
+    (-> (expect (:frames later) "no frames drawn after leaving") (.toBe (:frames after)))
+    (-> (expect (:pip host-after) "host out of PiP") (.toBe false))
+    (-> (expect (:videos host-after) "host's hidden element removed") (.toBe 1))))
 
 (defjourney "a plain clip shows no track controls" [{:keys [browser browser-name base-url]} info]
   ;; the single-audio fixture: one untagged audio set, no sidecar; the row
