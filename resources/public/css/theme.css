@@ -302,7 +302,9 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
    small embedded player stays readable. Themes are one class on .subs;
    the outline widths are in em so they scale with the text. ---- */
 .subs {
-  position: absolute; left: 4%; right: 4%; bottom: 7%; z-index: 1;
+  /* the floor clears the native control bar when it is up (about 3 rem in
+     the page, taller in fullscreen), as the browser's own captions do */
+  position: absolute; left: 4%; right: 4%; bottom: max(9%, 3.6rem); z-index: 1;
   display: flex; flex-direction: column; align-items: center; gap: 0.15em;
   pointer-events: none; text-align: center;
   font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -332,6 +334,7 @@ table.lib td, table.lib th { padding: 0.45rem 0.5rem; border-bottom: 1px solid r
     -0.08em  0.08em 0 #000, 0  0.08em 0 #000, 0.08em  0.08em 0 #000,
     0 0.12em 0.15em rgba(0, 0, 0, 0.7);
 }
+.stage-wrap:fullscreen .subs { bottom: max(8%, 5rem); }
 .stage-wrap.empty .subs { display: none; }
 
 /* ---- admin: room rename + queue editor ---- */
