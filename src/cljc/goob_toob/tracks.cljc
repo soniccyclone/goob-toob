@@ -107,6 +107,25 @@
   (when-not (str/blank? stored)
     (first (filter #(same-lang? stored %) (map :lang subs)))))
 
+(def subs-themes
+  "The subtitle looks a viewer can pick, [value label], in the order the
+  select lists them. modern is the default: white with a mild black
+  outline. cc is the browser's own closed-captions look, white on a
+  translucent black box. retro is the old fansub look, yellow with a
+  thick black outline. Rendered by the watch page's own cue overlay, so
+  the look is ours in the stage, in fullscreen and (#93) in picture-in-
+  picture alike."
+  [["modern" "modern"]
+   ["cc" "classic CC"]
+   ["retro" "retro yellow"]])
+
+(defn resolve-subs-theme
+  "The theme to render with: the stored choice when it is one of the
+  themes, else modern (nothing stored, a value from a build that had other
+  themes)."
+  [stored]
+  (if (some #(= stored (first %)) subs-themes) stored "modern"))
+
 (defn tracks-summary
   "Counts from a library row's :tracks ({:audio [...] :subs [...]} plus
   whichever way the probe marks bitmap subtitles: :subs-unavailable, or

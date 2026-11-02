@@ -89,6 +89,14 @@
     (is (nil? (tracks/resolve-subs subs nil)) "nothing stored is off")
     (is (nil? (tracks/resolve-subs [] "eng")) "no subtitles is off")))
 
+(deftest the-subtitle-theme-is-the-stored-one-else-modern
+  (is (= "modern" (tracks/resolve-subs-theme nil)) "nothing stored")
+  (is (= "modern" (tracks/resolve-subs-theme "")))
+  (is (= "retro" (tracks/resolve-subs-theme "retro")))
+  (is (= "cc" (tracks/resolve-subs-theme "cc")))
+  (is (= "modern" (tracks/resolve-subs-theme "neon")) "a theme this build lacks")
+  (is (= ["modern" "cc" "retro"] (map first tracks/subs-themes)) "modern listed first, as the default"))
+
 (deftest the-admin-summary-counts-audio-subs-and-bitmap
   (is (= {:audio 2 :subs 1 :bitmap 0} (tracks/tracks-summary nabari)))
   (is (= "2 audio · 1 subs" (tracks/tracks-text nabari)))

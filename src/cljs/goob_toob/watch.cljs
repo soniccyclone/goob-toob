@@ -844,22 +844,47 @@
 ;; arrives, set-audio! at runtime: a buffer flush and a refetch at the
 ;; current time, no seek, and currentTime, playbackRate and preservesPitch
 ;; are never touched here). Subtitles are native <track> elements on the
-;; <video>, one per sidecar, the chosen one mode "showing" and the others
-;; "hidden": rendered by the browser inside the element, so they survive
-;; the #58 wrapper fullscreen, and switched with no player call at all.
-;; The selects hide themselves when an item has one audio track and no
-;; subtitles, so a plain clip's row looks as it always did.
+;; <video>, one per sidecar, every one mode "hidden" (cues load, the
+;; browser draws nothing) and the chosen one marked data-chosen: its
+;; active cues are drawn by this page into div.subs over the picture, in
+;; the viewer's theme (#94: goob-subs-theme, modern / cc / retro, see
+;; tracks/subs-themes), so the look is ours everywhere the stage goes
+;; (fullscreen, and #93 picture-in-picture) and a switch is a mode flip
+;; with no player call at all. The selects hide themselves when an item
+;; has one audio track and no subtitles, so a plain clip's row looks as
+;; it always did.
 
 (def ^:private audio-key "goob-audio")
 (def ^:private subs-key "goob-subs")
+(def ^:private subs-theme-key "goob-subs-theme")
 
 (defn- track-elements [^js video]
   (array-seq (.querySelectorAll video "track")))
 
-(defn- showing-track
-  "The <track> element whose text track is showing, or nil."
+(defn- chosen-track
+  "The <track> element the viewer chose (its cues are the ones drawn), or nil."
   [^js video]
-  (first (filter #(= "showing" (.-mode (.-track ^js %))) (track-elements video))))
+  (.querySelector video "track[data-chosen]"))
+
+(defn- render-cues!
+  "The chosen track's active cues into the overlay, one div.cue each, the
+  cue's own markup kept (getCueAsHTML: the <i>/<b> the ASS conversion
+  writes, parsed by the browser's WebVTT parser, never raw HTML). Called
+  on the track's cuechange and on every switch; an empty overlay hides
+  itself (CSS :empty)."
+  [^js subs-el ^js track-el]
+  (ui/clear! subs-el)
+  (when-let [cues (some-> track-el .-track .-activeCues)]
+    (doseq [^js cue (array-seq cues)]
+      (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue)))))))
+
+(defn- apply-subs-theme!
+  "The overlay's theme class (subs-modern, subs-cc, subs-retro) and st."
+  [^js st ^js subs-el theme]
+  (set! (.-substheme st) theme)
+  (doseq [[v _] tracks/subs-themes]
+    (.remove (.-classList subs-el) (str "subs-" v)))
+  (.add (.-classList subs-el) (str "subs-" theme)))
 
 (defn- audio-select [refs]
   (.querySelector ^js (:tracks-slot refs) "select.audio"))
@@ -875,15 +900,35 @@
     (when-let [now (player/current-audio ctx)]
       (or (first (filter #(tracks/same-lang? now %) (.-audiolist st))) now))))
 
+(defn- subs-overlay!
+  "The cue overlay's theme from localStorage and its type size from the
+  stage: --stage-h on the wrapper follows the wrapper's height (a
+  ResizeObserver, so fullscreen and a narrow phone both get the right
+  size), theme.css scales the cues from it."
+  [^js st ^js wrap ^js subs-el]
+  (apply-subs-theme! st subs-el (tracks/resolve-subs-theme (ui/store-get subs-theme-key)))
+  (let [size! #(.setProperty (.-style wrap) "--stage-h" (str (.-clientHeight wrap) "px"))]
+    (size!)
+    (when (exists? js/ResizeObserver)
+      (.observe (js/ResizeObserver. size!) wrap))))
+
 (defn- show-subs!
-  "lang's <track> showing (nil: none), the others hidden so their cues stay
-  loaded for a later switch; the select and st follow."
+  "lang's <track> chosen (nil: none) and its cues drawn, every track hidden
+  so the browser draws none and their cues stay loaded for a later
+  switch; the select and st follow."
   [^js st refs lang]
-  (let [{:keys [^js video ^js tracks-slot]} refs]
+  (let [{:keys [^js video ^js tracks-slot ^js subs-el]} refs
+        draw! (fn [^js t] (render-cues! subs-el t))]
     (set! (.-subslang st) lang)
+    (when-let [^js old (chosen-track video)]
+      (.removeAttribute old "data-chosen")
+      (set! (.-oncuechange (.-track old)) nil))
     (doseq [^js t (track-elements video)]
-      (set! (.-mode (.-track t))
-            (if (and lang (tracks/same-lang? lang (.getAttribute t "srclang"))) "showing" "hidden")))
+      (set! (.-mode (.-track t)) "hidden")
+      (when (and lang (tracks/same-lang? lang (.getAttribute t "srclang")))
+        (.setAttribute t "data-chosen" "")
+        (set! (.-oncuechange (.-track t)) #(draw! t))))
+    (draw! (chosen-track video))
     (when-let [^js sel (.querySelector tracks-slot "select.subs")]
       (set! (.-value sel) (or lang "off")))))
 
@@ -941,7 +986,18 @@
                  (show-subs! st refs lang)
                  (ui/store-set! subs-key (or lang "off"))
                  (log! (unchecked-get st "token") :subs-track {:lang lang})))
-        (ui/add! tracks-slot asel (h :span.muted "audio") ssel (h :span.muted "subtitles"))))
+        (ui/add! tracks-slot asel (h :span.muted "audio") ssel (h :span.muted "subtitles"))
+        (when (seq subs)
+          (let [tsel (h :select.subs-theme {:title "subtitle look"})]
+            (doseq [[v label] tracks/subs-themes]
+              (.appendChild tsel (option v label)))
+            (set! (.-value tsel) (.-substheme st))
+            (set! (.-onchange tsel)
+                  #(let [v (.-value tsel)]
+                     (apply-subs-theme! st (:subs-el refs) v)
+                     (ui/store-set! subs-theme-key v)
+                     (log! (unchecked-get st "token") :subs-theme {:theme v})))
+            (ui/add! tracks-slot tsel (h :span.muted "look"))))))
     (when (pos? (or subs-unavailable 0))
       (ui/add! tracks-slot
                (h :span.muted.subs-note
@@ -1267,7 +1323,8 @@
               (.setAttribute video "playsinline" ""))
         fs-chat (h :div.fs-chat {:aria-hidden "true"})
         fs-btn (h :button.fs-btn {:title "fullscreen"} "⛶")
-        stage-wrap (h :div.stage-wrap video fs-chat fs-btn
+        subs-el (h :div.subs {:aria-live "off"})
+        stage-wrap (h :div.stage-wrap video subs-el fs-chat fs-btn
                       (h :div.stage-empty {:aria-hidden "true"} "nothing queued"))
         lag-hint (h :span.muted.lag-hint {})
         login-hint (h :a.muted.login-hint {:href "/admin" :style "display:none"}
@@ -1377,6 +1434,7 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
+    (subs-overlay! st stage-wrap subs-el)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality") tracks-slot
              (volume-control st) (fs-setting st fs-chat))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
@@ -1410,7 +1468,7 @@
      :chat-log chat-log :fs-chat fs-chat :peers-el peers-el :host-row host-row
      :badge badge :new-msgs new-msgs :lag-hint lag-hint :login-hint login-hint
      :slow-note slow-note
-     :stage-wrap stage-wrap :queue-el queue-el :prev-btn prev-btn :next-btn next-btn
+     :stage-wrap stage-wrap :subs-el subs-el :queue-el queue-el :prev-btn prev-btn :next-btn next-btn
      ;; what an empty room switches off (prev/next follow the queue card)
      :transport [back-btn play-btn pause-btn fwd-btn seek]}))
 
@@ -1506,7 +1564,7 @@
                   "queue" [] "vid" nil "ended" false "dash" nil "startkbps" nil
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "expired" false "telemetry" false
-                  "audiolang" nil "subslang" nil "audiolist" []
+                  "audiolang" nil "subslang" nil "audiolist" [] "substheme" "modern"
                   "audio" (js-obj "ctx" nil "gainnode" nil "compressor" nil "pct" (saved-volume)
                                   "slider" nil "label" nil "wrap" nil "dead" false)
                   "counters" (js-obj "seeks" 0 "stalls" 0
@@ -1537,11 +1595,14 @@
                          :off-rate-s (off-rate-s st)
                          :fullscreen (boolean (.-fullscreen st))
                          :vid (.-vid st) :ended (boolean (.-ended st))
-                         ;; the tracks: what plays, what shows, how many cues
-                         ;; the showing sidecar has loaded (0 with none)
+                         ;; the tracks: what plays, which sidecar is chosen,
+                         ;; how many cues it has loaded (0 with none), the
+                         ;; overlay's theme and what it shows right now
                          :audio-lang (when (.-streamok st) (playing-audio st))
-                         :subs (when v (some-> (showing-track v) (.getAttribute "srclang")))
-                         :text-cues (or (when v (some-> (showing-track v) .-track .-cues .-length)) 0)
+                         :subs (when v (some-> (chosen-track v) (.getAttribute "srclang")))
+                         :text-cues (or (when v (some-> (chosen-track v) .-track .-cues .-length)) 0)
+                         :subs-theme (.-substheme st)
+                         :subs-text (some-> ^js (ui/$ ".stage-wrap .subs") .-textContent)
                          :telemetry {:pending (.-length (.-rows tele)) :events (.-length (.-events tele))
                                      :chunks (.-seq tele) :sent-bytes (.-sent tele)
                                      :active (.-active tele)}
