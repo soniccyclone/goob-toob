@@ -846,7 +846,7 @@
 ;; are never touched here). Subtitles are native <track> elements on the
 ;; <video>, one per sidecar, every one mode "hidden" (cues load, the
 ;; browser draws nothing) and the chosen one marked data-chosen: its
-;; active cues are drawn by this page into div.subs over the picture, in
+;; active cues are drawn by this page into div.cues over the picture, in
 ;; the viewer's theme (#94: goob-subs-theme, modern / cc / retro, see
 ;; tracks/subs-themes), so the look is ours everywhere the stage goes
 ;; (fullscreen, and #93 picture-in-picture) and a switch is a mode flip
@@ -867,7 +867,8 @@
   (.querySelector video "track[data-chosen]"))
 
 (defn- render-cues!
-  "The chosen track's active cues into the overlay, one div.cue each, the
+  "The chosen track's active cues into the overlay (div.cues, not .subs:
+  that is the select's class), one div.cue each, the
   cue's own markup kept (getCueAsHTML: the <i>/<b> the ASS conversion
   writes, parsed by the browser's WebVTT parser, never raw HTML). Called
   on the track's cuechange and on every switch; an empty overlay hides
@@ -879,12 +880,12 @@
       (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue)))))))
 
 (defn- apply-subs-theme!
-  "The overlay's theme class (subs-modern, subs-cc, subs-retro) and st."
+  "The overlay's theme class (cues-modern, cues-cc, cues-retro) and st."
   [^js st ^js subs-el theme]
   (set! (.-substheme st) theme)
   (doseq [[v _] tracks/subs-themes]
-    (.remove (.-classList subs-el) (str "subs-" v)))
-  (.add (.-classList subs-el) (str "subs-" theme)))
+    (.remove (.-classList subs-el) (str "cues-" v)))
+  (.add (.-classList subs-el) (str "cues-" theme)))
 
 (defn- audio-select [refs]
   (.querySelector ^js (:tracks-slot refs) "select.audio"))
@@ -1520,7 +1521,7 @@
         fs-chat (h :div.fs-chat {:aria-hidden "true"})
         fs-btn (h :button.fs-btn {:title "fullscreen"} "⛶")
         pip-btn (h :button.pip-btn {:title "picture-in-picture"} "⧉")
-        subs-el (h :div.subs {:aria-live "off"})
+        subs-el (h :div.cues {:aria-live "off"})
         stage-wrap (h :div.stage-wrap video subs-el fs-chat fs-btn pip-btn
                       (h :div.stage-empty {:aria-hidden "true"} "nothing queued"))
         lag-hint (h :span.muted.lag-hint {})
@@ -1802,7 +1803,7 @@
                          :subs (when v (some-> (chosen-track v) (.getAttribute "srclang")))
                          :text-cues (or (when v (some-> (chosen-track v) .-track .-cues .-length)) 0)
                          :subs-theme (.-substheme st)
-                         :subs-text (some-> ^js (ui/$ ".stage-wrap .subs") .-textContent)
+                         :subs-text (some-> ^js (ui/$ ".stage-wrap .cues") .-textContent)
                          ;; picture-in-picture: the window open on our
                          ;; composite, the loop on, frames drawn so far, the
                          ;; hidden element's paused state (nil without one)

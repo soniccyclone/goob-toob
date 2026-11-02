@@ -4,7 +4,7 @@
   three-cue English SRT) carries two audio adaptation sets and a WebVTT
   sidecar. A viewer's choice lives in localStorage (goob-audio, goob-subs)
   and reaches dash.js (audio) or a <track> element (subs), nothing else.
-  Subtitles are drawn by the page itself (div.subs over the picture, #94:
+  Subtitles are drawn by the page itself (div.cues over the picture, #94:
   the chosen track's active cues, in the viewer's theme, every <track>
   mode hidden so the browser draws nothing). Headless cannot hear which
   tone plays, so goobProbe() reports :audio-lang (what dash.js plays, in
@@ -62,7 +62,7 @@
                                        " const s = document.querySelector('select.subs');"
                                        " const th = document.querySelector('select.subs-theme');"
                                        " const slot = document.querySelector('.tracks');"
-                                       " const o = document.querySelector('.stage-wrap .subs');"
+                                       " const o = document.querySelector('.stage-wrap .cues');"
                                        " const oc = o ? getComputedStyle(o) : null;"
                                        " const cue = o && o.querySelector('.cue');"
                                        " return {audio: a ? a.value : null, subs: s ? s.value : null,"
@@ -270,14 +270,14 @@
     (-> (expect subs-ms "viewer's English subs chosen with cues") (.not.toBeNull))
     (-> (expect (:theme default) "the select's default") (.toBe "modern"))
     (-> (expect (:storedTheme default) "nothing stored by default") (.toBeNull))
-    (-> (expect (get-in default [:overlay :cls]) "modern overlay class") (.toContain "subs-modern"))
+    (-> (expect (get-in default [:overlay :cls]) "modern overlay class") (.toContain "cues-modern"))
     (-> (expect (get-in default [:overlay :color]) "modern is white") (.toBe "rgb(255, 255, 255)"))
     (-> (expect (get-in default [:overlay :outlined]) "modern has an outline") (.toBe true))
-    (-> (expect (get-in cc [:overlay :cls]) "cc overlay class") (.toContain "subs-cc"))
+    (-> (expect (get-in cc [:overlay :cls]) "cc overlay class") (.toContain "cues-cc"))
     (-> (expect (get-in cc [:overlay :outlined]) "cc has no outline (a box instead)") (.toBe false))
     (-> (expect (:storedTheme cc) "localStorage goob-subs-theme after cc") (.toBe "cc"))
     (-> (expect cue-ms "the second cue on the viewer's overlay") (.not.toBeNull))
-    (-> (expect (get-in retro [:overlay :cls]) "retro overlay class") (.toContain "subs-retro"))
+    (-> (expect (get-in retro [:overlay :cls]) "retro overlay class") (.toContain "cues-retro"))
     (-> (expect (get-in retro [:overlay :color]) "retro is yellow") (.toBe "rgb(255, 238, 51)"))
     (-> (expect (get-in retro [:overlay :outlined]) "retro has an outline") (.toBe true))
     (-> (expect (get-in retro [:overlay :cues]) "one cue drawn") (.toBe 1))
@@ -287,7 +287,7 @@
     (-> (expect (:subs-text host-probe) "host's probe subs-text") (.toBe ""))
     (-> (expect restore-ms "theme and subs back after the reload") (.not.toBeNull))
     (-> (expect (:theme back) "theme select after the reload") (.toBe "retro"))
-    (-> (expect (get-in back [:overlay :cls]) "overlay class after the reload") (.toContain "subs-retro"))
+    (-> (expect (get-in back [:overlay :cls]) "overlay class after the reload") (.toContain "cues-retro"))
     (-> (expect (:subs-theme back-probe) "probe theme after the reload") (.toBe "retro"))))
 
 (defjourney "subtitles follow the video into picture-in-picture" [{:keys [browser browser-name base-url]} info]
