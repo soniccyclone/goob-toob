@@ -846,7 +846,7 @@
 ;; are never touched here). Subtitles are native <track> elements on the
 ;; <video>, one per sidecar, every one mode "hidden" (cues load, the
 ;; browser draws nothing) and the chosen one marked data-chosen: its
-;; active cues are drawn by this page into div.subs over the picture, in
+;; active cues are drawn by this page into div.cues over the picture, in
 ;; the viewer's theme (#94: goob-subs-theme, modern / cc / retro, see
 ;; tracks/subs-themes), so the look is ours everywhere the stage goes
 ;; (fullscreen, and #93 picture-in-picture) and a switch is a mode flip
@@ -867,24 +867,31 @@
   (.querySelector video "track[data-chosen]"))
 
 (defn- render-cues!
-  "The chosen track's active cues into the overlay, one div.cue each, the
-  cue's own markup kept (getCueAsHTML: the <i>/<b> the ASS conversion
-  writes, parsed by the browser's WebVTT parser, never raw HTML). Called
-  on the track's cuechange and on every switch; an empty overlay hides
-  itself (CSS :empty)."
+  "The chosen track's active cues into the overlay (div.cues, not .subs:
+  that is the select's class), one div.cue each, the cue's own markup
+  kept (getCueAsHTML: the <i>/<b> the ASS conversion writes, parsed by
+  the browser's WebVTT parser, never raw HTML). Called on the track's
+  cuechange, on every switch, and (subs-overlay!) on the element's
+  seeked and timeupdate and the track's load, because browsers skip
+  cuechange for a seek while paused and for cues that go active as the
+  file finishes loading; the DOM is touched only when the active set
+  actually changed. An empty overlay hides itself (CSS :empty)."
   [^js subs-el ^js track-el]
-  (ui/clear! subs-el)
-  (when-let [cues (some-> track-el .-track .-activeCues)]
-    (doseq [^js cue (array-seq cues)]
-      (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue)))))))
+  (let [cues (vec (some-> track-el .-track .-activeCues array-seq))
+        key (str/join "\u0001" (map #(str (.-startTime ^js %) "|" (.-text ^js %)) cues))]
+    (when (not= key (unchecked-get subs-el "goobkey"))
+      (unchecked-set subs-el "goobkey" key)
+      (ui/clear! subs-el)
+      (doseq [^js cue cues]
+        (.appendChild subs-el (doto (h :div.cue) (.appendChild (.getCueAsHTML cue))))))))
 
 (defn- apply-subs-theme!
-  "The overlay's theme class (subs-modern, subs-cc, subs-retro) and st."
+  "The overlay's theme class (cues-modern, cues-cc, cues-retro) and st."
   [^js st ^js subs-el theme]
   (set! (.-substheme st) theme)
   (doseq [[v _] tracks/subs-themes]
-    (.remove (.-classList subs-el) (str "subs-" v)))
-  (.add (.-classList subs-el) (str "subs-" theme)))
+    (.remove (.-classList subs-el) (str "cues-" v)))
+  (.add (.-classList subs-el) (str "cues-" theme)))
 
 (defn- audio-select [refs]
   (.querySelector ^js (:tracks-slot refs) "select.audio"))
@@ -905,8 +912,10 @@
   stage: --stage-h on the wrapper follows the wrapper's height (a
   ResizeObserver, so fullscreen and a narrow phone both get the right
   size), theme.css scales the cues from it."
-  [^js st ^js wrap ^js subs-el]
+  [^js st ^js wrap ^js subs-el ^js video]
   (apply-subs-theme! st subs-el (tracks/resolve-subs-theme (ui/store-get subs-theme-key)))
+  (doseq [ev ["seeked" "timeupdate"]]
+    (.addEventListener video ev #(render-cues! subs-el (chosen-track video))))
   (let [size! #(.setProperty (.-style wrap) "--stage-h" (str (.-clientHeight wrap) "px"))]
     (size!)
     (when (exists? js/ResizeObserver)
@@ -922,12 +931,14 @@
     (set! (.-subslang st) lang)
     (when-let [^js old (chosen-track video)]
       (.removeAttribute old "data-chosen")
-      (set! (.-oncuechange (.-track old)) nil))
+      (set! (.-oncuechange (.-track old)) nil)
+      (set! (.-onload old) nil))
     (doseq [^js t (track-elements video)]
       (set! (.-mode (.-track t)) "hidden")
       (when (and lang (tracks/same-lang? lang (.getAttribute t "srclang")))
         (.setAttribute t "data-chosen" "")
-        (set! (.-oncuechange (.-track t)) #(draw! t))))
+        (set! (.-oncuechange (.-track t)) #(draw! t))
+        (set! (.-onload t) #(draw! t))))
     (draw! (chosen-track video))
     (when-let [^js sel (.querySelector tracks-slot "select.subs")]
       (set! (.-value sel) (or lang "off")))))
@@ -1024,6 +1035,200 @@
                   (set! (.-value sel) now)))
               (log! token :audio-track {:lang now :wanted want :why "unavailable"})))))))
 
+;; ---- picture-in-picture (#93) ----
+;; Chromium's PiP window paints a <video>'s frames and nothing else: not the
+;; element's text tracks, not the overlay above. So the frames handed to
+;; PiP are composited here: a canvas drawn from the real <video> on every
+;; frame with the overlay's cues painted over it in the viewer's look
+;; (#94), a hidden <video> fed by canvas.captureStream(), and that one goes
+;; into PiP. The loop runs only while the window is open, and the hidden
+;; element exists only then (the journeys' `video` locator must stay
+;; unique). The real element has PiP disabled so nobody lands in the
+;; subtitle-less window: ⧉ on the stage is the way in, and out. The PiP
+;; window's own play/pause are a controller's room toggle (as the native
+;; controls are, #55) and bounce back for a viewer. Nothing here touches
+;; the real element's time, rate or pitch (CLAUDE.md, the sync rules).
+;; Firefox has no requestPictureInPicture, so there the native toggle
+;; stays as it ships, without cues.
+
+(def ^:private pip-max-width 1280)
+
+(def ^:private pip-looks
+  ;; the three looks of theme.css, as canvas text: fill, stroke (width in
+  ;; em, two sides of the outline), weight, a box behind each line
+  {"modern" {:fill "#fff" :stroke "rgba(0,0,0,0.85)" :line 0.08 :weight "600"}
+   "cc"     {:fill "#fff" :weight "400" :box "rgba(0,0,0,0.8)"}
+   "retro"  {:fill "#ffee33" :stroke "#000" :line 0.16 :weight "700"}})
+
+(defn- pip-supported? [^js video]
+  (boolean (and (.-pictureInPictureEnabled js/document) (.-requestPictureInPicture video))))
+
+(defn- in-pip? [^js st]
+  (let [pv (.-pipvideo st)]
+    (boolean (and pv (identical? pv (.-pictureInPictureElement js/document))))))
+
+(defn- cue-lines
+  "The overlay's cues as [line italic?] pairs, recomputed only when the
+  overlay's markup changed (innerText costs a layout; a frame does not)."
+  [^js st ^js subs-el]
+  (let [html (.-innerHTML subs-el)]
+    (when (not= html (.-piphtml st))
+      (set! (.-piphtml st) html)
+      (set! (.-piplines st)
+            (vec (for [^js c (array-seq (.-children subs-el))
+                       :let [italic? (some? (.querySelector c "i"))]
+                       l (str/split (.-innerText c) #"\n")
+                       :when (not (str/blank? l))]
+                   [l italic?]))))
+    (.-piplines st)))
+
+(defn- paint-cues!
+  "The cue lines onto the frame, bottom-centred as the overlay is: the
+  type 5.2% of the height, the last line's baseline 9% up, the look's
+  stroke under its fill (or its box behind it)."
+  [^js ctx w h lines theme]
+  (when (seq lines)
+    (let [size (Math/max 15 (* h 0.052))
+          {:keys [fill stroke line weight box]} (get pip-looks theme (get pip-looks "modern"))
+          lh (* size 1.25)
+          x (/ w 2)
+          y0 (- h (* h 0.09))]
+      (set! (.-textAlign ctx) "center")
+      (set! (.-textBaseline ctx) "alphabetic")
+      (set! (.-lineJoin ctx) "round")
+      (doseq [[i [text italic?]] (map-indexed vector (reverse lines))]
+        (let [y (- y0 (* i lh))]
+          (set! (.-font ctx) (str (when italic? "italic ") weight " " size "px system-ui, sans-serif"))
+          (when box
+            (let [tw (.-width (.measureText ctx text))]
+              (set! (.-fillStyle ctx) box)
+              (.fillRect ctx (- x (/ tw 2) (* size 0.35)) (- y (* size 0.95)) (+ tw (* size 0.7)) lh)))
+          (when stroke
+            (set! (.-strokeStyle ctx) stroke)
+            (set! (.-lineWidth ctx) (* size line))
+            (.strokeText ctx text x y))
+          (set! (.-fillStyle ctx) fill)
+          (.fillText ctx text x y))))))
+
+(defn- pip-frame!
+  "One composited frame, then the next one scheduled: on the element's
+  own frames where the browser offers them (requestVideoFrameCallback),
+  else per animation frame. Stops when the loop is off."
+  [^js st refs]
+  (when (.-piploop st)
+    (let [{:keys [^js video ^js subs-el]} refs
+          ^js canvas (.-pipcanvas st) ^js ctx (.-pipctx st)
+          vw (.-videoWidth video) vh (.-videoHeight video)]
+      (when (and (pos? vw) (pos? vh))
+        (let [scale (min 1 (/ pip-max-width vw))
+              w (Math/round (* vw scale)) h (Math/round (* vh scale))]
+          (when (or (not= w (.-width canvas)) (not= h (.-height canvas)))
+            (set! (.-width canvas) w)
+            (set! (.-height canvas) h))
+          (.drawImage ctx video 0 0 w h)
+          (paint-cues! ctx w h (cue-lines st subs-el) (.-substheme st))
+          (set! (.-pipframes st) (inc (.-pipframes st)))))
+      ;; rVFC fires per decoded frame, so a paused element would freeze the
+      ;; loop and the cues with it: animation frames keep the overlay live
+      (js/requestAnimationFrame #(pip-frame! st refs)))))
+
+(defn- stop-pip!
+  "The loop off, the stream's tracks stopped, the hidden element gone."
+  [^js st]
+  (set! (.-piploop st) false)
+  (when-let [^js pv (.-pipvideo st)]
+    (when-let [^js s (.-srcObject pv)]
+      (doseq [^js t (array-seq (.getTracks s))] (.stop t)))
+    (set! (.-srcObject pv) nil)
+    (.remove pv)
+    (set! (.-pipvideo st) nil)))
+
+(defn- pip-video!
+  "The hidden element that goes into PiP, created for this session of it.
+  Its play/pause are the PiP window's buttons: when they disagree with
+  the real element it was the viewer pressing, and a controller's press
+  toggles the room (toggle!, at the expected position) while anyone
+  else's bounces back to what the room does; when they agree it was this
+  page mirroring the room, and nothing happens."
+  [^js st refs]
+  (let [{:keys [^js video ^js stage-wrap]} refs
+        pv (h :video.pip-src {:muted true :playsinline "" :aria-hidden "true"})]
+    (set! (.-muted pv) true)
+    (set! (.-onpause pv)
+          #(when-not (.-paused video)
+             (when-not (and (.-cancontrol st) (toggle! st))
+               (play! pv))))
+    (set! (.-onplay pv)
+          #(when (.-paused video)
+             (when-not (and (.-cancontrol st) (toggle! st))
+               (.pause pv))))
+    (set! (.-onleavepictureinpicture pv)
+          #(do (stop-pip! st)
+               (log! (unchecked-get st "token") :pip {:on false :frames (.-pipframes st)})))
+    (.appendChild stage-wrap pv)
+    (set! (.-pipvideo st) pv)
+    pv))
+
+(defn- enter-pip!
+  "The loop on, a first frame drawn, the stream into the hidden element
+  and that into PiP (the click is the gesture; the promise keeps it).
+  The hidden element mirrors the real one from the start: it plays only
+  when the room plays (a play() while the room is paused would read as
+  the viewer's press and bounce), otherwise it waits for the stream's
+  metadata, which the loop's frames bring. A refusal undoes the setup."
+  [^js st refs]
+  (when-not (.-pipcanvas st)
+    (let [c (h :canvas.pip-src {:aria-hidden "true"})]
+      (set! (.-pipcanvas st) c)
+      (set! (.-pipctx st) (.getContext c "2d"))
+      (.appendChild ^js (:stage-wrap refs) c)))
+  (let [^js pv (or (.-pipvideo st) (pip-video! st refs))
+        token (unchecked-get st "token")]
+    (set! (.-piploop st) true)
+    (set! (.-pipframes st) 0)
+    (set! (.-piphtml st) nil)
+    (pip-frame! st refs)
+    (let [ready (js/Promise. (fn [res _]
+                               (if (>= (.-readyState pv) 1)
+                                 (res nil)
+                                 (set! (.-onloadedmetadata pv) #(res nil)))))]
+      (set! (.-srcObject pv) (.captureStream ^js (.-pipcanvas st)))
+      (-> (if (.-paused ^js (:video refs)) ready (.play pv))
+          (.then #(.requestPictureInPicture pv))
+          (.then (fn [^js w]
+                   (log! token :pip {:on true :width (.-width w) :height (.-height w)})))
+          (.catch (fn [e]
+                    (stop-pip! st)
+                    (log! token :pip-failed {:error (str e)})))))))
+
+(defn- toggle-pip! [^js st refs]
+  (if (in-pip? st)
+    (some-> (.exitPictureInPicture js/document) (.catch (fn [_] nil)))
+    (enter-pip! st refs)))
+
+(defn- pip!
+  "Wire the stage's ⧉: the button goes when the browser cannot do PiP,
+  the real element loses its own PiP button, the hidden element mirrors
+  the real one's play/pause while the window is open."
+  [^js st refs ^js pip-btn]
+  (let [{:keys [^js video ^js stage-wrap]} refs]
+    (if-not (pip-supported? video)
+      (.add (.-classList stage-wrap) "nopip")
+      (do
+        (set! (.-disablePictureInPicture video) true)
+        (set! (.-onclick pip-btn) #(toggle-pip! st refs))
+        (set! (.-onmousedown pip-btn) #(.preventDefault %))
+        (.addEventListener video "pause" #(when-let [pv (.-pipvideo st)] (.pause ^js pv)))
+        (.addEventListener video "play" #(when-let [pv (.-pipvideo st)] (play! pv)))
+        (doseq [ev ["enterpictureinpicture" "leavepictureinpicture"]]
+          (.addEventListener js/document ev
+            #(.setAttribute pip-btn "title"
+                            (if (in-pip? st) "back from picture-in-picture" "picture-in-picture"))))
+        ;; Chromium's media controls and auto-PiP ask the page this way
+        (when-let [ms (.-mediaSession js/navigator)]
+          (try (.setActionHandler ms "enterpictureinpicture" #(enter-pip! st refs))
+               (catch js/Error _ nil)))))))
+
 ;; ---- the queue (playlists, part 3) ----
 ;; The server owns the queue and the current item: an `item` state on every
 ;; change (auto-advance, next/prev/jump, an admin edit that moves the
@@ -1053,7 +1258,9 @@
   (let [{:keys [^js video ^js stage-wrap]} refs]
     (if empty?
       (do (.add (.-classList stage-wrap) "empty")
-          (.removeAttribute video "controls"))
+          (.removeAttribute video "controls")
+          (when (.-pictureInPictureElement js/document)
+            (some-> (.exitPictureInPicture js/document) (.catch (fn [_] nil)))))
       (do (.remove (.-classList stage-wrap) "empty")
           (.setAttribute video "controls" "")))))
 
@@ -1323,8 +1530,9 @@
               (.setAttribute video "playsinline" ""))
         fs-chat (h :div.fs-chat {:aria-hidden "true"})
         fs-btn (h :button.fs-btn {:title "fullscreen"} "⛶")
-        subs-el (h :div.subs {:aria-live "off"})
-        stage-wrap (h :div.stage-wrap video subs-el fs-chat fs-btn
+        pip-btn (h :button.pip-btn {:title "picture-in-picture"} "⧉")
+        subs-el (h :div.cues {:aria-live "off"})
+        stage-wrap (h :div.stage-wrap video subs-el fs-chat fs-btn pip-btn
                       (h :div.stage-empty {:aria-hidden "true"} "nothing queued"))
         lag-hint (h :span.muted.lag-hint {})
         login-hint (h :a.muted.login-hint {:href "/admin" :style "display:none"}
@@ -1434,7 +1642,8 @@
                                       :pos (js/parseFloat (.-value seek))})))
     (set! (.-oninput seek) #(set! (.-seeking st) true))
     (stage! stage-wrap video fs-btn)
-    (subs-overlay! st stage-wrap subs-el)
+    (subs-overlay! st stage-wrap subs-el video)
+    (pip! st {:video video :stage-wrap stage-wrap :subs-el subs-el} pip-btn)
     (ui/add! viewer-row res-slot (h :span.muted "picture quality") tracks-slot
              (volume-control st) (fs-setting st fs-chat))
     (ui/add! host-row prev-btn back-btn play-btn pause-btn fwd-btn next-btn seek badge
@@ -1565,6 +1774,8 @@
                   "ratechanged" nil "offrate" 0 "offsince" nil "fullscreen" false
                   "expired" false "telemetry" false
                   "audiolang" nil "subslang" nil "audiolist" [] "substheme" "modern"
+                  "pipvideo" nil "pipcanvas" nil "pipctx" nil "piploop" false "pipframes" 0
+                  "piphtml" nil "piplines" []
                   "audio" (js-obj "ctx" nil "gainnode" nil "compressor" nil "pct" (saved-volume)
                                   "slider" nil "label" nil "wrap" nil "dead" false)
                   "counters" (js-obj "seeks" 0 "stalls" 0
@@ -1602,7 +1813,13 @@
                          :subs (when v (some-> (chosen-track v) (.getAttribute "srclang")))
                          :text-cues (or (when v (some-> (chosen-track v) .-track .-cues .-length)) 0)
                          :subs-theme (.-substheme st)
-                         :subs-text (some-> ^js (ui/$ ".stage-wrap .subs") .-textContent)
+                         :subs-text (some-> ^js (ui/$ ".stage-wrap .cues") .-textContent)
+                         ;; picture-in-picture: the window open on our
+                         ;; composite, the loop on, frames drawn so far, the
+                         ;; hidden element's paused state (nil without one)
+                         :pip (in-pip? st) :pip-loop (boolean (.-piploop st))
+                         :pip-frames (or (.-pipframes st) 0)
+                         :pip-paused (some-> ^js (.-pipvideo st) .-paused)
                          :telemetry {:pending (.-length (.-rows tele)) :events (.-length (.-events tele))
                                      :chunks (.-seq tele) :sent-bytes (.-sent tele)
                                      :active (.-active tele)}

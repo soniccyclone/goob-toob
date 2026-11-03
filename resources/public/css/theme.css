@@ -130,14 +130,24 @@ video.stage {
 /* the wrapper is the fullscreen target (#58): black letterbox, no border */
 .stage-wrap:fullscreen { width: 100%; height: 100%; border: none; background: #000; }
 .stage-wrap:fullscreen video.stage { width: 100%; height: 100%; object-fit: contain; box-shadow: none; }
-.fs-btn {
+.fs-btn, .pip-btn {
   position: absolute; top: 0.5rem; right: 0.5rem; z-index: 2;
   border: 2px solid var(--slime); border-radius: 999px; cursor: pointer;
   background: rgba(7, 35, 31, 0.75); color: var(--slime-brite);
   font: inherit; font-weight: 800; line-height: 1; padding: 0.35rem 0.55rem;
   opacity: 0.45; transition: opacity 0.15s ease;
 }
-.stage-wrap:hover .fs-btn, .fs-btn:focus-visible { opacity: 1; }
+.stage-wrap:hover .fs-btn, .fs-btn:focus-visible,
+.stage-wrap:hover .pip-btn, .pip-btn:focus-visible { opacity: 1; }
+/* ⧉ picture-in-picture (#93), left of ⛶; gone where the browser has no
+   PiP API (.nopip) and on an empty stage. The composite's canvas and the
+   hidden element it streams into sit under the picture, out of the way. */
+.pip-btn { right: 3.1rem; }
+.stage-wrap.nopip .pip-btn, .stage-wrap:fullscreen .pip-btn { display: none; }
+.pip-src {
+  position: absolute; left: 0; top: 0; width: 2px; height: 2px;
+  opacity: 0; pointer-events: none; z-index: 0;
+}
 /* chat over the fullscreen picture: bottom-left, above the native controls,
    see-through to clicks and keys, each bubble fades on its own */
 .fs-chat {
@@ -156,7 +166,7 @@ video.stage {
 /* an empty room (playlists): no source, no controls, the label over the
    black picture; the ratio is whatever the last video told the wrapper */
 .stage-wrap.empty video.stage { aspect-ratio: var(--ar); }
-.stage-wrap.empty .fs-btn { display: none; }
+.stage-wrap.empty .fs-btn, .stage-wrap.empty .pip-btn { display: none; }
 .stage-empty {
   display: none; position: absolute; inset: 0; z-index: 1;
   align-items: center; justify-content: center;
@@ -296,14 +306,15 @@ table.lib th { white-space: nowrap; }
 .tracks select { max-width: 14rem; }
 .subs-note { white-space: nowrap; }
 
-/* ---- subtitles: the page's own cue overlay (#94), one div.cue per active
-   cue of the chosen track, drawn by watch.cljs; every <track> stays mode
+/* ---- subtitles: the page's own cue overlay (#94), div.cues (.subs is
+   the subtitle select's class), one div.cue per active cue of the chosen
+   track, drawn by watch.cljs; every <track> stays mode
    hidden so the browser draws nothing of its own. The type size follows
    the stage (--stage-h, a ResizeObserver on the wrapper): about 5% of the
    picture's height, as browsers size their captions, with a floor so the
-   small embedded player stays readable. Themes are one class on .subs;
+   small embedded player stays readable. Themes are one class on .cues;
    the outline widths are in em so they scale with the text. ---- */
-.subs {
+.cues {
   /* the floor clears the native control bar when it is up (about 3 rem in
      the page, taller in fullscreen), as the browser's own captions do */
   position: absolute; left: 4%; right: 4%; bottom: max(9%, 3.6rem); z-index: 1;
@@ -313,11 +324,11 @@ table.lib th { white-space: nowrap; }
   font-size: clamp(15px, calc(var(--stage-h, 360px) * 0.052), 72px);
   line-height: 1.25;
 }
-.subs:empty { display: none; }
-.subs .cue { max-width: 100%; white-space: pre-line; overflow-wrap: anywhere; }
+.cues:empty { display: none; }
+.cues .cue { max-width: 100%; white-space: pre-line; overflow-wrap: anywhere; }
 /* modern (the default): white, a mild black outline so it reads on a bright
    frame, no box */
-.subs-modern {
+.cues-modern {
   color: #fff; font-weight: 600;
   text-shadow:
     -0.04em -0.04em 0 rgba(0, 0, 0, 0.85), 0.04em -0.04em 0 rgba(0, 0, 0, 0.85),
@@ -325,10 +336,10 @@ table.lib th { white-space: nowrap; }
     0 0.08em 0.2em rgba(0, 0, 0, 0.6);
 }
 /* classic CC: white on a translucent black box, the browser's own look */
-.subs-cc { color: #fff; font-weight: 400; }
-.subs-cc .cue { background: rgba(0, 0, 0, 0.8); padding: 0.08em 0.35em; }
+.cues-cc { color: #fff; font-weight: 400; }
+.cues-cc .cue { background: rgba(0, 0, 0, 0.8); padding: 0.08em 0.35em; }
 /* retro: yellow with the thick black outline of an old fansub */
-.subs-retro {
+.cues-retro {
   color: #ffee33; font-weight: 700;
   text-shadow:
     -0.08em -0.08em 0 #000, 0 -0.08em 0 #000, 0.08em -0.08em 0 #000,
@@ -336,8 +347,8 @@ table.lib th { white-space: nowrap; }
     -0.08em  0.08em 0 #000, 0  0.08em 0 #000, 0.08em  0.08em 0 #000,
     0 0.12em 0.15em rgba(0, 0, 0, 0.7);
 }
-.stage-wrap:fullscreen .subs { bottom: max(8%, 5rem); }
-.stage-wrap.empty .subs { display: none; }
+.stage-wrap:fullscreen .cues { bottom: max(8%, 5rem); }
+.stage-wrap.empty .cues { display: none; }
 
 /* ---- admin: room rename + queue editor ---- */
 .editable { cursor: text; border-bottom: 1px dotted var(--aqua-soft); }

@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-11-02 Mon 15:26 -->
+<!-- 2026-11-02 Mon 17:32 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Playwright journeys: the critical paths through real browsers, judged by metrics</title>
@@ -30,29 +30,29 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org8c495c8">Goal</a></li>
-<li><a href="#orgdbcabae">The thesis, and where it holds</a></li>
-<li><a href="#org1f96017">Findings</a></li>
-<li><a href="#orgdfc4edc">Decisions</a></li>
-<li><a href="#org758868f">Plan</a>
+<li><a href="#org92e6c53">Goal</a></li>
+<li><a href="#orgdd8661b">The thesis, and where it holds</a></li>
+<li><a href="#orgc8b506b">Findings</a></li>
+<li><a href="#org1289e3c">Decisions</a></li>
+<li><a href="#orgfe2446c">Plan</a>
 <ul>
-<li><a href="#orgfb4a7c6">1 · Probe and live endpoint (product code, small)</a></li>
-<li><a href="#org911d264">2 · Harness: <code>e2e/</code> in ClojureScript</a></li>
-<li><a href="#org19e48e0">3 · Journeys</a></li>
-<li><a href="#org9e53407">4 · Container and Makefile</a></li>
-<li><a href="#orgce3c36a">5 · CI job</a></li>
-<li><a href="#org85949c7">6 · Retirement list (follow-up PR, after five green CI runs)</a></li>
+<li><a href="#org568bd4b">1 · Probe and live endpoint (product code, small)</a></li>
+<li><a href="#orged4dc30">2 · Harness: <code>e2e/</code> in ClojureScript</a></li>
+<li><a href="#org9533df0">3 · Journeys</a></li>
+<li><a href="#org04c88c1">4 · Container and Makefile</a></li>
+<li><a href="#org98668c3">5 · CI job</a></li>
+<li><a href="#orgee94156">6 · Retirement list (follow-up PR, after five green CI runs)</a></li>
 </ul>
 </li>
-<li><a href="#org8740ebd">Risks and open questions</a></li>
-<li><a href="#org276bd62">Verification</a></li>
-<li><a href="#orgc385127">Implementation notes</a></li>
+<li><a href="#org7495b69">Risks and open questions</a></li>
+<li><a href="#org49a7842">Verification</a></li>
+<li><a href="#org0646b19">Implementation notes</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org8c495c8" class="outline-2">
-<h2 id="org8c495c8">Goal</h2>
-<div class="outline-text-2" id="text-org8c495c8">
+<div id="outline-container-org92e6c53" class="outline-2">
+<h2 id="org92e6c53">Goal</h2>
+<div class="outline-text-2" id="text-org92e6c53">
 <p>
 A small suite of end-to-end tests drives goob-toob the way a party does:
 real browsers (Chromium, Firefox and WebKit, all from Playwright's own
@@ -71,9 +71,9 @@ here instead of manual verification lists.
 </p>
 </div>
 </div>
-<div id="outline-container-orgdbcabae" class="outline-2">
-<h2 id="orgdbcabae">The thesis, and where it holds</h2>
-<div class="outline-text-2" id="text-orgdbcabae">
+<div id="outline-container-orgdd8661b" class="outline-2">
+<h2 id="orgdd8661b">The thesis, and where it holds</h2>
+<div class="outline-text-2" id="text-orgdd8661b">
 <p>
 Nathan's framing: most of the truly valuable tests of this repository
 could be a small set of Playwright journeys asserting on metrics, with
@@ -122,9 +122,9 @@ three engines.
 </p>
 </div>
 </div>
-<div id="outline-container-org1f96017" class="outline-2">
-<h2 id="org1f96017">Findings</h2>
-<div class="outline-text-2" id="text-org1f96017">
+<div id="outline-container-orgc8b506b" class="outline-2">
+<h2 id="orgc8b506b">Findings</h2>
+<div class="outline-text-2" id="text-orgc8b506b">
 <ul class="org-ul">
 <li><b>Nothing browser-driven exists.</b> <code>test/</code> is Clojure only; <code>package.json</code>
 has dash.js alone; no browser on the host. Every plan's browser
@@ -242,9 +242,9 @@ Java, Clojure, Node and ffmpeg.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgdfc4edc" class="outline-2">
-<h2 id="orgdfc4edc">Decisions</h2>
-<div class="outline-text-2" id="text-orgdfc4edc">
+<div id="outline-container-org1289e3c" class="outline-2">
+<h2 id="org1289e3c">Decisions</h2>
+<div class="outline-text-2" id="text-org1289e3c">
 <p>
 Each with the evidence; Nathan flips what he disagrees with.
 </p>
@@ -290,17 +290,17 @@ recorded and printed for a few runs before any threshold is asserted.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org758868f" class="outline-2">
-<h2 id="org758868f">Plan</h2>
-<div class="outline-text-2" id="text-org758868f">
+<div id="outline-container-orgfe2446c" class="outline-2">
+<h2 id="orgfe2446c">Plan</h2>
+<div class="outline-text-2" id="text-orgfe2446c">
 </div>
-<div id="outline-container-orgfb4a7c6" class="outline-3">
-<h3 id="orgfb4a7c6">1 · Probe and live endpoint (product code, small)</h3>
-<div class="outline-text-3" id="text-orgfb4a7c6">
+<div id="outline-container-org568bd4b" class="outline-3">
+<h3 id="org568bd4b">1 · Probe and live endpoint (product code, small)</h3>
+<div class="outline-text-3" id="text-org568bd4b">
 </div>
-<div id="outline-container-org9b1022e" class="outline-4">
-<h4 id="org9b1022e"><code>src/cljs/goob_toob/watch.cljs</code></h4>
-<div class="outline-text-4" id="text-org9b1022e">
+<div id="outline-container-org982e6e8" class="outline-4">
+<h4 id="org982e6e8"><code>src/cljs/goob_toob/watch.cljs</code></h4>
+<div class="outline-text-4" id="text-org982e6e8">
 <ul class="org-ul">
 <li><code>st</code> gains <code>"counters" (js-obj "seeks" 0 "stalls" 0 "seekbacks" 0 "rejected" 0 "capsteps" 0)</code>;
 increment at: <code>park!</code> and every <code>ourseek</code> write (<code>seeks</code>), <code>onwaiting</code>
@@ -333,9 +333,9 @@ else changes.
 </ul>
 </div>
 </div>
-<div id="outline-container-orgf142f8a" class="outline-4">
-<h4 id="orgf142f8a"><code>src/clj/goob_toob/routes.clj</code> and <code>sync.clj</code></h4>
-<div class="outline-text-4" id="text-orgf142f8a">
+<div id="outline-container-org7f0281a" class="outline-4">
+<h4 id="org7f0281a"><code>src/clj/goob_toob/routes.clj</code> and <code>sync.clj</code></h4>
+<div class="outline-text-4" id="text-org7f0281a">
 <ul class="org-ul">
 <li><code>sync/live-view [room-id]</code> returns
 <code>{:pos :t0 :playing :rate :now :clients [{:nick :drift :age-ms :buffering :behind-ms}]}</code>
@@ -351,10 +351,10 @@ clients, one 4 s behind → drifts and <code>:behind-ms</code> as expected) and
 </div>
 </div>
 </div>
-<div id="outline-container-org911d264" class="outline-3">
-<h3 id="org911d264">2 · Harness: <code>e2e/</code> in ClojureScript</h3>
-<div class="outline-text-3" id="text-org911d264">
-<pre class="example" id="org8933561">
+<div id="outline-container-orged4dc30" class="outline-3">
+<h3 id="orged4dc30">2 · Harness: <code>e2e/</code> in ClojureScript</h3>
+<div class="outline-text-3" id="text-orged4dc30">
+<pre class="example" id="org86ca199">
 e2e/
   package.json                  @playwright/test only; "type": "module"
   src/goob_toob/e2e/
@@ -376,9 +376,9 @@ e2e/
   metrics/ report/ test-results/ .fixture.json   gitignored
 </pre>
 </div>
-<div id="outline-container-org3a9a271" class="outline-4">
-<h4 id="org3a9a271"><code>shadow-cljs.edn</code>: the <code>:e2e</code> build</h4>
-<div class="outline-text-4" id="text-org3a9a271">
+<div id="outline-container-org4196426" class="outline-4">
+<h4 id="org4196426"><code>shadow-cljs.edn</code>: the <code>:e2e</code> build</h4>
+<div class="outline-text-4" id="text-org4196426">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-clojure-keyword">:e2e</span> <span class="org-rainbow-delimiters-depth-1">{</span><span class="org-clojure-keyword">:target</span>     <span class="org-clojure-keyword">:esm</span>
       <span class="org-clojure-keyword">:runtime</span>    <span class="org-clojure-keyword">:node</span>
@@ -405,9 +405,9 @@ the repo.
 </p>
 </div>
 </div>
-<div id="outline-container-org78558fd" class="outline-4">
-<h4 id="org78558fd"><code>config.cljs</code></h4>
-<div class="outline-text-4" id="text-org78558fd">
+<div id="outline-container-org86142e9" class="outline-4">
+<h4 id="org86142e9"><code>config.cljs</code></h4>
+<div class="outline-text-4" id="text-org86142e9">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">ns</span> <span class="org-type">goob-toob.e2e.config</span>
   <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require</span> <span class="org-rainbow-delimiters-depth-3">[</span><span class="org-string">"@playwright/test"</span> <span class="org-clojure-keyword">:refer</span> <span class="org-rainbow-delimiters-depth-4">[</span>defineConfig devices<span class="org-rainbow-delimiters-depth-4">]</span><span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span><span class="org-rainbow-delimiters-depth-1">)</span>
@@ -450,9 +450,9 @@ actually emits).
 </p>
 </div>
 </div>
-<div id="outline-container-org09b9e32" class="outline-4">
-<h4 id="org09b9e32"><code>journey.cljs</code></h4>
-<div class="outline-text-4" id="text-org09b9e32">
+<div id="outline-container-org05b35fe" class="outline-4">
+<h4 id="org05b35fe"><code>journey.cljs</code></h4>
+<div class="outline-text-4" id="text-org05b35fe">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">ns</span> <span class="org-type">goob-toob.e2e.journey</span>
   <span class="org-rainbow-delimiters-depth-2">(</span><span class="org-clojure-keyword">:require-macros</span> <span class="org-rainbow-delimiters-depth-3">[</span>goob-toob.e2e.journey<span class="org-rainbow-delimiters-depth-3">]</span><span class="org-rainbow-delimiters-depth-2">)</span>
@@ -485,9 +485,9 @@ Specs <code>(:require ["@playwright/test" :refer [test expect]] [cljs.core.async
 </p>
 </div>
 </div>
-<div id="outline-container-org82399ec" class="outline-4">
-<h4 id="org82399ec"><code>setup.cljs</code></h4>
-<div class="outline-text-4" id="text-org82399ec">
+<div id="outline-container-orgac33ee6" class="outline-4">
+<h4 id="orgac33ee6"><code>setup.cljs</code></h4>
+<div class="outline-text-4" id="text-orgac33ee6">
 <p>
 <code>run</code> returns a Promise: <code>request.newContext()</code> → <code>POST /api/login</code> →
 keep the <code>ring-session</code> cookie; run
@@ -499,9 +499,9 @@ budget, fail with the row's <code>error</code> text otherwise); write
 </p>
 </div>
 </div>
-<div id="outline-container-org68bbd91" class="outline-4">
-<h4 id="org68bbd91"><code>party.cljs</code></h4>
-<div class="outline-text-4" id="text-org68bbd91">
+<div id="outline-container-org4c2cf1d" class="outline-4">
+<h4 id="org4c2cf1d"><code>party.cljs</code></h4>
+<div class="outline-text-4" id="text-org4c2cf1d">
 <ul class="org-ul">
 <li><code>host</code> : new context with the session cookie on <code>127.0.0.1</code>,
 <code>localStorage goob-nick = "host"</code> via <code>addInitScript</code>, page at
@@ -515,9 +515,9 @@ via <code>getByRole</code>.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org95094d7" class="outline-4">
-<h4 id="org95094d7"><code>metrics.cljs</code></h4>
-<div class="outline-text-4" id="text-org95094d7">
+<div id="outline-container-orgc0fa9c2" class="outline-4">
+<h4 id="orgc0fa9c2"><code>metrics.cljs</code></h4>
+<div class="outline-text-4" id="text-orgc0fa9c2">
 <ul class="org-ul">
 <li><code>sample</code> : polls <code>goobProbe()</code> every 250 ms for a window; returns the
 series as maps.</li>
@@ -531,9 +531,9 @@ Markdown row to <code>metrics/summary.md</code>.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org0e78d89" class="outline-4">
-<h4 id="org0e78d89"><code>thresholds.cljs</code> (initial values; tune from the first recorded runs)</h4>
-<div class="outline-text-4" id="text-org0e78d89">
+<div id="outline-container-orgd70bef1" class="outline-4">
+<h4 id="orgd70bef1"><code>thresholds.cljs</code> (initial values; tune from the first recorded runs)</h4>
+<div class="outline-text-4" id="text-orgd70bef1">
 <div class="org-src-container">
 <pre class="src src-clojure"><span class="org-rainbow-delimiters-depth-1">(</span><span class="org-keyword">def</span> <span class="org-variable-name">T</span>
   <span class="org-rainbow-delimiters-depth-2">{</span><span class="org-clojure-keyword">:start-within</span>     5000    <span class="org-comment">; ms from gesture to started
@@ -564,18 +564,18 @@ attempt in 3 of 18 main runs (and both attempts on two PRs).
 </div>
 </div>
 </div>
-<div id="outline-container-org19e48e0" class="outline-3">
-<h3 id="org19e48e0">3 · Journeys</h3>
-<div class="outline-text-3" id="text-org19e48e0">
+<div id="outline-container-org9533df0" class="outline-3">
+<h3 id="org9533df0">3 · Journeys</h3>
+<div class="outline-text-3" id="text-org9533df0">
 <p>
 Each journey records its summary per engine; the assertions column is
 what fails it. "server" means the live endpoint. Every journey runs in
 all three projects unless marked.
 </p>
 </div>
-<div id="outline-container-orgb18b180" class="outline-4">
-<h4 id="orgb18b180"><code>host_and_viewer.cljs</code></h4>
-<div class="outline-text-4" id="text-orgb18b180">
+<div id="outline-container-org324fc8a" class="outline-4">
+<h4 id="org324fc8a"><code>host_and_viewer.cljs</code></h4>
+<div class="outline-text-4" id="text-org324fc8a">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -650,9 +650,9 @@ on the current video" on main and two PRs the same day.
 </p>
 </div>
 </div>
-<div id="outline-container-org1c153e4" class="outline-4">
-<h4 id="org1c153e4"><code>sync_policy.cljs</code></h4>
-<div class="outline-text-4" id="text-org1c153e4">
+<div id="outline-container-org620bf1c" class="outline-4">
+<h4 id="org620bf1c"><code>sync_policy.cljs</code></h4>
+<div class="outline-text-4" id="text-org620bf1c">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -698,9 +698,9 @@ on the current video" on main and two PRs the same day.
 </table>
 </div>
 </div>
-<div id="outline-container-orgb18c410" class="outline-4">
-<h4 id="orgb18c410"><code>control.cljs</code></h4>
-<div class="outline-text-4" id="text-orgb18c410">
+<div id="outline-container-orged10f58" class="outline-4">
+<h4 id="orged10f58"><code>control.cljs</code></h4>
+<div class="outline-text-4" id="text-orged10f58">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -728,9 +728,9 @@ on the current video" on main and two PRs the same day.
 </table>
 </div>
 </div>
-<div id="outline-container-org10d3663" class="outline-4">
-<h4 id="org10d3663"><code>lobby_admin_chat.cljs</code></h4>
-<div class="outline-text-4" id="text-org10d3663">
+<div id="outline-container-org75a7037" class="outline-4">
+<h4 id="org75a7037"><code>lobby_admin_chat.cljs</code></h4>
+<div class="outline-text-4" id="text-org75a7037">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -764,9 +764,9 @@ on the current video" on main and two PRs the same day.
 </table>
 </div>
 </div>
-<div id="outline-container-orgc4d1420" class="outline-4">
-<h4 id="orgc4d1420"><code>resilience.cljs</code></h4>
-<div class="outline-text-4" id="text-orgc4d1420">
+<div id="outline-container-orgdf9af41" class="outline-4">
+<h4 id="orgdf9af41"><code>resilience.cljs</code></h4>
+<div class="outline-text-4" id="text-orgdf9af41">
 <table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
@@ -800,9 +800,9 @@ on the current video" on main and two PRs the same day.
 </table>
 </div>
 </div>
-<div id="outline-container-org47ecc0a" class="outline-4">
-<h4 id="org47ecc0a"><code>playlists.cljs</code> (added 2026-10-27, playlists part 3)</h4>
-<div class="outline-text-4" id="text-org47ecc0a">
+<div id="outline-container-org253d4b0" class="outline-4">
+<h4 id="org253d4b0"><code>playlists.cljs</code> (added 2026-10-27, playlists part 3)</h4>
+<div class="outline-text-4" id="text-org253d4b0">
 <p>
 The room's queue on the watch page. The fixture's clip is the first item;
 global setup uploads two more, shorter clips (<code>clip-b</code>, <code>clip-c</code>, 60 s)
@@ -900,9 +900,9 @@ host's native seek moves the room" is in the host_and_viewer table (#75).
 </p>
 </div>
 </div>
-<div id="outline-container-orgba6618a" class="outline-4">
-<h4 id="orgba6618a"><code>audio.cljs</code> (added 2026-10-27, #56)</h4>
-<div class="outline-text-4" id="text-orgba6618a">
+<div id="outline-container-org40e9afb" class="outline-4">
+<h4 id="org40e9afb"><code>audio.cljs</code> (added 2026-10-27, #56)</h4>
+<div class="outline-text-4" id="text-org40e9afb">
 <p>
 The viewer's volume boost: a Web Audio chain (element → gain 0–3 →
 compressor → out) behind a 0–300 % slider in the viewer row, remembered
@@ -950,9 +950,9 @@ volume at the focused <code>&lt;video&gt;</code>, and ArrowDown there would drop
 </table>
 </div>
 </div>
-<div id="outline-container-org5e8fe22" class="outline-4">
-<h4 id="org5e8fe22"><code>telemetry.cljs</code> (added 2026-10-27, #57 telemetry)</h4>
-<div class="outline-text-4" id="text-org5e8fe22">
+<div id="outline-container-org0823687" class="outline-4">
+<h4 id="org0823687"><code>telemetry.cljs</code> (added 2026-10-27, #57 telemetry)</h4>
+<div class="outline-text-4" id="text-org0823687">
 <p>
 Every started viewer samples its playback once a second and uploads one
 chunk per five minutes (the tail by <code>sendBeacon</code> on <code>pagehide</code>); the
@@ -991,9 +991,9 @@ carries the tail; <code>goobProbe()</code> gains <code>:telemetry</code> (<code>
 </table>
 </div>
 </div>
-<div id="outline-container-org53cb903" class="outline-4">
-<h4 id="org53cb903"><code>tracks.cljs</code> (added 2026-10-30, audio and subtitle tracks)</h4>
-<div class="outline-text-4" id="text-org53cb903">
+<div id="outline-container-org3512471" class="outline-4">
+<h4 id="org3512471"><code>tracks.cljs</code> (added 2026-10-30, audio and subtitle tracks)</h4>
+<div class="outline-text-4" id="text-org3512471">
 <p>
 Audio and subtitle tracks, per viewer and never room state
 (<code>2026-10-30-audio-subtitle-tracks.org</code>). The setup builds a second
@@ -1039,8 +1039,14 @@ buffer flush, not a seek. Group <code>b</code> in CI.
 
 <tr>
 <td class="org-left"><code>subtitle looks are a viewer's choice</code> (#94)</td>
-<td class="org-left">pair on the dual clip; the viewer picks <code>eng</code> subs, then the <code>cc</code> look, then <code>retro</code>; the host pauses and seeks to 11 s (into the second cue); the viewer reloads and joins</td>
-<td class="org-left">the look select defaults to <code>modern</code> with nothing stored, the overlay white with an outline; <code>cc</code> has no outline; <code>retro</code> is <code>rgb(255, 238, 51)</code> with an outline and the overlay reads "second cue" (one cue drawn); the host's overlay empty; after the reload the select, the overlay class and <code>:subs-theme</code> all read <code>retro</code></td>
+<td class="org-left">pair on the dual clip; the viewer picks <code>eng</code> subs, then the <code>cc</code> look, then <code>retro</code>; the host pauses and seeks to 11 s (into the second cue), then to 21 s (the third) while still paused; the viewer reloads and joins</td>
+<td class="org-left">the look select defaults to <code>modern</code> with nothing stored, the overlay white with an outline; <code>cc</code> has no outline; <code>retro</code> is <code>rgb(255, 238, 51)</code> with an outline and the overlay reads "second cue" (one cue drawn), then "third cue" after the paused seek (no <code>cuechange</code> there: the element's <code>seeked</code> redraws); the host's overlay empty; after the reload the select, the overlay class and <code>:subs-theme</code> all read <code>retro</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>subtitles follow the video into picture-in-picture</code> (#93)</td>
+<td class="org-left">pair on the dual clip; the viewer picks <code>eng</code> subs in <code>retro</code>; the host pauses and seeks to 11 s; the viewer clicks ⧉; the host plays; the viewer's hidden element is paused from the page (the PiP window's button); the host pops out and pauses the same way; both click ⧉ again</td>
+<td class="org-left">the real element's own PiP is disabled; in PiP a second <code>&lt;video&gt;</code> exists, the loop is on and the composite's bottom band holds &gt; 100 retro-yellow pixels; the hidden element is paused with the room and plays when the host plays; a viewer's PiP pause bounces back with the room still playing; the host's PiP pause pauses the room (both pages); after leaving <code>:pip</code> false, the loop off, one <code>&lt;video&gt;</code> again, and <code>:pip-frames</code> stops moving</td>
 </tr>
 
 <tr>
@@ -1059,9 +1065,9 @@ under four.
 </div>
 </div>
 </div>
-<div id="outline-container-org9e53407" class="outline-3">
-<h3 id="org9e53407">4 · Container and Makefile</h3>
-<div class="outline-text-3" id="text-org9e53407">
+<div id="outline-container-org04c88c1" class="outline-3">
+<h3 id="org04c88c1">4 · Container and Makefile</h3>
+<div class="outline-text-3" id="text-org04c88c1">
 <ul class="org-ul">
 <li><p>
 <code>container/Containerfile.e2e</code>:
@@ -1109,9 +1115,9 @@ at a trace (<code>npx playwright show-trace</code> on the host with the
 </ul>
 </div>
 </div>
-<div id="outline-container-orgce3c36a" class="outline-3">
-<h3 id="orgce3c36a">5 · CI job</h3>
-<div class="outline-text-3" id="text-orgce3c36a">
+<div id="outline-container-org98668c3" class="outline-3">
+<h3 id="org98668c3">5 · CI job</h3>
+<div class="outline-text-3" id="text-org98668c3">
 <p>
 New <code>e2e</code> job in <code>.github/workflows/ci.yml</code>, after <code>test</code>, same triggers,
 <code>strategy.matrix.project: [chromium, firefox, webkit]</code>, <code>fail-fast: false</code>.
@@ -1128,9 +1134,9 @@ and all three <code>e2e</code> legs.
 </p>
 </div>
 </div>
-<div id="outline-container-org85949c7" class="outline-3">
-<h3 id="org85949c7">6 · Retirement list (follow-up PR, after five green CI runs)</h3>
-<div class="outline-text-3" id="text-org85949c7">
+<div id="outline-container-orgee94156" class="outline-3">
+<h3 id="orgee94156">6 · Retirement list (follow-up PR, after five green CI runs)</h3>
+<div class="outline-text-3" id="text-orgee94156">
 <p>
 JVM tests whose only job is to pin wiring that a journey now exercises:
 </p>
@@ -1186,9 +1192,9 @@ green.
 </div>
 </div>
 </div>
-<div id="outline-container-org8740ebd" class="outline-2">
-<h2 id="org8740ebd">Risks and open questions</h2>
-<div class="outline-text-2" id="text-org8740ebd">
+<div id="outline-container-org7495b69" class="outline-2">
+<h2 id="org7495b69">Risks and open questions</h2>
+<div class="outline-text-2" id="text-org7495b69">
 <ul class="org-ul">
 <li><b>Timing on shared runners.</b> The sync journeys measure seconds of
 wall-clock behaviour. Mitigations: <code>workers 1</code>, one retry in CI,
@@ -1225,9 +1231,9 @@ the console.</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org276bd62" class="outline-2">
-<h2 id="org276bd62">Verification</h2>
-<div class="outline-text-2" id="text-org276bd62">
+<div id="outline-container-org49a7842" class="outline-2">
+<h2 id="org49a7842">Verification</h2>
+<div class="outline-text-2" id="text-org49a7842">
 <ol class="org-ol">
 <li><code>make test</code> still green (two new JVM tests for the live endpoint and
 view; assertion audit on both).</li>
@@ -1245,9 +1251,9 @@ shows the metrics table, the artifacts contain <code>metrics/</code> and
 </ol>
 </div>
 </div>
-<div id="outline-container-orgc385127" class="outline-2">
-<h2 id="orgc385127">Implementation notes</h2>
-<div class="outline-text-2" id="text-orgc385127">
+<div id="outline-container-org0646b19" class="outline-2">
+<h2 id="org0646b19">Implementation notes</h2>
+<div class="outline-text-2" id="text-org0646b19">
 <p>
 Implemented 2026-10-21 by three Opus subagents from this plan (step 1;
 steps 2-5; step 6), reviewed and verified by the planning session; PR
@@ -1333,7 +1339,7 @@ window). The <code>seekbacks</code> counter, metric column and thresholds
 <div id="postamble" class="status">
 <p class="date">Date: 2026-10-21</p>
 <p class="author">Author: Nathan Barlow</p>
-<p class="date">Created: 2026-11-02 Mon 15:26</p>
+<p class="date">Created: 2026-11-02 Mon 17:32</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
